@@ -1,0 +1,39 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Straight flight (JSBSim headless)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/python/run_straight_flight_headless.py",
+            "args": ["--udp", "14540"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Straight flight (JSBSim headless, 60s)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/python/run_straight_flight_headless.py",
+            "args": ["--udp", "14540", "--duration", "60"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Straight flight (FlightGear)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/python/run_straight_flight.py",
+            "args": ["--udp", "14540"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Python Debugger: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal"
+        }
+    ]
+}

@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<!-- JSBSim IC for PX4 headless Rascal (overrides scene/LSZH.xml via mount).
+     In-air ~500 m AGL at 1.5*Vstall. Rascal stall ≈ 10 kt → 15 kt ≈ 7.72 m/s
+     ≈ 25.3 ft/s true airspeed. -->
+<initialize name="Zurich-inair">
+  <latitude type="geodetic" unit="DEG"> 47.458159 </latitude>
+  <longitude unit="DEG"> 8.548004 </longitude>
+  <altitude unit="M"> 500 </altitude>
+  <elevation unit="M"> 419.2 </elevation>
+  <vt unit="FT/SEC"> 25.3 </vt>
+  <gamma unit="DEG"> 0.0 </gamma>
+  <phi unit="DEG"> 0.0 </phi>
+  <theta unit="DEG"> 0.0 </theta>
+  <psi unit="DEG"> 0.0 </psi>
+</initialize>
