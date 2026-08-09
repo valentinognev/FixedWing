@@ -1,5 +1,64 @@
 # Updates
 
+## 0.7.6 - Fix --viz fall / early exit / missing plot
+- Cause: FG delays EKF health → arm denied ~10–20 s (plane falls); late lock marked unhealthy → reboot retries → `Engage failed` → exit 1 with no plot.
+- `--viz`: `accept_unhealthy=True`, single attempt (no reboot loop), softer healthy thresholds; extra arm bypasses (`COM_ARM_SDCARD/HFLT_CHK/MAG_STR=0`).
+- Clearer stderr when engage fails before any hold/plot.
+
+## 0.7.5 - Stop ~50 m NED Z jumps (GPS alt vs baro)
+- Cause: EKF GPS altitude fusion vs baro height reference snapped local Z mid-hold (~50 m cliff) while XY stayed smooth.
+- `EKF2_HGT_REF=0` (baro), `EKF2_GPS_CTRL=5` (lon/lat+vel, no GPS alt); softer baro gate/noise.
+- After arm: `settle_path_altitude` waits for stable Z before locking `z_hold` / starting history; re-lock on |Δz|>15 m during hold.
+- Path summary reports max|Δz|/|Δxy|.
+
+## 0.7.4 - Stop mid-hold NED jumps (OFFBOARD←local-pos invalid)
+- Cause: position OFFBOARD is marked lost when `local_position_invalid` flickers (PX4 `offboardCheck`), even with live setpoints → failsafe cascade to ALTCTL + EKF/NED cliffs on plots.
+- Soften EKF GNSS / dead-reckon (`EKF2_GPS_*` noise/gates, `EKF2_GPS_MODE=1`, `EKF2_NOAID_TOUT` max); `COM_OF_LOSS_T=60`, `COM_OBL_RC_ACT=Hold`, fix invalid `NAV_RCL_ACT=0`.
+- Hold loop: restore OFFBOARD immediately on mode leave (no spam while in 6); on >40 m NED step, re-lock path origin so setpoints do not yank after an EKF snap.
+
+## 0.7.3 - Make JSBSim --viz flight match headless
+- Root cause: `--viz` inherited FG/docker stdout into the Python process (100s of MB), stalling OFFBOARD setpoints → mode flips / EKF sawtooth on plots; `accept_unhealthy` also locked drifted EKF.
+- `start_sim --viz`: log to `/tmp/jsbsim_viz_runner_<pid>.log` (never inherit); headless still DEVNULL.
+- `--viz` engage: same healthy path-lock as headless (`accept_unhealthy=False`), 60 s arm wait, still no full container restart.
+- FG viz patch V3: `nice -n 15`, 15 Hz FPS cap, disable clouds/sound — keep JSBSim lockstep closer to headless.
+
+## 0.7.2 - Fix --viz black screen / 10s restart loop
+- Cause: late arm (>3.5 s) marked unhealthy → `full_sim_restart` killed JSBSim+FG every ~12 s; FG never finished loading (black view).
+- `--viz`: `accept_unhealthy`, 45 s arm timeout, `full_sim_restart=False` (autopilot reboot only).
+- FG viz patch V2: `--timeofday=noon` (less black/night default).
+
+## 0.7.1 - Final-review viz I/O + bridge hint
+- `start_sim`: with `--viz`, inherit stdout/stderr (headless still DEVNULL).
+- Viz path `jsbsim_bridge` missing check now prints same rebuild hint as headless.
+
+## 0.7.0 - JSBSim FG viz + YASim rename
+- Rename headless → `run_straight_flight_jsbsim.py` / keep `runSimJsbsimRascal.sh`; add `--viz` (FG `--fdm=null` on same JSBSim plant).
+- Rename FG YASim path → `run_straight_flight_yasim.py` + `runSimYasimRascal.sh`; old names shim.
+- `Dockerfiles/patch_px4_jsbsim_fg_viz.sh`: TerraSync off + FG logs for JSBSim viz launch.
+
+## 0.6.4 - FG no longer restarts on engage
+- Cause: engage treated FG as failed (`have_pos` required `|z|>5`, 12 s arm timeout), then killed the FG container and respawned.
+- Fix: any `LOCAL_POSITION_NED` counts as pose; FG uses 45 s arm timeout, `accept_unhealthy`, and autopilot reboot only (`full_sim_restart=False`). Headless JSBSim still full-sim restarts.
+- Engage wait logs STATUSTEXT arm/failsafe lines + periodic armed/have_pos.
+
+## 0.6.3 - FG history plot parity + post-engage stream refresh
+- `run_straight_flight.py`: same `FlightHistory` recording/plot as headless (NED pos/vel, attitude, along/cross-track, 3D); recreate + `request_streams` after engage so retries do not leave an empty plot.
+- Headless: same post-engage history refresh.
+
+## 0.6.2 - FG straight flight matches headless locked-line hold
+- `run_straight_flight.py`: drop carrot-from-current-XY; reuse headless ASAP arm, path lock at arm, FW position-only closest-on-line hold, SITL param/reboot prep, engage retries, and `flight_history` along/cross plot.
+
+## 0.6.1 - Straight-flight plot clarity + FW position-only SP
+- Explain/fix plot confusion: raw `x(N)` is North, not along-track; sawtooth ↔ brief OFFBOARD→ALTCTL turns + EKF jumps.
+- `flight_history`: along-track / cross-track panel + path summary; log mode flips during hold.
+- FW OFFBOARD type_mask is position-only (PX4 ignores velocity on fixed-wing); `EKF2_GPS_CHECK=0` for SITL.
+
+## 0.6.0 - Fix headless straight-flight drift
+- Root causes: (1) carrot setpoint from current XY never corrected cross-track; (2) late arm / path lock after EKF wander; (3) OFFBOARD exit on position/offboard-loss failsafes.
+- `run_straight_flight_headless.py`: ASAP OFFBOARD force-arm with ahead-on-yaw bridge; lock origin/course/Z at arm (course←yaw unless `--course-deg`); stream closest-on-line path + tangent; on unhealthy arm (slow / drifted EKF) restart the JSBSim container and retry; INT32-safe params + reboot; softened `COM_POS_FS_*` / `COM_OF_LOSS_T`; `jsb_spawn`/default speed ~30 m/s.
+- Verified 3/3 × ~40 s holds after healthy engage: cross-track RMS ~11–27 m (was ~800 m), along-track ~825–860 m, mode 6 stable.
+- `flight_history.last_att_rad`; unit tests for path projection (+ bank helpers retained).
+
 ## 0.5.1 - 3D trajectory figure
 - `flight_history.plot`: second matplotlib window with 3D North-East-Up path (start/end markers).
 

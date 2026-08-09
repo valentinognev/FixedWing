@@ -217,10 +217,15 @@ def prepare_sitl_arming(master: mavutil.mavfile) -> None:
         ("EKF2_GPS_V_NOISE", 1.0),
         ("EKF2_GPS_P_GATE", 10.0),
         ("EKF2_GPS_V_GATE", 10.0),
+        ("EKF2_BARO_GATE", 10.0),
+        ("EKF2_BARO_NOISE", 5.0),
     )
     int_params = (
         ("COM_ARM_WO_GPS", 1),
         ("COM_ARM_CHK_ESCS", 0),
+        ("COM_ARM_SDCARD", 0),  # SITL: no SD → otherwise blocks arm
+        ("COM_ARM_HFLT_CHK", 0),
+        ("COM_ARM_MAG_STR", 0),  # 0 = disabled (FG/SITL mag often unhappy)
         ("NAV_RCL_ACT", 1),  # Hold if RC-loss path used (0 is invalid; min=1)
         ("NAV_DLL_ACT", 0),
         ("COM_RCL_EXCEPT", 4),
@@ -243,6 +248,9 @@ def prepare_sitl_arming(master: mavutil.mavfile) -> None:
         ("FD_FAIL_R", 0),
         ("EKF2_GPS_CHECK", 0),  # SITL: avoid GPS-check trips that invalidate local pos
         ("EKF2_GPS_MODE", 1),  # dead-reckon: less aggressive GPS fusion reset
+        # Lon/lat + 3D vel only (no GPS altitude bit) — GPS alt vs baro snaps caused ~50 m Z jumps.
+        ("EKF2_GPS_CTRL", 5),
+        ("EKF2_HGT_REF", 0),  # baro height reference (reboot-applied)
         ("EKF2_NOAID_TOUT", 10_000_000),  # max µs — keep local xy valid longer w/o GPS
     )
     for name, value in float_params:
@@ -775,6 +783,83 @@ def stream_for(
             next_t = time.time()
 
 
+def settle_path_altitude(
+    master: mavutil.mavfile,
+    xy: list[float],
+    z_box: list[float],
+    origin_xy: tuple[float, float],
+    course_rad: float,
+    along_advance_m: float,
+    vx: float,
+    vy: float,
+    vz: float,
+    frame: int,
+    rate: float,
+    *,
+    timeout_s: float = 8.0,
+    stable_s: float = 1.5,
+    max_step_m: float = 2.0,
+) -> None:
+    """Stream path setpoints while EKF height converges; lock z_box when stable.
+
+    Early post-arm LOCAL Z often snaps tens of metres (GPS alt vs baro). Locking
+    z_hold before that produces a cliff on the plot and a wrong altitude SP.
+    """
+    period = 1.0 / max(rate, 1.0)
+    t_end = time.time() + max(1.0, timeout_s)
+    stable_need = max(0.5, stable_s)
+    stable_since: float | None = None
+    prev_z: float | None = None
+    next_t = time.time()
+    print(
+        f"Settling altitude (need |Δz|≤{max_step_m:.0f} m for {stable_need:.1f}s, "
+        f"timeout {timeout_s:.0f}s)..."
+    )
+    while time.time() < t_end:
+        got, _, _ = poll_mavlink(master)
+        if got is not None:
+            xy[0], xy[1] = got[0], got[1]
+            z_cur = float(got[2])
+            z_box[0] = z_cur
+            if prev_z is not None:
+                step = abs(z_cur - prev_z)
+                if step <= max_step_m:
+                    if stable_since is None:
+                        stable_since = time.time()
+                    elif time.time() - stable_since >= stable_need:
+                        print(f"Altitude settled at z_ned={z_cur:.1f}")
+                        return
+                else:
+                    stable_since = None
+            prev_z = z_cur
+        send_path_setpoint(
+            master,
+            (xy[0], xy[1]),
+            z_box[0],
+            origin_xy,
+            course_rad,
+            along_advance_m,
+            vx,
+            vy,
+            vz,
+            frame,
+        )
+        master.mav.heartbeat_send(
+            mavutil.mavlink.MAV_TYPE_GCS,
+            mavutil.mavlink.MAV_AUTOPILOT_INVALID,
+            0,
+            0,
+            0,
+        )
+        next_t += period
+        sleep_for = next_t - time.time()
+        if sleep_for > 0:
+            time.sleep(sleep_for)
+        else:
+            next_t = time.time()
+    print(f"Altitude settle timeout — using z_ned={z_box[0]:.1f}")
+
+
 def engage_offboard_asap(
     master: mavutil.mavfile,
     xy: list[float],
@@ -911,7 +996,17 @@ def engage_offboard_asap(
             course_box[0] = course_rad
             engage_dt = time.time() - t_start
             horiz = math.hypot(origin_xy[0], origin_xy[1])
-            healthy = engage_dt <= 3.5 and abs(z_hold) < 65.0 and horiz < 180.0
+            # Viz/FG slows EKF: allow longer/late arm and larger |z|/horiz before
+            # calling the lock "unhealthy" (still recoverable via accept_unhealthy).
+            soft = accept_unhealthy
+            max_dt = 30.0 if soft else 3.5
+            max_abs_z = 250.0 if soft else 65.0
+            max_horiz = 400.0 if soft else 180.0
+            healthy = (
+                engage_dt <= max_dt
+                and abs(z_hold) < max_abs_z
+                and horiz < max_horiz
+            )
             note = ""
             if not healthy:
                 note = (
@@ -1185,9 +1280,9 @@ def main() -> int:
         f"Engage ASAP: OFFBOARD locked-line path hold "
         f"(|v|_ref={speed:.2f} m/s, along-advance={along_advance_m:.0f} m @ {args.rate} Hz)"
     )
-    # --viz loads FG in the same container: full sim kill/restart every unhealthy
-    # engage (~10–12 s) black-screens FG and loops. Match YASim: longer arm wait,
-    # accept late lock, reboot autopilot only (keep FG up).
+    # --viz: FG slows EKF → late arm + large |z| after a short fall. Do NOT reboot
+    # on "unhealthy" (that resets control and the plane keeps falling). Accept the
+    # lock, settle altitude, then hold — so --duration completes and plots appear.
     try:
         master = engage_offboard_with_retries(
             master,
@@ -1202,19 +1297,43 @@ def main() -> int:
             udp_port=args.udp,
             sim_script=None if args.no_sim else args.sim,
             sim_extra_args=sim_extra_args,
-            max_attempts=3,
+            max_attempts=1 if args.viz else 3,
             arm_timeout_s=60.0 if args.viz else 12.0,
             full_sim_restart=not args.viz,
-            accept_unhealthy=False,
+            accept_unhealthy=bool(args.viz),
         )
     except Exception as exc:  # noqa: BLE001
         print(f"Engage failed: {exc}", file=sys.stderr)
+        print(
+            "No hold/plot — engage never locked. With --viz, check FG/EKF arm denials "
+            "in the console (falling while disarmed is expected until arm succeeds).",
+            file=sys.stderr,
+        )
         _stop_sim()
         return 1
     z_hold = z_box[0]
     origin_xy = origin_box[0]
     course_rad = course_box[0]
     vx, vy, vz = ned_velocity_from_course(speed, course_rad)
+
+    # Let EKF height converge before locking z / starting the timed history.
+    settle_path_altitude(
+        master,
+        xy,
+        z_box,
+        origin_xy,
+        course_rad,
+        along_advance_m,
+        vx,
+        vy,
+        vz,
+        frame,
+        args.rate,
+    )
+    z_hold = z_box[0]
+    # Optionally refresh horizontal origin after settle (small drift only).
+    origin_xy = (xy[0], xy[1])
+    origin_box[0] = origin_xy
 
     # Engage retries may reconnect MAVLink — refresh history streams on the live link.
     history = FlightHistory()
@@ -1238,14 +1357,17 @@ def main() -> int:
     last_rearm = 0.0
     last_mode: int | None = None
     prev_xy: tuple[float, float] | None = None
-    # Horizontal step larger than this ⇒ LOCAL_POSITION_NED discontinuity (EKF).
+    prev_z: float | None = None
+    # Step larger than this ⇒ LOCAL_POSITION_NED discontinuity (EKF).
     ned_jump_m = 40.0
+    z_jump_m = 15.0
     while not stop_requested:
         if args.duration > 0 and (time.time() - t0) >= args.duration:
             break
         got = history.poll(master)
         if got is not None:
             xy[0], xy[1] = got[0], got[1]
+            z_now = float(got[2])
             if prev_xy is not None:
                 jump = math.hypot(xy[0] - prev_xy[0], xy[1] - prev_xy[1])
                 if jump > ned_jump_m:
@@ -1258,7 +1380,16 @@ def main() -> int:
                         f"re-locked path origin to ({origin_xy[0]:.1f},{origin_xy[1]:.1f})"
                     )
                     set_offboard(master)
+            if prev_z is not None and abs(z_now - prev_z) > z_jump_m:
+                # Height-source snap (GPS alt vs baro): keep hold altitude on new Z.
+                z_hold = z_now
+                print(
+                    f"NED Z jump {z_now - prev_z:+.0f} m at t={time.time() - t0:.1f}s — "
+                    f"re-locked z_hold={z_hold:.1f}"
+                )
+                set_offboard(master)
             prev_xy = (xy[0], xy[1])
+            prev_z = z_now
         send_path_setpoint(
             master,
             (xy[0], xy[1]),
