@@ -5,12 +5,11 @@ PX4 fixed-wing SITL (Rascal) via the Noble Docker image: JSBSim plant (default h
 
 ## Architecture
 - `Dockerfiles/` — nested PX4/FlightGear/JSBSim sim image (`px4-noble-sim-ros`, PX4 v1.17, FG 2024.1.6). See that folder’s README.
-- `python/run_straight_flight_jsbsim.py` — JSBSim plant OFFBOARD locked-line hold; optional `--viz` (FG window, same FDM). Reboot-applied SITL params → ASAP force-arm → lock origin/course/Z → closest-on-line LOCAL_NED path. Softened failsafes; unhealthy engage → full JSBSim restart + retry (keeps `--viz`). Default ~30 m/s, `--lookahead` 500 m. Plot after hold (`--no-plot` to skip). Old name `run_straight_flight_headless.py` is a thin shim.
-- `python/run_straight_flight_yasim.py` — YASim FlightGear plant: same locked-line hold / `flight_history` plot as JSBSim runner. Imports shared core from `run_straight_flight_jsbsim`. Old name `run_straight_flight.py` is a thin shim.
-- `python/runSimJsbsimRascal.sh` — JSBSim Rascal SITL; default headless (`HEADLESS=1`); `--viz` mounts `Dockerfiles/patch_px4_jsbsim_fg_viz.sh`, unsets HEADLESS, X11 so FG shows `--fdm=null`. Mounts `jsb_spawn.xml` over LSZH IC (~500 m AGL / ~30 m/s). Container `px4-noble-jsbsim-rascal`.
-- `python/runSimYasimRascal.sh` — YASim FlightGear FDM Rascal: Docker `--net=host`, mounts `fg_spawn.env` → `FG_ARGS_EX`. Old name `runSimFlightGearRascal.sh` is a thin exec shim.
-- `python/kill.sh` — stop YASim/FG and/or JSBSim containers (`--fg` default, `--jsbsim`, `--all`).
-- `python/flight_history.py` — shared MAVLink sample buffer + post-flight time-history (NED/along-cross/vel/attitude) and 3D trajectory plots used by both runners.
+- `python/fw_sitl/` — shared package: `path_geometry`, `mavlink_io`, `sim_lifecycle`, `cli_common`, `straight_flight_core`, `flight_history`.
+- `python/run_straight_flight_jsbsim.py` / `run_straight_flight_yasim.py` — thin plant entrypoints (CLI + engage policy); YASim uses shared hold. JSBSim optional `--viz`. Softened failsafes; plant-specific engage retries. Default ~30 m/s, `--lookahead` 500 m. Plot after hold (`--no-plot` to skip). Old names `run_straight_flight_headless.py` / `run_straight_flight.py` are thin shims.
+- `python/scripts/` — `runSimJsbsimRascal.sh` (headless default; `--viz` → FG `--fdm=null`), `runSimYasimRascal.sh`, `kill.sh`. Compat shims remain at `python/runSim*.sh` / `python/kill.sh`.
+- `python/assets/` — `jsb_spawn.xml`, `fg_spawn.env` (mounted by sim scripts).
+- `python/tests/` — unit tests (`test_path_setpoint.py`).
 - QGC: UDP 14550. Prefer `--udp 14540` for the Python scripts so they do not fight QGC for the GCS port.
 - Airspeed in QGC: `VFR_HUD.airspeed`. Thrust: `VFR_HUD.throttle` / servos / `ACTUATOR_OUTPUT_STATUS`. RPM: `RAW_RPM` (YASim FG path).
 

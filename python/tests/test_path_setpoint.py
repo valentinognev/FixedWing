@@ -4,9 +4,15 @@
 from __future__ import annotations
 
 import math
+import sys
 import unittest
+from pathlib import Path
 
-from run_straight_flight_headless import (
+_PYTHON_ROOT = Path(__file__).resolve().parents[1]
+if str(_PYTHON_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PYTHON_ROOT))
+
+from fw_sitl.path_geometry import (
     bank_to_turn_commands,
     cross_track_m,
     path_setpoint_on_line,

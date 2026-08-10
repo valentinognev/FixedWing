@@ -1,5 +1,19 @@
 # Updates
 
+## 0.9.0 - Python folder layout (`fw_sitl` package)
+- Move utilities into `python/fw_sitl/`; shells → `python/scripts/`; spawn files → `python/assets/`; tests → `python/tests/`.
+- Entrypoints stay at `python/run_straight_flight_*.py` with `fw_sitl` imports + path bootstrap; old shell paths are thin shims.
+- `sim_lifecycle` exposes `PYTHON_ROOT` / `SCRIPTS_DIR`; shell scripts resolve assets under `../assets` and repo `Dockerfiles/`.
+
+## 0.8.1 - Wrap engage retry reconnect as EngageError
+- `engage_offboard_with_retries`: convert reconnect/reboot/restart failures to `EngageError` (runners keep plant hints).
+- Drop unused JSBSim imports (`Path`, `DEFAULT_LOOKAHEAD_M`); remove unused `sys` from `mavlink_io`.
+
+## 0.8.0 - Split straight-flight Python modules
+- Extract `path_geometry`, `mavlink_io`, `sim_lifecycle`, `cli_common`, `straight_flight_core` from the JSBSim runner.
+- Thin `run_straight_flight_{jsbsim,yasim}.py` entrypoints (CLI + plant engage policy); YASim uses shared hold loop.
+- Tests import path helpers from `path_geometry`; shims unchanged.
+
 ## 0.7.6 - Fix --viz fall / early exit / missing plot
 - Cause: FG delays EKF health → arm denied ~10–20 s (plane falls); late lock marked unhealthy → reboot retries → `Engage failed` → exit 1 with no plot.
 - `--viz`: `accept_unhealthy=True`, single attempt (no reboot loop), softer healthy thresholds; extra arm bypasses (`COM_ARM_SDCARD/HFLT_CHK/MAG_STR=0`).
