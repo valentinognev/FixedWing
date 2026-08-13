@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<PropertyList>
+  <path>AI/Aircraft/balloon/Models/balloon4.ac</path>
+  <animation>
+    <type>material</type>
+    <object-name>hull</object-name>
+    <diffuse><red>1</red><green>0.02</green><blue>0.02</blue></diffuse>
+    <ambient><red>1</red><green>0.02</green><blue>0.02</blue></ambient>
+    <emission><red>0.65</red><green>0.013000000000000001</green><blue>0.013000000000000001</blue></emission>
+  </animation>
+</PropertyList>

@@ -25,6 +25,11 @@ Thumbs.db
 *.tmp
 tmp/
 .cache/
+*.xwd
+python/logs/
+
+# Host-fetched binaries (mavlink-server, etc.)
+python/bin/
 
 # Local secrets / overrides (keep example env files tracked if added)
 *.pem

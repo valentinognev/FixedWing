@@ -1,5 +1,139 @@
 # Updates
 
+## 0.18.0 - Gazebo PX4 plane plant (balloon race --gz)
+- Additive plant: `runSimGzPlane.sh` / `run_straight_flight_gz.py` (Cessna default, `--model advanced_plane`).
+- Race: `./run_balloon_race.sh --gz` — onboard `race_cam` → ZMQ, balloons in gz world, GUI for operator.
+- In-air spawn pose `0,0,500,0,0,1.570796` + spawn velocity; `kill.sh --gz`.
+- Jetty `PythonSystemLoader`: `RaceSpawnVelocity` via `Link.set_linear_velocity` (no `gz.sim.components`); `get_system()` always defined.
+- JSBSim fan-out ignores leftover gz sidecar unless `--gz`; `--gz` passes `--container` / `--gz-container`.
+- `spawn_balloons_gz` clears all world `balloon_*` then requested names; camera 30 s clock from start; `docker run` fail hints `nvidia-container-toolkit`.
+- `.gitignore`: `python/logs/`, `python/bin/`, `*.xwd` (e2e dumps / fetched mavlink-server).
+
+## 0.17.6 - Race tmux "no server" was missing mavlink-server
+- Symptom: `./run_balloon_race.sh` printed `no server running on /tmp/tmux-1000/default` and stopped.
+- Cause: gitignored `python/bin/mavlink-server` missing → fan-out failed → sim pane exited → tmux server died → next `tmux` call looked like a tmux bug.
+- Fix: auto-`fetch_mavlink_server.sh` when no usable host binary; race sets `remain-on-exit` and checks session after sim settle with a clear fan-out hint.
+- Re-fetch now if needed: `python/scripts/fetch_mavlink_server.sh`
+
+## 0.17.5 - Idempotent FG balloon spawn (no red pile)
+- Root cause of “many reds + 2 other colors” on top of 0.17.4: `geo.put_model` only adds; re-runs/probes left stale `/models` (and old `/ai/models` stubs / stock `balloon4`) while new colored FixedWing XMLs also appeared.
+- Fix: before place, remove `Models/FixedWing/balloon_*`, stock `balloon4` / `Aircraft/balloon/` models, and balloon-tagged `/ai/models` stubs; log per-index color+path; report live path list/count.
+- Colors: each config RGB still loads distinct `Models/FixedWing/balloon_R_G_B.xml` (hull material override on stock mesh).
+- Evidence: double spawn → clear 3 then place 3; live paths exactly `[balloon_255_0_0, balloon_0_255_0, balloon_0_0_255]` (no accumulation). Unit tests for clear contract + distinct paths/diffuse.
+
+## 0.17.4 - FG camera grab + Nasal balloon spawn (empty-view root cause)
+- Root cause of blank FG race camera: `fg_window_pattern` `FlightGear|fgfs` matched 3×3 `Qt Selection Owner for fgfs` before the real OSG window → mss resized a solid stub (no balloons ever). Secondary: `/ai/models/model[i]` props do not draw; need `geo.put_model` with `--allow-nasal-from-sockets`.
+- Fix: skip tiny/selection-owner windows; prefer title FlightGear / largest; FG viz patch **V6** `--allow-nasal-from-sockets`; `spawn_balloons_fg` Nasal `geo.put_model`; `runSim --viz` copies balloons into FG_ROOT `Models/FixedWing/`; control spawns rebased race NED.
+- Circling: failsafe after control end; during race assisted-only + bank keeps balloon off boresight; freefall NaN ~125 s kills pose. InvalidCRC/18570 unrelated (0.16.2/0.16.3).
+- Verify: `python/scripts/verify_balloon_visibility.py` — synth 100 m `logs/e2e/synth_balloon_100m.png` in_view area_px≈752; FG `--fg` needs live viz.
+- Tests: `test_skips_tiny_qt_fgfs_selection_owner`.
+
+## 0.17.3 - Clear stale FG balloons before spawn
+- Root cause of “many red balloons + 2 colored”: `geo.put_model` only adds; `spawn_balloons_fg` never removed prior `/models/model[*]`, so each race/probe accumulated leftovers (mostly older red defaults) while new R/G/B instances also appeared.
+- Fix: clear `Models/FixedWing/balloon_*` nodes before place; log per-index color+path; report live path list/count after spawn (warn on count mismatch).
+- Tests: distinct per-color model paths; clear-before-spawn contract; XML diffuse RGB still distinct.
+
+## 0.17.2 - FG balloon XML loads colored .ac
+- Root cause after 0.17.1: spawn prefers `balloon_R_G_B.xml`, but all wrappers still pointed at stock `balloon4.ac` with material override on object `hull`. Our spheres are object `balloon`, so overrides no-op → every FG balloon stayed stock red.
+- Fix: each XML `<path>` → `/opt/fixedwing/balloons/balloon_R_G_B.ac` (sphere → `balloon_sphere.ac`); material animation `object-name` → `balloon` with matching diffuse/ambient.
+- Test: `test_xml_wrappers_point_at_matching_ac` (path ends with matching `.ac`, not `balloon4`; object-name `balloon`).
+
+## 0.17.1 - Distinct balloon RGB (FG materials)
+- Root cause: AC3D `MATERIAL` blue channel was `129` (amb `51.6`) in all `assets/balloons/*.ac` — out of 0..1 range; FG effectively rendered every balloon near-pure blue.
+- Fix: `balloon_{255_0_0,0_255_0,0_0_255,sphere}.ac` materials use normalized RGB (red/green/blue/white) with matching ambient.
+- Synth already drew `BalloonSpec.color`; add centroid pixel RGB parity test + AC material 0..1/filename contract test. Color map: config RGB → `balloon_R_G_B.xml|.ac` → FG; synth disks use the same RGB.
+
+## 0.17.0 - Altitude-preserving turn trajectory
+- `BodyCmdBridge.chase_geometry`: when yaw is known and `|course−yaw|` is large, hold current altitude instead of chasing 3D aim Z (avoids spiral/altitude loss on steep LOS turns); near-aligned heading blends toward clamped aim Z (`max_alt_step_m` still applies).
+- Threshold: `guidance.alt_preserve_heading_err_deg` (default 20°) → `BodyCmdBridge.alt_preserve_heading_err_rad`; control passes ATTITUDE yaw into chase setpoints.
+- Tests: lateral LOS → `z_hold≈pos_z`; forward LOS → clamped aim Z; mid-error blend; setup default parse.
+
+## 0.16.3 - mavlink-server 0.10.1
+- Pin host fetch + Docker bake to bluerobotics [mavlink-server 0.10.1](https://github.com/bluerobotics/mavlink-server/releases/tag/0.10.1) (`python/scripts/fetch_mavlink_server.sh`, `Dockerfiles/PX4NobleSimNvidia.dockerfile` `MAVLINK_SERVER_VERSION`).
+- Re-fetch host binary: `python/scripts/fetch_mavlink_server.sh` → `python/bin/mavlink-server` (`--version` → 0.10.1). Image bake needs rebuild for sidecar.
+- Fetch downloads to temp then `mv` (avoids curl 23 / ETXTBSY when an old binary is still running).
+- Compatible with existing `--mavlink-heartbeat-frequency 0` (0.10.1 #223: do not send heartbeat if frequency ≤ 0).
+- Dialect/InvalidCRC on newer PX4 msgs (ESC_INFO etc.): unconfirmed whether 0.10.1 improves vs 0.9.0 — keep `RUST_LOG=off` + log redirect.
+- Contract: `test_mavlink_server_version_pinned_to_0_10_1`.
+
+## 0.16.2 - Silence mavlink-server InvalidCRC spam (18570)
+- Root cause: PX4 SITL GCS binds local UDP **18570** (`udp_gcs_port_local`) and sends to remote **14550**; that stream includes newer common.xml msgs (`ESC_INFO`/`ESC_STATUS`/`OPEN_DRONE_ID_LOCATION`) whose CRC_EXTRA mavlink-server 0.9.0 rejects → `InvalidCRC origin=127.0.0.1:18570`. Not junk traffic.
+- Fix: host fan-out redirects stdout/stderr to `/tmp/mavlink-server-fanout.log` and sets `RUST_LOG=off` (override via `MAVLINK_SERVER_RUST_LOG` / `MAVLINK_SERVER_LOG`); docker sidecar gets `RUST_LOG=off` too. Document 18570 + QGC-must-be-client in `start_mavlink_server.sh` / README.
+- Common HEARTBEAT/pose still fan out; unknown-dialect msgs still dropped by mavlink-server (acceptable for race).
+
+## 0.16.1 - Balloon-race tmux uses panes
+- `run_balloon_race.sh`: one session / one `race` window; sim + control + image + camera as tiled split panes (targets `session:0.N`); control still starts before image/camera after heartbeat.
+- Tear-down unchanged: root `kill.sh` kills by session name (no window-name dependency).
+- Contract test asserts pane splits (not `new-window`).
+
+## 0.16.0 - FG race camera fuselage-free (draw-mask + forward eye)
+- Problem: FG Cockpit View (z≈+0.9 aft) filled the grab with canopy/struts — unusable for balloon track.
+- Fix: FG viz patch **V5** launches with `--prop:/sim/rendering/draw-mask/aircraft=false` and `--prop:/sim/view[0]/config/z-offset-m=-5` (+ FOV 90). `fg_camera.sync_camera_view` reasserts mask=`0`, live+`goal-*` xyz offsets (`fg_eye_forward_m` default 5 m, FG −Z forward), body-relative az/el/HFOV. Window geometry via `xwininfo -id` absolute coords. FG balloon spawn deferred until after engage (background thread).
+- Evidence: lit mss grab `python/logs/e2e/fg_verify_clear*.png` — structure_frac≈0 (no mid-grey canopy); mask false, z=-5. Headless e2e still 2 passes (`headless_verify.csv`). FG race still arms late (~55s, deep z) → 0 passes; `compare_balloon_runs.py` **FAIL** (pass 2 vs 0; path RMS ≫30 m). Guidance path: assisted geometric (`seen_track=0`).
+- Unit tests: 95 OK.
+
+## 0.15.0 - Headless balloon-race live e2e (altitude frame + chase fixes)
+- Root cause of headless crash/no-pass: config balloon Z was ground-relative (≈-80) while PX4 LOCAL_NED home≈aircraft (z≈0), so assisted LOS commanded huge climbs; plus no-track chase kept `balloon_ned(0)` after a pass (orbit old balloon).
+- Fix: home-relative balloon NED in `flightSetup*.json` (z≈0/+15/-15); rebase to settled local Z at race start; FG NED origin uses aircraft MSL; spawn AGL ~500 m (`jsb_spawn.xml` / `fg_spawn.env`); start control before image/camera; no-track chase uses active target; gate pass requires XY near balloon; clamp chase `|Δz|` (40 m); CSV `sample` rows + status diagnostics.
+- Headless e2e verified: Armed+OFFBOARD held, ≥1 balloon pass (typically 0 and 1), CSV `python/logs/e2e/headless_verify.csv`. FG `--viz` launches but engage is unhealthy / plane already deep — no passes; parity compare vs headless FAILS (expected). `seen_track=0` (camera track not yet live) — assisted geometric only.
+- Unit tests: 91 OK.
+
+## 0.14.5 - Usable host mavlink-server for race fan-out
+- Prefer `python/bin/mavlink-server`; reject wrong-arch PATH binaries (`--version` probe).
+- Add `python/scripts/fetch_mavlink_server.sh`; ignore downloaded binary in `.gitignore`.
+- Clearer errors when Noble image lacks baked mavlink-server.
+
+## 0.14.4 - Root kill.sh for balloon race
+- Add repo-root `kill.sh`: tear down tmux `balloon_race` + JSBSim (default); forward `--fg`/`--all` to `python/scripts/kill.sh`.
+- `python/scripts/kill.sh --jsbsim|--all`: also remove `${JSB_NAME}-mavlink` sidecar and host `mavlink-server`.
+
+## 0.14.3 - Root balloon-race launcher shim
+- Add repo-root `run_balloon_race.sh` → `python/scripts/run_balloon_race.sh` (headless default; `--viz` unchanged).
+
+## 0.14.2 - Balloon race sim ownership + color slow-joiner
+- `run_balloon_race.sh`: always pass `--no-sim` to control (race owns sim or user `--no-sim`); control must not kill/restart.
+- `run_balloon_control.py`: `kill_docker`/`start_sim` only when control owns sim (`not --no-sim`); republish color+assisted every 1 s for late camera SUB; drop unused `poll_mavlink` import.
+- Contract: `test_race_passes_no_sim_to_control_when_race_owns_sim`.
+
+## 0.14.1 - Fail empty/unmatched pixel dumps
+- `race_compare`: when `--pixels-a/--pixels-b` are provided but yield zero time-matched pairs (empty dumps or unmatched timestamps), pixel check **FAIL**s (exit 1) instead of SKIP/PASS.
+- Test: `test_empty_or_unmatched_pixel_dumps_fail`.
+
+## 0.14.0 - Offline race parity compare (delta close)
+- `fw_sitl/race_compare.py` + `scripts/compare_balloon_runs.py`: gate two race CSVs vs `verification.*` (pass-time tol, path RMS, optional pixel RMS / dumps); exit 0/1; skip pixels if absent.
+- Tests: `test_race_compare.py` (synthetic fixtures). Closes balloon-race delta (0.12–0.13: FG/fan-out/tmux/CSV/end).
+
+## 0.13.0 - tmux heartbeat gate + race CSV / end
+- `run_balloon_race.sh`: after sim/fan-out, wait for MAVLink HEARTBEAT on control UDP 14540 (`HEARTBEAT_TIMEOUT_S=120`, fail if none) before image/camera/control.
+- Control always writes `/tmp/balloon_race_<timestamp>.csv` (pass + `end_*` rows: idx/color/assisted/pos); `--csv` override.
+- End first-wins: `guidance.laps` | `guidance.duration_s` | Ctrl+C (`race_end_reason` + lap count on wrap); plot still optional.
+- Tests: `test_race_csv_end.py`; fan-out contracts assert heartbeat wait.
+
+## 0.12.1 - Fan-out fail-loud + defaults
+- `runSimJsbsimRascal.sh`: default `MAVLINK_FANOUT=0`; `--mavlink-server` enables; fail non-zero (no soft-skip / stderr swallow) when fan-out requested.
+- `run_balloon_race.sh`: enables fan-out by default; aborts image/camera/control if mavlink-server is not up; passes `--udp` 14541/14540.
+- `requirements.txt`: add `mss`; synthetic publisher default UDP 14541.
+
+## 0.12.0 - FG Docker ops (balloons mount + mavlink-server)
+- `runSimJsbsimRascal.sh --viz`: bind-mount `python/assets/balloons` → `/opt/fixedwing/balloons`; `balloon_scene` rewrites FG model-path to that container path.
+- `fg_camera.capture_fg_frame`: window-only capture via title/class regex (`camera.fg_window_pattern`); xdotool → wmctrl → xwininfo; root grab is fallback only.
+- Bake bluerobotics `mavlink-server` into Noble image; sim start fans GCS 14550 → control 14540 + image-source 14541 (`--no-mavlink-server` to skip).
+- Confirmed viz patch V4: AI models on, `--telnet=5501` (no `--disable-ai-models`).
+
+## 0.11.1 - Fix shadowed dir_cam_to_ned
+- Remove duplicate `dir_cam_to_ned` in `camera_model.py` that broke control’s `(dir_cam, CameraModel, roll, pitch, yaw)` call at runtime.
+
+## 0.11.0 - Balloon race (full stack)
+- Fix `run_balloon_camera.py` ZMQ/camera_model/balloon_tracker APIs (`CameraModel`, `TrackMessage`, RGB frames).
+- Refactor `synthetic_camera` to share `camera_model` projection; add `dir_cam_to_ned` / NED rotation helpers.
+- `run_balloon_control.py`: OFFBOARD chase (`RaceGuidance` + `BodyCmdBridge`), color PUB, track SUB with held `dir_cam`, FG balloon spawn with `--viz`.
+- FG viz patch V4: AI models on, `--telnet=5501`; `assets/balloons/*.ac`; `test_synthetic_parity` pixel parity.
+
+## 0.10.0 - Balloon-race foundation (Phase 1)
+- Add `python/flightSetup.json` example + `fw_sitl.flight_setup` loader/defaults.
+- Add `zmq_bus` (image/color/track PUB/SUB), `camera_model` (FOV/mount, pixel↔cam LOS), `balloon_tracker` (color blob → cam unit LOS).
+- Add `python/requirements.txt` (numpy, pyzmq, opencv-python-headless); unit tests for LOS roundtrip + synthetic disk track.
+
 ## 0.9.0 - Python folder layout (`fw_sitl` package)
 - Move utilities into `python/fw_sitl/`; shells → `python/scripts/`; spawn files → `python/assets/`; tests → `python/tests/`.
 - Entrypoints stay at `python/run_straight_flight_*.py` with `fw_sitl` imports + path bootstrap; old shell paths are thin shims.

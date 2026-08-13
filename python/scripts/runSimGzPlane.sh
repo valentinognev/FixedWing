@@ -1,72 +1,70 @@
 #!/bin/bash
-# Start PX4 SITL + JSBSim Rascal. Default: headless. --viz: FG window (--fdm=null).
+# Start PX4 SITL + Gazebo plane (GUI). Default model: rc_cessna. In-air spawn.
+set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${PYTHON_ROOT}/.." && pwd)"
-CONTAINER_NAME="${PX4_JSBSIM_DOCKER_NAME:-px4-noble-jsbsim-rascal}"
+CONTAINER_NAME="${PX4_GZ_DOCKER_NAME:-px4-noble-gz-plane}"
 IMAGE_TAG="${PX4_SITL_DOCKER_VER:-px4-noble-sim-ros:latest}"
-SPAWN_XML="${PYTHON_ROOT}/assets/jsb_spawn.xml"
-CONTAINER_SCENE="/home/valentin/PX4-Autopilot/Tools/simulation/jsbsim/jsbsim_bridge/scene/LSZH.xml"
-PATCH_SCRIPT="${REPO_ROOT}/Dockerfiles/patch_px4_jsbsim_fg_viz.sh"
-CONTAINER_PATCH="/tmp/patch_px4_jsbsim_fg_viz.sh"
-# Balloon .ac models: host → container path used by FG AI model-path / spawn_balloons_fg.
-BALLOONS_HOST="${PYTHON_ROOT}/assets/balloons"
-CONTAINER_BALLOONS="/opt/fixedwing/balloons"
 MAVLINK_SERVER_SCRIPT="${REPO_ROOT}/Dockerfiles/scripts/start_mavlink_server.sh"
 MAVLINK_SERVER_PID=""
-VIZ=0
-# Default off for straight-flight/QGC; balloon race sets MAVLINK_FANOUT=1.
 MAVLINK_FANOUT="${MAVLINK_FANOUT:-0}"
+GZ_MODEL="rc_cessna"
+SETUP="${PYTHON_ROOT}/flightSetup.json"
+POSE="${PX4_GZ_MODEL_POSE:-0,0,500,0,0,1.570796}"
+HOST_GZ_ASSETS="${PYTHON_ROOT}/assets/gz"
+HOST_PYTHON="${PYTHON_ROOT}"
 
 cleanup_on_exit() {
-	echo ""
-	echo "Cleaning up..."
-	if [[ -n "${MAVLINK_SERVER_PID}" ]]; then
+	if [[ -n "${MAVLINK_SERVER_PID:-}" ]]; then
 		kill "${MAVLINK_SERVER_PID}" 2>/dev/null || true
 		wait "${MAVLINK_SERVER_PID}" 2>/dev/null || true
 		MAVLINK_SERVER_PID=""
 	fi
 	docker rm -f "${CONTAINER_NAME}-mavlink" 2>/dev/null || true
 	docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
-	if [[ "${VIZ}" -eq 1 ]]; then
-		xhost -local:docker 2>/dev/null || true
-	fi
+	xhost -local:docker 2>/dev/null || true
 }
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--help|-h)
-			echo "Usage: $0 [--viz] [--kill] [--mavlink-server|--no-mavlink-server]"
-			echo "  Starts JSBSim Rascal SITL with IC from ${SPAWN_XML}"
-			echo "  --viz   FlightGear visualization (same JSBSim plant; no HEADLESS)"
-			echo "  --kill  Remove container and exit"
-			echo "  --mavlink-server     Start mavlink-server fan-out (14550→14540/14541); fail if unavailable"
-			echo "  --no-mavlink-server  Skip fan-out (default; restores single-client 14540/14550)"
-			echo "  Balloons bind-mount: ${BALLOONS_HOST} → ${CONTAINER_BALLOONS}"
+			echo "Usage: $0 [--model rc_cessna|advanced_plane] [--setup PATH] [--mavlink-server|--no-mavlink-server] [--kill]"
 			exit 0
 			;;
-		--viz) VIZ=1 ;;
+		--model)
+			GZ_MODEL="$2"
+			shift
+			;;
+		--setup)
+			SETUP="$2"
+			shift
+			;;
 		--mavlink-server) MAVLINK_FANOUT=1 ;;
 		--no-mavlink-server) MAVLINK_FANOUT=0 ;;
 		--kill) cleanup_on_exit; exit 0 ;;
-		*) echo "Unknown option: $1 (use --help)" >&2; exit 1 ;;
+		*) echo "Unknown option: $1" >&2; exit 1 ;;
 	esac
 	shift
 done
 
-if [[ ! -f "${SPAWN_XML}" ]]; then
-	echo "Missing spawn IC: ${SPAWN_XML}" >&2
+if [[ "${GZ_MODEL}" != "rc_cessna" && "${GZ_MODEL}" != "advanced_plane" ]]; then
+	echo "Error: --model must be rc_cessna or advanced_plane (got ${GZ_MODEL})" >&2
+	exit 1
+fi
+if [[ ! -f "${SETUP}" ]]; then
+	echo "Error: missing setup ${SETUP}" >&2
+	exit 1
+fi
+if [[ -z "${DISPLAY:-}" ]]; then
+	echo "Error: DISPLAY is not set (Gazebo GUI required)" >&2
 	exit 1
 fi
 
-if [[ "${VIZ}" -eq 1 && ! -f "${PATCH_SCRIPT}" ]]; then
-	echo "Missing JSBSim FG viz patch: ${PATCH_SCRIPT}" >&2
-	exit 1
+MAKE_TGT="gz_rc_cessna"
+if [[ "${GZ_MODEL}" == "advanced_plane" ]]; then
+	MAKE_TGT="gz_advanced_plane"
 fi
-
-trap cleanup_on_exit EXIT INT TERM
-
-docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
 
 # Return 0 if $1 is an executable mavlink-server for this host (not wrong arch).
 mavlink_server_usable() {
@@ -186,102 +184,83 @@ start_mavlink_fanout() {
 	return 0
 }
 
-# -t only when stdin is a real TTY *and* not launched from the Python helpers.
-# Python passes stdin=DEVNULL so the debug console is never attached to PX4.
-DOCKER_IT=(-i)
-if [[ -t 0 && -z "${PX4_SITL_NO_DOCKER_TTY:-}" ]]; then
-	DOCKER_IT=(-it)
-fi
-
+trap cleanup_on_exit EXIT INT TERM
+docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
 if ! start_mavlink_fanout; then
 	echo "Error: mavlink fan-out requested (MAVLINK_FANOUT=1) but failed to start" >&2
 	exit 1
 fi
 
-if [[ "${VIZ}" -eq 1 ]]; then
-	xhost + 2>/dev/null || true
-	xhost +local:docker 2>/dev/null || true
+xhost + 2>/dev/null || true
+xhost +local:docker 2>/dev/null || true
+XAUTH_FILE="${XAUTHORITY:-$HOME/.Xauthority}"
+XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/runtime-root}"
+mkdir -p "${XDG_RUNTIME_DIR}"
+chmod 700 "${XDG_RUNTIME_DIR}"
 
-	if [[ -z "${DISPLAY:-}" ]]; then
-		echo "Warning: DISPLAY is not set; defaulting to :0"
-		export DISPLAY=:0
-	fi
+DOCKER_IT=(-i)
+if [[ -t 0 && -z "${PX4_SITL_NO_DOCKER_TTY:-}" ]]; then
+	DOCKER_IT=(-it)
+fi
 
-	if [[ -z "${XAUTHORITY:-}" && -f "${HOME}/.Xauthority" ]]; then
-		export XAUTHORITY="${HOME}/.Xauthority"
-	fi
-
-	XAUTH_FILE="${XAUTHORITY:-$HOME/.Xauthority}"
-	XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/runtime-root}"
-	mkdir -p "${XDG_RUNTIME_DIR}"
-	chmod 700 "${XDG_RUNTIME_DIR}"
-
-	if [[ ! -d "${BALLOONS_HOST}" ]]; then
-		echo "Warning: balloon assets missing: ${BALLOONS_HOST}" >&2
-	fi
-
-	DOCKER_VOLUMES=(
-		--volume="/tmp/.X11-unix:/tmp/.X11-unix:rw"
-		--volume="${XDG_RUNTIME_DIR}:${XDG_RUNTIME_DIR}"
-		--volume="${SPAWN_XML}:${CONTAINER_SCENE}:ro"
-		--volume="${PATCH_SCRIPT}:${CONTAINER_PATCH}:ro"
-		# Stable in-container path for FG AI balloon models (see balloon_scene.CONTAINER_BALLOONS_DIR).
-		--volume="${BALLOONS_HOST}:${CONTAINER_BALLOONS}:ro"
-	)
-
-	if [[ -f "${XAUTH_FILE}" ]]; then
-		DOCKER_VOLUMES+=(--volume="${XAUTH_FILE}:${XAUTH_FILE}:ro")
-	fi
-
-	echo "Starting ${IMAGE_TAG} JSBSim Rascal with FG viz (IC ${SPAWN_XML})"
-	echo "Balloons mount: ${BALLOONS_HOST} → ${CONTAINER_BALLOONS}"
-	docker run "${DOCKER_IT[@]}" --rm \
-		--net=host \
-		--privileged \
-		--name "${CONTAINER_NAME}" \
-		--env="DISPLAY=${DISPLAY}" \
-		--env="QT_X11_NO_MITSHM=1" \
-		--env="XAUTHORITY=${XAUTH_FILE}" \
-		--env="XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}" \
-		"${DOCKER_VOLUMES[@]}" \
-		"${IMAGE_TAG}" \
-		/bin/bash -lc "set -euo pipefail
-			cd /home/valentin/PX4-Autopilot
-			bash '${CONTAINER_PATCH}' /home/valentin/PX4-Autopilot
-			BRIDGE_BIN=build/px4_sitl_default/build_jsbsim_bridge/jsbsim_bridge
-			if [[ ! -x \"\${BRIDGE_BIN}\" ]]; then
-				echo \"jsbsim_bridge missing in image (\${BRIDGE_BIN}). Rebuild: Dockerfiles/PX4_noble_sim_build.sh\" >&2
-				exit 1
-			fi
-			# Install balloon .ac+.xml under FG_ROOT so geo.put_model resolves
-			# relative <path> next to the XML (absolute bind-mount paths break).
-			if [[ -d '${CONTAINER_BALLOONS}' && -d /opt/flightgear/fgdata ]]; then
-				mkdir -p /opt/flightgear/fgdata/Models/FixedWing
-				cp -f '${CONTAINER_BALLOONS}'/balloon_*.ac '${CONTAINER_BALLOONS}'/balloon_*.xml \
-					/opt/flightgear/fgdata/Models/FixedWing/ 2>/dev/null || true
-			fi
-
-			# Unset HEADLESS so sitl_run.sh starts fgfs --fdm=null
-			unset HEADLESS || true
-			make px4_sitl jsbsim_rascal
-		"
-else
-	echo "Starting ${IMAGE_TAG} headless JSBSim Rascal with IC ${SPAWN_XML}"
-	docker run "${DOCKER_IT[@]}" --rm \
-		--net=host \
-		--privileged \
-		--name "${CONTAINER_NAME}" \
-		--volume="${SPAWN_XML}:${CONTAINER_SCENE}:ro" \
-		"${IMAGE_TAG}" \
-		/bin/bash -lc "set -euo pipefail
-			cd /home/valentin/PX4-Autopilot
-			BRIDGE_BIN=build/px4_sitl_default/build_jsbsim_bridge/jsbsim_bridge
-			if [[ ! -x \"\${BRIDGE_BIN}\" ]]; then
-				echo \"jsbsim_bridge missing in image (\${BRIDGE_BIN}). Rebuild: Dockerfiles/PX4_noble_sim_build.sh\" >&2
-				exit 1
-			fi
-			# HEADLESS=1 skips FlightGear visualization; JSBSim FDM + bridge only.
-			# Bridge is prebuilt in the image — this should only launch, not compile.
-			HEADLESS=1 make px4_sitl jsbsim_rascal
-		"
+echo "Starting ${IMAGE_TAG} Gazebo ${GZ_MODEL} pose=${POSE} setup=${SETUP}"
+if ! docker run "${DOCKER_IT[@]}" --rm \
+	--net=host --privileged --gpus all \
+	--name "${CONTAINER_NAME}" \
+	--env="DISPLAY=${DISPLAY}" \
+	--env="QT_X11_NO_MITSHM=1" \
+	--env="XAUTHORITY=${XAUTH_FILE}" \
+	--env="XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}" \
+	--env="PX4_GZ_WORLD=default" \
+	--env="PX4_GZ_MODEL_POSE=${POSE}" \
+	--volume="/tmp/.X11-unix:/tmp/.X11-unix:rw" \
+	--volume="${XDG_RUNTIME_DIR}:${XDG_RUNTIME_DIR}" \
+	--volume="${HOST_GZ_ASSETS}:/opt/fixedwing/gz:rw" \
+	--volume="${HOST_PYTHON}:/opt/fixedwing/python:ro" \
+	--volume="${SETUP}:/opt/fixedwing/flightSetup.json:ro" \
+	${XAUTH_FILE:+--volume="${XAUTH_FILE}:${XAUTH_FILE}:ro"} \
+	"${IMAGE_TAG}" \
+	/bin/bash -lc "set -euo pipefail
+		cd /home/valentin/PX4-Autopilot
+		export PYTHONPATH=/opt/fixedwing/python:/opt/fixedwing/gz/systems\${PYTHONPATH:+:\$PYTHONPATH}
+		STOCK=Tools/simulation/gz/models/${GZ_MODEL}/model.sdf
+		if [[ ! -f \"\${STOCK}\" ]]; then
+			echo \"missing stock SDF \${STOCK}\" >&2
+			exit 1
+		fi
+		mkdir -p /tmp/fw_gz_overlay/models/${GZ_MODEL}
+		cp -a Tools/simulation/gz/models/${GZ_MODEL}/. /tmp/fw_gz_overlay/models/${GZ_MODEL}/
+		python3 - /tmp/fw_gz_overlay/models/${GZ_MODEL}/model.sdf <<'PY'
+from pathlib import Path
+import sys
+sys.path.insert(0, '/opt/fixedwing/python')
+from fw_sitl.flight_setup import load_flight_setup
+from fw_sitl.gz_overlay import apply_plane_overlay
+from fw_sitl.gz_pose import world_velocity_enu, DEFAULT_GZ_YAW_RAD
+stock = Path(sys.argv[1])
+setup = load_flight_setup(Path('/opt/fixedwing/flightSetup.json'))
+stock.write_text(apply_plane_overlay(
+    stock.read_text(),
+    width=setup.camera.width_px,
+    height=setup.camera.height_px,
+    hfov_deg=setup.camera.hfov_deg,
+    eye_forward_m=setup.camera.fg_eye_forward_m,
+    update_rate_hz=setup.camera.rate_hz,
+))
+vx, vy, vz = world_velocity_enu(setup.guidance.speed_mps, DEFAULT_GZ_YAW_RAD)
+Path('/tmp/fw_gz_vel.env').write_text(
+    f'export FW_GZ_SPAWN_VX={vx}\\nexport FW_GZ_SPAWN_VY={vy}\\nexport FW_GZ_SPAWN_VZ={vz}\\n'
+)
+print(f'overlay {stock} v=({vx:.1f},{vy:.1f},{vz:.1f})')
+PY
+		cp -f /tmp/fw_gz_overlay/models/${GZ_MODEL}/model.sdf \"\${STOCK}\"
+		# shellcheck disable=SC1091
+		source /tmp/fw_gz_vel.env
+		export GZ_SIM_RESOURCE_PATH=/tmp/fw_gz_overlay/models:/opt/fixedwing/gz/models\${GZ_SIM_RESOURCE_PATH:+:\$GZ_SIM_RESOURCE_PATH}
+		export GZ_SIM_SYSTEM_PLUGIN_PATH=/opt/fixedwing/gz/systems\${GZ_SIM_SYSTEM_PLUGIN_PATH:+:\$GZ_SIM_SYSTEM_PLUGIN_PATH}
+		make px4_sitl ${MAKE_TGT}
+	"
+then
+	echo "Error: docker run failed for ${IMAGE_TAG} (--gpus all). Install nvidia-container-toolkit and confirm the image exists." >&2
+	exit 1
 fi

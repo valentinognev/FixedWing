@@ -1,0 +1,233 @@
+#!/usr/bin/env python3
+"""Unit tests for race pass radius / gate logic and 3D LOS guidance."""
+
+from __future__ import annotations
+
+import math
+import sys
+import unittest
+import unittest.mock
+from pathlib import Path
+
+_PYTHON_ROOT = Path(__file__).resolve().parents[1]
+if str(_PYTHON_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PYTHON_ROOT))
+
+from fw_sitl.flight_setup import BalloonSpec, GuidanceSpec
+from fw_sitl.race_guidance import RaceGuidance, rebase_balloons_to_local_z, show_assisted_overlay
+
+
+def _normalize3(v: tuple[float, float, float]) -> tuple[float, float, float]:
+    n = math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
+    return (v[0] / n, v[1] / n, v[2] / n)
+
+
+def _race(
+    pass_radius: float = 50.0,
+    *,
+    balloons: tuple[BalloonSpec, ...] | None = None,
+) -> RaceGuidance:
+    if balloons is None:
+        balloons = (
+            BalloonSpec(ned=(300.0, 0.0, 0.0), color=(255, 0, 0), diameter_m=10.0),
+            BalloonSpec(ned=(600.0, 0.0, 0.0), color=(0, 255, 0), diameter_m=10.0),
+        )
+    guidance = GuidanceSpec(
+        control_rate_hz=20.0,
+        speed_mps=30.0,
+        pass_radius_m=pass_radius,
+        lookahead_m=500.0,
+        assisted_print_period_s=5.0,
+        stale_track_warn_s=10.0,
+    )
+    return RaceGuidance(balloons, guidance)
+
+
+def _race_3d(pass_radius: float = 50.0) -> RaceGuidance:
+    return _race(
+        pass_radius,
+        balloons=(
+            BalloonSpec(ned=(300.0, 0.0, -40.0), color=(255, 0, 0), diameter_m=10.0),
+            BalloonSpec(ned=(600.0, 80.0, -5.0), color=(0, 255, 0), diameter_m=10.0),
+        ),
+    )
+
+
+class TestRacePass(unittest.TestCase):
+    def test_pass_within_radius_cycles(self) -> None:
+        race = _race(pass_radius=50.0)
+        passed = race.check_pass((300.0, 40.0, 0.0), approach_dir_ned=(1.0, 0.0, 0.0))
+        self.assertTrue(passed)
+        self.assertEqual(race.target_idx, 1)
+
+    def test_gate_plane_crossing(self) -> None:
+        race = _race(pass_radius=5.0)
+        race.update_track(False, (1.0, 0.0, 0.0))
+        race._prev_gate_dot = -100.0
+        # Outside radius (5 m) but within 1.5*radius gate corridor.
+        passed = race.check_pass((306.0, 0.0, 0.0), approach_dir_ned=(1.0, 0.0, 0.0))
+        self.assertTrue(passed)
+        self.assertEqual(race.target_idx, 1)
+
+    def test_gate_far_from_balloon_ignored(self) -> None:
+        race = _race(pass_radius=50.0)
+        race.update_track(False, (1.0, 0.0, 0.0))
+        race.target_idx = 1  # balloon at (600, 0)
+        race._prev_gate_dot = -10.0
+        # Near balloon 0, heading flip would zero-cross vs balloon 1 if unchecked.
+        passed = race.check_pass((300.0, 0.0, 0.0), approach_dir_ned=(-1.0, 0.0, 0.0))
+        self.assertFalse(passed)
+        self.assertEqual(race.target_idx, 1)
+
+    def test_no_pass_far_away(self) -> None:
+        race = _race()
+        passed = race.check_pass((0.0, 0.0, -80.0), approach_dir_ned=(1.0, 0.0, 0.0))
+        self.assertFalse(passed)
+        self.assertEqual(race.target_idx, 0)
+
+
+class TestRaceGuidance3DLos(unittest.TestCase):
+    def test_startup_geometric_los_to_balloon_0(self) -> None:
+        race = _race_3d()
+        pos = (0.0, 10.0, -10.0)
+        expected = _normalize3(
+            (
+                300.0 - pos[0],
+                0.0 - pos[1],
+                -40.0 - pos[2],
+            )
+        )
+        got = race.chase_dir_ned(pos, sim_time_s=0.0)
+        for a, b in zip(got, expected):
+            self.assertAlmostEqual(a, b, places=6)
+        self.assertNotAlmostEqual(got[2], 0.0, places=6)
+
+    def test_no_track_after_pass_chases_new_target(self) -> None:
+        """Without any TrackMessage, pass must still retarget geometric LOS."""
+        race = _race_3d()
+        self.assertFalse(race._seen_track)
+        self.assertTrue(
+            race.check_pass((300.0, 0.0, -40.0), approach_dir_ned=(1.0, 0.0, 0.0))
+        )
+        self.assertEqual(race.target_idx, 1)
+        self.assertFalse(race._seen_track)
+        pos = (300.0, 0.0, -40.0)
+        balloon = race.balloon_ned()  # balloon 1 at (600, 80, -5)
+        expected = _normalize3(
+            (balloon[0] - pos[0], balloon[1] - pos[1], balloon[2] - pos[2])
+        )
+        got = race.chase_dir_ned(pos, sim_time_s=1.0)
+        for a, b in zip(got, expected):
+            self.assertAlmostEqual(a, b, places=6)
+        # Must not keep chasing balloon 0 at (300, 0, -40).
+        self.assertNotAlmostEqual(got[0], 1.0, places=2)
+
+    def test_assisted_geometric_los_is_full_3d(self) -> None:
+        race = _race_3d()
+        race.update_track(False, (1.0, 0.0, 0.0))
+        pos = (100.0, 20.0, -15.0)
+        balloon = race.balloon_ned()
+        expected = _normalize3(
+            (
+                balloon[0] - pos[0],
+                balloon[1] - pos[1],
+                balloon[2] - pos[2],
+            )
+        )
+        got = race.chase_dir_ned(pos, sim_time_s=0.0)
+        for a, b in zip(got, expected):
+            self.assertAlmostEqual(a, b, places=6)
+        self.assertLess(got[2], -0.05)
+
+    def test_in_view_uses_last_dir_ned(self) -> None:
+        race = _race_3d()
+        held = _normalize3((0.5, 0.2, -0.3))
+        race.update_track(True, held)
+        got = race.chase_dir_ned((0.0, 0.0, 0.0), sim_time_s=0.0)
+        for a, b in zip(got, held):
+            self.assertAlmostEqual(a, b, places=6)
+
+    def test_no_soft_blend_z_hold_api(self) -> None:
+        self.assertFalse(
+            hasattr(RaceGuidance, "z_hold_ned"),
+            "soft Z blend z_hold_ned must not be the altitude path",
+        )
+
+
+class TestAssistedOverlay(unittest.TestCase):
+    def test_overlay_when_assisted_or_not_in_view(self) -> None:
+        self.assertTrue(show_assisted_overlay(assisted=True, in_view=True))
+        self.assertTrue(show_assisted_overlay(assisted=False, in_view=False))
+        self.assertTrue(show_assisted_overlay(assisted=True, in_view=False))
+        self.assertFalse(show_assisted_overlay(assisted=False, in_view=True))
+
+
+class TestStaleTrackAssisted(unittest.TestCase):
+    def test_stale_locks_assisted_forever(self) -> None:
+        race = _race_3d()
+        race.mark_track_received(0.0)
+        race.update_track(True, (1.0, 0.0, 0.0))
+        race.tick_stale(now_s=0.05, stale_age_s=0.2)
+        self.assertFalse(race.stale_locked)
+        self.assertFalse(race.assisted)
+
+        race.tick_stale(now_s=0.25, stale_age_s=0.2)
+        self.assertTrue(race.stale_locked)
+        self.assertTrue(race.assisted)
+
+        # Later in-view track must not clear assisted once stale-locked.
+        race.mark_track_received(1.0)
+        race.update_track(True, (0.0, 1.0, 0.0))
+        race.chase_dir_ned((0.0, 0.0, 0.0), sim_time_s=1.0)
+        self.assertTrue(race.stale_locked)
+        self.assertTrue(race.assisted)
+
+    def test_stale_warn_period(self) -> None:
+        race = _race()
+        race.mark_track_received(0.0)
+        race.update_track(False, (1.0, 0.0, 0.0))
+        with unittest.mock.patch("builtins.print") as mocked:
+            race.tick_stale(now_s=1.0, stale_age_s=0.5)
+            self.assertEqual(mocked.call_count, 1)
+            race.tick_stale(now_s=5.0, stale_age_s=0.5)
+            self.assertEqual(mocked.call_count, 1)  # warn period 10 s
+            race.tick_stale(now_s=11.5, stale_age_s=0.5)
+            self.assertEqual(mocked.call_count, 2)
+
+    def test_assisted_print_period_while_assisted(self) -> None:
+        race = _race()
+        race.update_track(False, (1.0, 0.0, 0.0))
+        with unittest.mock.patch("builtins.print") as mocked:
+            race.chase_dir_ned((0.0, 0.0, 0.0), sim_time_s=0.0)
+            self.assertEqual(mocked.call_count, 1)
+            race.chase_dir_ned((0.0, 0.0, 0.0), sim_time_s=4.9)
+            self.assertEqual(mocked.call_count, 1)
+            race.chase_dir_ned((0.0, 0.0, 0.0), sim_time_s=5.0)
+            self.assertEqual(mocked.call_count, 2)
+
+
+class TestRebaseBalloonsToLocalZ(unittest.TestCase):
+    def test_preserves_xy_and_relative_z(self) -> None:
+        balloons = (
+            BalloonSpec(ned=(300.0, 0.0, -80.0), color=(255, 0, 0), diameter_m=10.0),
+            BalloonSpec(ned=(600.0, 80.0, -65.0), color=(0, 255, 0), diameter_m=10.0),
+            BalloonSpec(ned=(900.0, 40.0, -95.0), color=(0, 0, 255), diameter_m=10.0),
+        )
+        out = rebase_balloons_to_local_z(balloons, local_z=20.0)
+        self.assertEqual(out[0].ned, (300.0, 0.0, 20.0))
+        self.assertEqual(out[1].ned, (600.0, 80.0, 35.0))  # +15 vs balloon 0
+        self.assertEqual(out[2].ned, (900.0, 40.0, 5.0))  # -15 vs balloon 0
+        self.assertEqual(out[0].color, (255, 0, 0))
+
+    def test_home_relative_config_stays_near_local_z(self) -> None:
+        balloons = (
+            BalloonSpec(ned=(300.0, 0.0, 0.0), color=(255, 0, 0), diameter_m=10.0),
+            BalloonSpec(ned=(600.0, 80.0, 15.0), color=(0, 255, 0), diameter_m=10.0),
+        )
+        out = rebase_balloons_to_local_z(balloons, local_z=12.5)
+        self.assertEqual(out[0].ned[2], 12.5)
+        self.assertEqual(out[1].ned[2], 27.5)
+
+
+if __name__ == "__main__":
+    unittest.main()

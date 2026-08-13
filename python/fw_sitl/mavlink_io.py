@@ -37,6 +37,11 @@ ARM_FORCE_MAGIC = 21196.0
 
 
 def connect(udp_port: int, timeout: float = 60.0) -> mavutil.mavfile:
+    """Bind udpin and wait for an *autopilot* heartbeat (skip routers/GCS).
+
+    mavlink-server and similar brokers may emit HEARTBEAT (often comp 191).
+    Locking onto those makes SET_MODE/ARM target the broker → PX4 ignores them.
+    """
     master = mavutil.mavlink_connection(f"udpin:0.0.0.0:{udp_port}")
     print(f"Waiting for heartbeat on UDP {udp_port} (timeout {timeout:.0f}s)...")
     deadline = time.time() + timeout
@@ -49,14 +54,35 @@ def connect(udp_port: int, timeout: float = 60.0) -> mavutil.mavfile:
             0,
         )
         msg = master.recv_match(type="HEARTBEAT", blocking=True, timeout=0.5)
-        if msg and msg.get_srcSystem() not in (0, 255):
-            master.target_system = msg.get_srcSystem()
-            master.target_component = msg.get_srcComponent()
-            print(
-                f"Heartbeat from sys={master.target_system} "
-                f"comp={master.target_component}"
-            )
-            return master
+        if not msg:
+            continue
+        src_sys = msg.get_srcSystem()
+        src_comp = msg.get_srcComponent()
+        if src_sys in (0, 255):
+            continue
+        # Prefer real autopilots; skip mavlink-server / GCS / onboard companions.
+        autopilot = int(getattr(msg, "autopilot", mavutil.mavlink.MAV_AUTOPILOT_INVALID))
+        mav_type = int(getattr(msg, "type", mavutil.mavlink.MAV_TYPE_GENERIC))
+        if autopilot in (
+            mavutil.mavlink.MAV_AUTOPILOT_INVALID,
+            mavutil.mavlink.MAV_AUTOPILOT_GENERIC,
+        ) and mav_type in (
+            mavutil.mavlink.MAV_TYPE_GCS,
+            mavutil.mavlink.MAV_TYPE_ONBOARD_CONTROLLER,
+            mavutil.mavlink.MAV_TYPE_GENERIC,
+        ):
+            continue
+        if src_comp == 191 and autopilot == mavutil.mavlink.MAV_AUTOPILOT_INVALID:
+            # Common mavlink-server default component id.
+            continue
+        master.target_system = src_sys
+        master.target_component = src_comp
+        print(
+            f"Heartbeat from sys={master.target_system} "
+            f"comp={master.target_component} "
+            f"(type={mav_type} autopilot={autopilot})"
+        )
+        return master
     raise TimeoutError(f"No MAVLink heartbeat on UDP {udp_port}")
 
 
@@ -85,6 +111,42 @@ def wait_armed(master: mavutil.mavfile, timeout: float = 1.0) -> bool:
         master.recv_match(type="HEARTBEAT", blocking=True, timeout=0.1)
     armed, _ = poll_vehicle_state(master)
     return bool(armed)
+
+
+def wait_min_airspeed(
+    master: mavutil.mavfile,
+    *,
+    min_mps: float = 15.0,
+    timeout_s: float = 5.0,
+) -> float:
+    """Abort in-air gz spawn if VFR_HUD airspeed (else groundspeed) never reaches min_mps."""
+    master.mav.command_long_send(
+        master.target_system,
+        master.target_component,
+        mavutil.mavlink.MAV_CMD_SET_MESSAGE_INTERVAL,
+        0,
+        mavutil.mavlink.MAVLINK_MSG_ID_VFR_HUD,
+        100000,
+        0,
+        0,
+        0,
+        0,
+        0,
+    )
+    deadline = time.time() + timeout_s
+    last = 0.0
+    while time.time() < deadline:
+        msg = master.recv_match(type="VFR_HUD", blocking=True, timeout=0.5)
+        if msg is None:
+            continue
+        last = float(getattr(msg, "airspeed", 0.0) or 0.0)
+        if last < 1e-3:
+            last = float(getattr(msg, "groundspeed", 0.0) or 0.0)
+        if last >= min_mps:
+            return last
+    raise RuntimeError(
+        f"in-air spawn has no airspeed (last={last:.1f} m/s, need >={min_mps:.0f})"
+    )
 
 
 def set_param(
@@ -175,12 +237,20 @@ def prepare_sitl_arming(master: mavutil.mavfile) -> None:
         ("EKF2_BARO_GATE", 10.0),
         ("EKF2_BARO_NOISE", 5.0),
     )
+    float_params_extra = (
+        # Disable EKF innovation arm gates (−1); FG lockstep jitter trips these.
+        ("COM_ARM_EKF_HGT", -1.0),
+        ("COM_ARM_EKF_POS", -1.0),
+        ("COM_ARM_EKF_YAW", -1.0),
+        ("COM_ARM_EKF_VEL", -1.0),
+    )
     int_params = (
         ("COM_ARM_WO_GPS", 1),
         ("COM_ARM_CHK_ESCS", 0),
         ("COM_ARM_SDCARD", 0),  # SITL: no SD → otherwise blocks arm
         ("COM_ARM_HFLT_CHK", 0),
         ("COM_ARM_MAG_STR", 0),  # 0 = disabled (FG/SITL mag often unhappy)
+        ("COM_PREARM_MODE", 0),  # no prearm gate — FG gyro-bias health never clears
         ("NAV_RCL_ACT", 1),  # Hold if RC-loss path used (0 is invalid; min=1)
         ("NAV_DLL_ACT", 0),
         ("COM_RCL_EXCEPT", 4),
@@ -209,6 +279,8 @@ def prepare_sitl_arming(master: mavutil.mavfile) -> None:
         ("EKF2_NOAID_TOUT", 10_000_000),  # max µs — keep local xy valid longer w/o GPS
     )
     for name, value in float_params:
+        set_param(master, name, value)
+    for name, value in float_params_extra:
         set_param(master, name, value)
     for name, value in int_params:
         set_param(master, name, value)
