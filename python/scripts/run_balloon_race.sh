@@ -8,6 +8,7 @@ SESSION="balloon_race"
 MODE="synth"
 VIZ=0
 GZ=0
+YASIM=0
 GZ_MODEL="rc_cessna"
 MODEL_SET=0
 NO_SIM=0
@@ -20,9 +21,10 @@ MAVLINK_IMAGE_PORT="${MAVLINK_IMAGE_PORT:-14541}"
 HEARTBEAT_TIMEOUT_S="${HEARTBEAT_TIMEOUT_S:-120}"
 
 usage() {
-  echo "Usage: $0 [--viz] [--gz] [--model rc_cessna|advanced_plane] [--setup PATH] [--session NAME] [--no-sim]"
+  echo "Usage: $0 [--viz] [--gz] [--yasim] [--model rc_cessna|advanced_plane] [--setup PATH] [--session NAME] [--no-sim]"
   echo "  --viz     FG viz sim + fg image capture (default: headless synth)"
   echo "  --gz      Gazebo plane + onboard camera (--mode gz); exclusive with --viz"
+  echo "  --yasim   YASim FG Rascal FDM + fg camera; exclusive with --viz/--gz"
   echo "  --model   gz model (requires --gz); default rc_cessna"
   echo "  --no-sim  control connects to existing sim"
   echo "  Enables mavlink-server fan-out by default (MAVLINK_FANOUT=1);"
@@ -40,6 +42,9 @@ mavlink_fanout_up() {
     return 0
   fi
   if [[ "${GZ}" -eq 1 ]] && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "${PX4_GZ_DOCKER_NAME:-px4-noble-gz-plane}-mavlink"; then
+    return 0
+  fi
+  if [[ "${YASIM}" -eq 1 ]] && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "${PX4_SITL_DOCKER_NAME:-px4-noble-sim-ros}-mavlink"; then
     return 0
   fi
   return 1
@@ -108,6 +113,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --viz) VIZ=1; MODE="fg" ;;
     --gz) GZ=1; MODE="gz" ;;
+    --yasim) YASIM=1; MODE="fg" ;;
     --model) MODEL_SET=1; GZ_MODEL="$2"; shift ;;
     --no-sim) NO_SIM=1 ;;
     --setup) SETUP="$2"; shift ;;
@@ -120,6 +126,14 @@ done
 
 if [[ "${VIZ}" -eq 1 && "${GZ}" -eq 1 ]]; then
   echo "Error: --viz and --gz are mutually exclusive" >&2
+  exit 2
+fi
+if [[ "${VIZ}" -eq 1 && "${YASIM}" -eq 1 ]]; then
+  echo "Error: --viz and --yasim are mutually exclusive" >&2
+  exit 2
+fi
+if [[ "${GZ}" -eq 1 && "${YASIM}" -eq 1 ]]; then
+  echo "Error: --gz and --yasim are mutually exclusive" >&2
   exit 2
 fi
 if [[ "${MODEL_SET}" -eq 1 && "${GZ}" -eq 0 ]]; then
@@ -151,6 +165,12 @@ tmux kill-session -t "${SESSION}" 2>/dev/null || true
 if [[ "${GZ}" -eq 1 ]]; then
   CONTAINER_NAME="${PX4_GZ_DOCKER_NAME:-px4-noble-gz-plane}"
   SIM_CMD="MAVLINK_FANOUT=${MAVLINK_FANOUT} bash ${PYTHON_ROOT}/scripts/runSimGzPlane.sh --mavlink-server --setup ${SETUP} --model ${GZ_MODEL}"
+elif [[ "${YASIM}" -eq 1 ]]; then
+  CONTAINER_NAME="${PX4_SITL_DOCKER_NAME:-px4-noble-sim-ros}"
+  SIM_CMD="MAVLINK_FANOUT=${MAVLINK_FANOUT} bash ${PYTHON_ROOT}/scripts/runSimYasimRascal.sh"
+  if [[ "${MAVLINK_FANOUT}" == "1" ]]; then
+    SIM_CMD+=" --mavlink-server"
+  fi
 else
   SIM_CMD="MAVLINK_FANOUT=${MAVLINK_FANOUT} bash ${PYTHON_ROOT}/scripts/runSimJsbsimRascal.sh"
   if [[ "${MAVLINK_FANOUT}" == "1" ]]; then
@@ -172,6 +192,9 @@ CTL_CMD="PYTHONUNBUFFERED=1 ${PYTHON} -u ${PYTHON_ROOT}/run_balloon_control.py -
 if [[ -n "${BALLOON_RACE_CSV:-}" ]]; then
   CTL_CMD+=" --csv ${BALLOON_RACE_CSV}"
 fi
+if [[ -n "${BALLOON_RACE_DURATION:-}" ]]; then
+  CTL_CMD+=" --duration ${BALLOON_RACE_DURATION}"
+fi
 # MAVLink ports with mavlink-server fan-out (started by runSimJsbsimRascal.sh):
 #   14550 GCS/QGC, 14540 control, 14541 image-source
 # Control always attaches: race owns sim, or user passed --no-sim for an existing sim.
@@ -183,6 +206,9 @@ if [[ "${GZ}" -eq 1 ]]; then
   IMG_CMD+=" --container ${CONTAINER_NAME}"
   CTL_CMD+=" --gz --spawn-gz-balloons"
   CTL_CMD+=" --gz-container ${CONTAINER_NAME}"
+fi
+if [[ "${YASIM}" -eq 1 ]]; then
+  CTL_CMD+=" --yasim --spawn-fg-balloons"
 fi
 
 # One window; peers are split panes (tiled) after heartbeat.

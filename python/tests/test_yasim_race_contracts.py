@@ -70,5 +70,34 @@ class TestYasimSimFanoutAndBalloons(unittest.TestCase):
         self.assertIn("${FG_NAME}-mavlink", text)
 
 
+class TestYasimRaceLauncher(unittest.TestCase):
+    def test_race_yasim_wiring(self) -> None:
+        text = _RACE.read_text(encoding="utf-8")
+        self.assertIn("--yasim", text)
+        self.assertIn("runSimYasimRascal.sh", text)
+        self.assertIn('MODE="fg"', text)
+        self.assertIn('CTL_CMD+=" --yasim', text)
+        self.assertIn("--spawn-fg-balloons", text)
+        self.assertIn("BALLOON_RACE_DURATION", text)
+        self.assertIn('CTL_CMD+=" --duration ${BALLOON_RACE_DURATION}"', text)
+        self.assertIn("px4-noble-sim-ros", text)
+
+    def test_yasim_and_gz_exit_2(self) -> None:
+        r = subprocess.run(
+            ["bash", str(_RACE), "--yasim", "--gz"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(r.returncode, 2)
+
+    def test_yasim_and_viz_exit_2(self) -> None:
+        r = subprocess.run(
+            ["bash", str(_RACE), "--yasim", "--viz"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(r.returncode, 2)
+
+
 if __name__ == "__main__":
     unittest.main()
