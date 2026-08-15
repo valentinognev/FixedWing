@@ -1,6 +1,10 @@
 # Updates
 
-## 0.21.0 - YASim fan-out, balloons, Nasal telnet
+## 0.21.0 - Rascal balloon race (JSBSim + YASim) with Euler+thrust commands
+- Attitude mode: quaternion PID internally; SET_ATTITUDE_TARGET is roll/pitch/yaw + thrust on JSBSim, YASim, and Gazebo.
+- JSBSim/YASim straight flight default `--cmd-mode attitude` (was ignored / velocity).
+- `./run_balloon_race.sh --yasim` — YASim FG Rascal, FG camera, Nasal balloons; exclusive with `--viz`/`--gz`.
+- Race attach skips autopilot reboot (`--no-sim`); YASim sim gains mavlink-server fan-out + balloon models; `kill.sh --fg` drops the sidecar.
 - `runSimYasimRascal.sh`: `--mavlink-server` / `MAVLINK_FANOUT` default 0, fail loud; balloons bind-mount `/opt/fixedwing/balloons` and copy into FG_ROOT `Models/FixedWing/`.
 - `patch_px4_flightgear_sitl.sh`: idempotent `--telnet=5501` + `--allow-nasal-from-sockets` on FG_run.py (no `--fdm=null` / hide-aircraft).
 - `kill.sh --fg` / `--all`: `kill_fg_stack` drops FG container, `${FG_NAME}-mavlink` sidecar, and host mavlink-server.

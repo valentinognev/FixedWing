@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 import unittest
@@ -97,6 +98,18 @@ class TestYasimRaceLauncher(unittest.TestCase):
             text=True,
         )
         self.assertEqual(r.returncode, 2)
+
+
+class TestRascalRaceDocs(unittest.TestCase):
+    def test_readme_names_yasim_race_and_angle_commands(self) -> None:
+        readme = (_PYTHON_ROOT.parent / "README.md").read_text(encoding="utf-8")
+        self.assertIn("--yasim", readme)
+        self.assertIn("Euler", readme)
+        self.assertIn("quaternion", readme.lower())
+
+    def test_updates_has_0_21_0(self) -> None:
+        updates = (_PYTHON_ROOT.parent / "UPDATES.md").read_text(encoding="utf-8")
+        self.assertRegex(updates, re.compile(r"^## 0\.21\.0 ", re.M))
 
 
 if __name__ == "__main__":
