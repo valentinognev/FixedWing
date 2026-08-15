@@ -81,7 +81,7 @@ def add_common_args(parser: argparse.ArgumentParser, *, default_sim: Path) -> No
         default="velocity",
         help=(
             "OFFBOARD hold: velocity = locked-line path setpoints; "
-            "attitude = quaternion angle PID + SET_ATTITUDE_TARGET "
+            "attitude = quaternion PID then Euler + thrust SET_ATTITUDE_TARGET "
             "(default: velocity)"
         ),
     )

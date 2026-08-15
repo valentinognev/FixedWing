@@ -22,7 +22,7 @@ from fw_sitl.body_cmd_controllers import (
     VelocityChaseController,
     make_body_cmd_controller,
 )
-from fw_sitl.quat import from_rpy, rpy_from_quat
+from fw_sitl.quat import from_rpy
 
 
 class TestBodyCmdMode(unittest.TestCase):
@@ -62,11 +62,13 @@ class TestVelocityChaseController(unittest.TestCase):
 
 
 class TestAttitudeChaseController(unittest.TestCase):
-    def test_too_low_sends_nose_up_quaternion(self) -> None:
+    def test_too_low_sends_nose_up_pitch_and_thrust(self) -> None:
         bridge = BodyCmdBridge(lookahead_m=500.0, speed_mps=30.0)
         ctrl = AttitudeChaseController(bridge, speed_mps=30.0)
         q_act = from_rpy(0.0, 0.0, 0.0)
-        with patch("fw_sitl.body_cmd_controllers.send_attitude_quat") as send:
+        with patch(
+            "fw_sitl.body_cmd_controllers.send_attitude_target", create=True
+        ) as send:
             ctrl.send_chase_setpoint(
                 MagicMock(),
                 (0.0, 0.0, -60.0),
@@ -78,9 +80,7 @@ class TestAttitudeChaseController(unittest.TestCase):
                 groundspeed=30.0,
             )
         send.assert_called_once()
-        q_cmd = send.call_args[0][1]
-        thrust = send.call_args[0][2]
-        _roll, pitch, _yaw = rpy_from_quat(q_cmd)
+        _master, roll, pitch, yaw, thrust = send.call_args[0]
         self.assertGreater(pitch, 0.0)
         self.assertGreater(thrust, 0.62)
 
@@ -88,7 +88,9 @@ class TestAttitudeChaseController(unittest.TestCase):
         bridge = BodyCmdBridge(lookahead_m=500.0, speed_mps=30.0)
         ctrl = AttitudeChaseController(bridge, speed_mps=30.0, pid=AttitudePid(kp=1.0, ki=0.0, kd=0.0))
         q_act = from_rpy(0.0, 0.0, 0.0)
-        with patch("fw_sitl.body_cmd_controllers.send_attitude_quat") as send:
+        with patch(
+            "fw_sitl.body_cmd_controllers.send_attitude_target", create=True
+        ) as send:
             ctrl.send_chase_setpoint(
                 MagicMock(),
                 (0.0, 0.0, -10.0),
@@ -100,8 +102,8 @@ class TestAttitudeChaseController(unittest.TestCase):
                 groundspeed=30.0,
                 heading_rad=-0.21,
             )
-        q_cmd = send.call_args[0][1]
-        roll, _p, _y = rpy_from_quat(q_cmd)
+        send.assert_called_once()
+        _master, roll, _pitch, _yaw, _thrust = send.call_args[0]
         self.assertGreater(roll, 0.0)
 
     def test_in_view_los_right_banks_right_not_track(self) -> None:
@@ -112,7 +114,9 @@ class TestAttitudeChaseController(unittest.TestCase):
         )
         az = 0.35
         dir_ned = (math.cos(az), math.sin(az), 0.0)
-        with patch("fw_sitl.body_cmd_controllers.send_attitude_quat") as send:
+        with patch(
+            "fw_sitl.body_cmd_controllers.send_attitude_target", create=True
+        ) as send:
             ctrl.send_chase_setpoint(
                 MagicMock(),
                 (0.0, 0.0, -10.0),
@@ -125,7 +129,8 @@ class TestAttitudeChaseController(unittest.TestCase):
                 in_view=True,
                 z_target=-10.0,
             )
-        roll, _p, _y = rpy_from_quat(send.call_args[0][1])
+        send.assert_called_once()
+        _master, roll, _pitch, _yaw, _thrust = send.call_args[0]
         self.assertGreater(roll, 0.1)
 
     def test_in_view_skips_lookahead_z(self) -> None:
@@ -136,7 +141,7 @@ class TestAttitudeChaseController(unittest.TestCase):
         bridge.chase_geometry = MagicMock(  # type: ignore[method-assign]
             side_effect=AssertionError("in_view must not call chase_geometry")
         )
-        with patch("fw_sitl.body_cmd_controllers.send_attitude_quat"):
+        with patch("fw_sitl.body_cmd_controllers.send_attitude_target", create=True):
             ctrl.send_chase_setpoint(
                 MagicMock(),
                 (0.0, 0.0, -10.0),

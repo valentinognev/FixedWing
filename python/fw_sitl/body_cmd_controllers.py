@@ -13,7 +13,7 @@ from fw_sitl.body_cmd_bridge import (
     DEFAULT_MAX_ALT_STEP_M,
     BodyCmdBridge,
 )
-from fw_sitl.mavlink_io import send_attitude_quat
+from fw_sitl.mavlink_io import send_attitude_target
 from fw_sitl.path_geometry import ned_velocity_from_course
 from fw_sitl.quat import from_rpy, rpy_from_quat
 
@@ -156,7 +156,8 @@ class AttitudeChaseController:
             speed_mps=self._speed_mps,
             roll_rad=roll_des,
         )
-        send_attitude_quat(master, q_cmd, thrust)
+        roll, pitch, yaw = rpy_from_quat(q_cmd)
+        send_attitude_target(master, roll, pitch, yaw, thrust)
         self.last_q_des = q_des
         self.last_q_cmd = q_cmd
         self.last_thrust = thrust

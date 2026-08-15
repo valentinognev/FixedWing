@@ -22,7 +22,7 @@ from fw_sitl.mavlink_io import (
     poll_vehicle_state,
     prepare_sitl_arming,
     reboot_autopilot,
-    send_attitude_quat,
+    send_attitude_target,
     send_path_setpoint,
     set_offboard,
 )
@@ -617,7 +617,8 @@ def run_locked_line_hold(
                 speed_mps=speed_mps,
                 roll_rad=roll_des,
             )
-            send_attitude_quat(master, q_cmd, thrust)
+            roll, pitch, yaw = rpy_from_quat(q_cmd)
+            send_attitude_target(master, roll, pitch, yaw, thrust)
         else:
             send_path_setpoint(
                 master,
