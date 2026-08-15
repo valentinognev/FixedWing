@@ -7,7 +7,8 @@ import math
 DEFAULT_SPEED_MPS = 30.0
 
 BANK_KP_HEADING = 1.5
-BANK_KP_CROSS_TRACK = 0.003  # rad per metre of cross-track
+BANK_KP_CROSS_TRACK = 0.003  # rad per metre of cross-track (legacy P; intercept preferred)
+BANK_XT_LOOKAHEAD_M = 180.0
 BANK_MAX_ROLL_RAD = 0.45
 BANK_KP_ALT = 0.025  # rad pitch per metre NED-z error
 BANK_MAX_PITCH_RAD = 0.12
@@ -103,11 +104,24 @@ def bank_to_turn_commands(
     max_roll: float = BANK_MAX_ROLL_RAD,
     kp_alt: float = BANK_KP_ALT,
     max_pitch: float = BANK_MAX_PITCH_RAD,
+    heading_rad: float | None = None,
+    xt_lookahead_m: float = BANK_XT_LOOKAHEAD_M,
 ) -> tuple[float, float]:
-    """Return (roll, pitch) rad for straight-line hold via bank-to-turn."""
-    heading_err = wrap_pi(course_rad - float(yaw_rad))
+    """Return (roll, pitch) rad for straight-line hold via bank-to-turn.
+
+    Bank tracks ``course + atan2(-xt, lookahead)`` vs ``heading_rad`` (ground
+    track when provided, else yaw). A yaw-only P plus xt P can cancel at a
+    wings-level crab; the intercept law does not.
+    """
+    href = float(yaw_rad) if heading_rad is None else float(heading_rad)
     xt = cross_track_m(xy[0], xy[1], origin_xy, course_rad)
-    roll = kp_heading * heading_err + kp_cross_track * xt
+    intercept = 0.0
+    if xt_lookahead_m > 1.0:
+        intercept = math.atan2(-xt, float(xt_lookahead_m))
+    heading_err = wrap_pi(course_rad + intercept - href)
+    roll = kp_heading * heading_err
+    if xt_lookahead_m <= 1.0:
+        roll -= kp_cross_track * xt
     roll = max(-max_roll, min(max_roll, roll))
     # NED z positive down: z_ned > z_hold ⇒ too low ⇒ pitch up.
     pitch = kp_alt * (float(z_ned) - float(z_hold))

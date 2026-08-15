@@ -33,7 +33,12 @@ from fw_sitl.cli_common import (
     add_common_args,
     resolve_speed,
 )
-from fw_sitl.sim_lifecycle import SCRIPTS_DIR, kill_docker, kill_sim, start_sim
+from fw_sitl.sim_lifecycle import (
+    SCRIPTS_DIR,
+    kill_docker,
+    kill_sim,
+    start_sim,
+)
 from fw_sitl.straight_flight_core import EngageError, run_locked_line_hold
 
 DEFAULT_SIM = SCRIPTS_DIR / "runSimGzPlane.sh"
@@ -46,10 +51,12 @@ def main() -> int:
         description=(
             "OFFBOARD straight flight for Gazebo PX4 plane SITL "
             f"(default ~{DEFAULT_SPEED_MPS:.0f} m/s; GUI always; "
-            "locked-line LOCAL_NED path — same as YASim runner)"
+            "locked-line LOCAL_NED path — same as YASim runner). "
+            "Default --cmd-mode attitude (quaternion PID)."
         )
     )
     add_common_args(parser, default_sim=DEFAULT_SIM)
+    parser.set_defaults(cmd_mode="attitude")
     parser.add_argument(
         "--model",
         choices=("rc_cessna", "advanced_plane"),
@@ -72,7 +79,15 @@ def main() -> int:
         kill_sim(args.sim, label="\nStopping simulation container...")
 
     if not args.no_sim:
-        start_sim(args.sim, extra_args=sim_extra)
+        try:
+            start_sim(args.sim, extra_args=sim_extra)
+        except RuntimeError as exc:
+            raise RuntimeError(
+                f"{exc}\n"
+                "Gazebo SITL needs Docker image px4-noble-sim-ros "
+                "(cd Dockerfiles && ./PX4_noble_sim_build.sh) and "
+                "docker --gpus all (nvidia-container-toolkit; nvidia-smi must work)."
+            ) from exc
         sim_owned = True
         if args.warmup > 0:
             time.sleep(args.warmup)
@@ -87,7 +102,7 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _on_signal)
 
     try:
-        return run_locked_line_hold(
+        rc = run_locked_line_hold(
             udp_port=args.udp,
             speed_mps=speed,
             course_deg=args.course_deg,
@@ -104,7 +119,9 @@ def main() -> int:
             arm_timeout_s=60.0,
             full_sim_restart=False,
             accept_unhealthy=True,
+            cmd_mode=args.cmd_mode,
         )
+        return rc
     except EngageError as exc:
         print(f"Engage failed: {exc}", file=sys.stderr)
         _stop_sim()

@@ -12,6 +12,7 @@ from fw_sitl.path_geometry import (
     bank_to_turn_commands,
     path_setpoint_on_line,
 )
+from fw_sitl.quat import Quat, normalize
 
 # FW OFFBOARD uses position only (PX4 ignores velocity/accel on fixed-wing).
 # Ignore vel so the type_mask matches the documented FW position setpoint.
@@ -113,6 +114,17 @@ def wait_armed(master: mavutil.mavfile, timeout: float = 1.0) -> bool:
     return bool(armed)
 
 
+def _positive_speed(value: object) -> float | None:
+    """Finite speed in m/s, or None if missing / NaN / inf / ~zero."""
+    try:
+        speed = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(speed) or speed < 1e-3:
+        return None
+    return speed
+
+
 def wait_min_airspeed(
     master: mavutil.mavfile,
     *,
@@ -134,18 +146,22 @@ def wait_min_airspeed(
         0,
     )
     deadline = time.time() + timeout_s
-    last = 0.0
+    last = float("nan")
     while time.time() < deadline:
         msg = master.recv_match(type="VFR_HUD", blocking=True, timeout=0.5)
         if msg is None:
             continue
-        last = float(getattr(msg, "airspeed", 0.0) or 0.0)
-        if last < 1e-3:
-            last = float(getattr(msg, "groundspeed", 0.0) or 0.0)
+        airspeed = _positive_speed(getattr(msg, "airspeed", None))
+        groundspeed = _positive_speed(getattr(msg, "groundspeed", None))
+        candidate = airspeed if airspeed is not None else groundspeed
+        if candidate is None:
+            continue
+        last = candidate
         if last >= min_mps:
             return last
+    last_s = "nan" if not math.isfinite(last) else f"{last:.1f}"
     raise RuntimeError(
-        f"in-air spawn has no airspeed (last={last:.1f} m/s, need >={min_mps:.0f})"
+        f"in-air spawn has no airspeed (last={last_s} m/s, need >={min_mps:.0f})"
     )
 
 
@@ -267,7 +283,6 @@ def prepare_sitl_arming(master: mavutil.mavfile) -> None:
         ("ASPD_PRIMARY", 0),  # groundspeed−wind; avoids sensor-failure failsafe
         ("ASPD_FALLBACK", 1),
         ("ASPD_DO_CHECKS", 0),
-        ("FW_ARSP_MODE", 2),
         ("GF_ACTION", 0),
         ("FD_FAIL_P", 0),
         ("FD_FAIL_R", 0),
@@ -372,6 +387,25 @@ def local_ned_frame() -> int:
     return mavutil.mavlink.MAV_FRAME_LOCAL_NED
 
 
+def send_attitude_quat(
+    master: mavutil.mavfile,
+    q: Quat | list[float] | tuple[float, ...],
+    thrust: float,
+) -> None:
+    qn = normalize((float(q[0]), float(q[1]), float(q[2]), float(q[3])))
+    master.mav.set_attitude_target_send(
+        0,
+        master.target_system,
+        master.target_component,
+        TYPEMASK_ATT_IGNORE_RATES,
+        [qn[0], qn[1], qn[2], qn[3]],
+        0.0,
+        0.0,
+        0.0,
+        float(thrust),
+    )
+
+
 def send_attitude_target(
     master: mavutil.mavfile,
     roll: float,
@@ -379,16 +413,8 @@ def send_attitude_target(
     yaw: float,
     thrust: float,
 ) -> None:
-    master.mav.set_attitude_target_send(
-        0,
-        master.target_system,
-        master.target_component,
-        TYPEMASK_ATT_IGNORE_RATES,
-        attitude_quaternion_from_rpy(roll, pitch, yaw),
-        0.0,
-        0.0,
-        0.0,
-        float(thrust),
+    send_attitude_quat(
+        master, attitude_quaternion_from_rpy(roll, pitch, yaw), thrust
     )
 
 

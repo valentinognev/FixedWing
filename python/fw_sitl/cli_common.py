@@ -75,6 +75,16 @@ def add_common_args(parser: argparse.ArgumentParser, *, default_sim: Path) -> No
         action="store_true",
         help="Skip post-flight matplotlib history window (default: show plot)",
     )
+    parser.add_argument(
+        "--cmd-mode",
+        choices=("velocity", "attitude"),
+        default="velocity",
+        help=(
+            "OFFBOARD hold: velocity = locked-line path setpoints; "
+            "attitude = quaternion angle PID + SET_ATTITUDE_TARGET "
+            "(default: velocity)"
+        ),
+    )
 
 
 def add_vstall_arg(parser: argparse.ArgumentParser) -> None:

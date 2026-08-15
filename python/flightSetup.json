@@ -6,8 +6,8 @@
   },
   "balloons": [
     {"ned": [300, 0, 0], "color": [255, 0, 0], "diameter_m": 10},
-    {"ned": [600, 80, 15], "color": [0, 255, 0], "diameter_m": 10},
-    {"ned": [900, 40, -15], "color": [0, 0, 255], "diameter_m": 10}
+    {"ned": [600, 80, 250], "color": [0, 255, 0], "diameter_m": 10},
+    {"ned": [900, 40, 150], "color": [0, 0, 255], "diameter_m": 10}
   ],
   "camera": {
     "hfov_deg": 90, "vfov_deg": 70,
@@ -24,9 +24,9 @@
     "lookahead_m": 500,
     "assisted_print_period_s": 5,
     "stale_track_warn_s": 10,
-    "laps": 1,
+    "laps": 0,
     "duration_s": 180,
-    "cmd_mode": "velocity",
+    "cmd_mode": "attitude",
     "alt_preserve_heading_err_deg": 20
   },
   "verification": {

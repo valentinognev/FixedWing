@@ -1,7 +1,7 @@
 # Balloon-race / SITL Python helpers (install under python/)
 numpy>=1.24
 pyzmq>=25
-opencv-python-headless>=4.8
+opencv-python>=4.8,<5
 pymavlink>=2.4
 mss>=9.0
-# For camera GUI windows later, opencv-python may be preferred over headless.
+# Camera pane uses cv2.namedWindow / imshow (not the headless build).

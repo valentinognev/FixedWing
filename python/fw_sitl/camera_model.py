@@ -201,14 +201,17 @@ def _matvec3(
 def ned_to_body_rotation(
     roll: float, pitch: float, yaw: float
 ) -> tuple[tuple[float, float, float], ...]:
-    """3x3 row-major R: v_body = R @ v_ned (PX4 ATTITUDE Euler convention)."""
+    """3x3 row-major R: v_body = R @ v_ned (PX4 Tait-Bryan 321 / ATTITUDE).
+
+    Yaw+ is East of North; pitch+ is nose up (body X has negative NED z).
+    """
     cr, sr = math.cos(roll), math.sin(roll)
     cp, sp = math.cos(pitch), math.sin(pitch)
     cy, sy = math.cos(yaw), math.sin(yaw)
     return (
-        (cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr),
-        (sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr),
-        (-sp, cp * sr, cp * cr),
+        (cp * cy, cp * sy, -sp),
+        (sr * sp * cy - cr * sy, sr * sp * sy + cr * cy, sr * cp),
+        (cr * sp * cy + sr * sy, cr * sp * sy - sr * cy, cr * cp),
     )
 
 
@@ -274,17 +277,6 @@ def dir_cam_to_pixel(
     if px is None:
         raise ValueError("direction behind camera (z <= 0)")
     return px
-
-
-def ned_to_body_rotation(roll: float, pitch: float, yaw: float) -> tuple[tuple[float, float, float], ...]:
-    """Aviation ZYX: NED → body FRD (row-major 3x3)."""
-    cr, sr = math.cos(roll), math.sin(roll)
-    cp, sp = math.cos(pitch), math.sin(pitch)
-    cy, sy = math.cos(yaw), math.sin(yaw)
-    rz = ((cy, -sy, 0.0), (sy, cy, 0.0), (0.0, 0.0, 1.0))
-    ry = ((cp, 0.0, sp), (0.0, 1.0, 0.0), (-sp, 0.0, cp))
-    rx = ((1.0, 0.0, 0.0), (0.0, cr, -sr), (0.0, sr, cr))
-    return _matmul3(rx, _matmul3(ry, rz))
 
 
 def body_to_ned_rotation(roll: float, pitch: float, yaw: float) -> tuple[tuple[float, float, float], ...]:

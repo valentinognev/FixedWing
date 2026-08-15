@@ -89,6 +89,10 @@ class TestFlightSetupDefaults(unittest.TestCase):
         self.assertEqual(setup.verification.pass_time_tol_s, 4.0)
         self.assertEqual(setup.verification.path_rms_max_m, 25.0)
 
+    def test_laps_zero_is_unlimited(self) -> None:
+        setup = flight_setup_from_dict({"guidance": {"laps": 0, "duration_s": 180}})
+        self.assertEqual(setup.guidance.laps, 0)
+
     def test_invalid_cmd_mode_rejected(self) -> None:
         with self.assertRaises(ValueError):
             flight_setup_from_dict({"guidance": {"cmd_mode": "hover"}})
@@ -102,9 +106,9 @@ class TestFlightSetupDefaults(unittest.TestCase):
         self.assertEqual(setup.balloons[2].ned, (900.0, 40.0, -15.0))
         self.assertEqual(setup.balloons[2].color, (0, 0, 255))
         self.assertEqual(setup.camera.fg_window_pattern, "FlightGear|fgfs")
-        self.assertEqual(setup.guidance.cmd_mode, "velocity")
+        self.assertEqual(setup.guidance.cmd_mode, "attitude")
         self.assertEqual(setup.guidance.alt_preserve_heading_err_deg, 20.0)
-        self.assertEqual(setup.guidance.laps, 1)
+        self.assertEqual(setup.guidance.laps, 0)
         self.assertEqual(setup.guidance.duration_s, 180.0)
         self.assertEqual(setup.guidance.stale_track_warn_s, 10.0)
         self.assertEqual(setup.verification.pixel_rms_max_px, 15.0)

@@ -77,6 +77,17 @@ class TestRaceEndReason(unittest.TestCase):
             "duration",
         )
 
+    def test_laps_zero_keeps_cycling(self) -> None:
+        self.assertIsNone(
+            race_end_reason(
+                laps_completed=3,
+                laps_target=0,
+                elapsed_s=60.0,
+                duration_s=180.0,
+                interrupted=False,
+            )
+        )
+
     def test_none_while_running(self) -> None:
         self.assertIsNone(
             race_end_reason(
@@ -135,6 +146,28 @@ class TestLapCounting(unittest.TestCase):
             )
         self.assertEqual(race.laps_completed, 2)
         self.assertEqual(race.pass_count, 6)
+
+    def test_laps_zero_wrap_keeps_targeting_red(self) -> None:
+        race = _race(n=3, laps=0)
+        for i in range(3):
+            balloon = race.balloon_ned()
+            self.assertTrue(
+                race.check_pass(
+                    (balloon[0], balloon[1], balloon[2]),
+                    approach_dir_ned=(1.0, 0.0, 0.0),
+                )
+            )
+            self.assertEqual(race.last_passed_idx, i)
+        self.assertEqual(race.target_idx, 0)
+        self.assertEqual(race.laps_completed, 1)
+        self.assertIsNone(
+            race_end_reason(
+                laps_completed=race.laps_completed,
+                laps_target=race.guidance.laps,
+                elapsed_s=60.0,
+                duration_s=180.0,
+            )
+        )
 
 
 class TestRaceCsvLogger(unittest.TestCase):

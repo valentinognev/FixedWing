@@ -90,8 +90,26 @@ class TestBodyCmdBridge3DAim(unittest.TestCase):
         self.assertAlmostEqual(z_hold, expected)
         self.assertEqual(z_hold, -40.0)
 
+    def test_alt_preserve_does_not_ratchet_sink(self) -> None:
+        """Large heading error must hold the first Z, not follow a descending pos."""
+        bridge = BodyCmdBridge(
+            lookahead_m=100.0,
+            speed_mps=30.0,
+            max_alt_step_m=40.0,
+            alt_preserve_heading_err_rad=DEFAULT_ALT_PRESERVE_HEADING_ERR_RAD,
+        )
+        dir_ned = (0.0, 0.8, -0.6)  # east, large heading error vs yaw north
+        _aim, _course, z0 = bridge.chase_geometry(
+            (0.0, 0.0, 50.0), dir_ned, yaw_rad=0.0
+        )
+        self.assertAlmostEqual(z0, 50.0)
+        _aim, _course, z1 = bridge.chase_geometry(
+            (0.0, 0.0, 80.0), dir_ned, yaw_rad=0.0
+        )
+        self.assertAlmostEqual(z1, 50.0)
+
     def test_heading_error_blends_toward_preserve(self) -> None:
-        """Mid-range heading error blends between pos Z and clamped aim Z."""
+        """Mid-range heading error blends between last Z command and clamped aim Z."""
         thresh = math.radians(40.0)
         bridge = BodyCmdBridge(
             lookahead_m=100.0,
@@ -108,6 +126,17 @@ class TestBodyCmdBridge3DAim(unittest.TestCase):
         z_aim = max(pos[2] - 100.0, min(pos[2] + 100.0, aim[2]))
         expected = pos[2] + 0.5 * (z_aim - pos[2])
         self.assertAlmostEqual(z_hold, expected, places=5)
+
+    def test_in_view_climb_does_not_follow_sink(self) -> None:
+        """No-yaw climb must not rebase z_hold to a descending pos_z."""
+        bridge = BodyCmdBridge(lookahead_m=500.0, speed_mps=30.0, max_alt_step_m=40.0)
+        dir_ned = (0.8, 0.0, -0.6)
+        _aim, _course, z0 = bridge.chase_geometry((0.0, 0.0, 100.0), dir_ned)
+        self.assertEqual(z0, 60.0)
+        _aim, _course, z1 = bridge.chase_geometry((0.0, 0.0, 140.0), dir_ned)
+        self.assertLessEqual(z1, z0)
+        # Must not snap to pos_z − 40 (the old per-tick rebase).
+        self.assertNotAlmostEqual(z1, 100.0)
 
     def test_send_chase_setpoint_uses_aim_xy_course_and_aim_z(self) -> None:
         lookahead = 200.0

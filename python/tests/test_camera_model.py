@@ -12,7 +12,15 @@ _PYTHON_ROOT = Path(__file__).resolve().parents[1]
 if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
-from fw_sitl.camera_model import CameraModel, dir_cam_to_pixel, pixel_to_dir_cam
+from fw_sitl.camera_model import (
+    CameraModel,
+    _matvec3,
+    body_to_ned_rotation,
+    dir_cam_to_ned,
+    dir_cam_to_pixel,
+    pixel_to_dir_cam,
+    project_ned_offset_to_pixel,
+)
 from fw_sitl.flight_setup import CameraSpec
 
 
@@ -51,6 +59,52 @@ class TestPixelLosRoundtrip(unittest.TestCase):
         n = math.sqrt(d[0] ** 2 + d[1] ** 2 + d[2] ** 2)
         self.assertAlmostEqual(n, 1.0, places=6)
         self.assertGreater(d[0], 0.0)
+
+
+class TestNedBodyEuler(unittest.TestCase):
+    def test_yaw_positive_ninety_body_x_is_east(self) -> None:
+        r = body_to_ned_rotation(0.0, 0.0, math.pi / 2)
+        east = _matvec3(r, (1.0, 0.0, 0.0))
+        self.assertAlmostEqual(east[0], 0.0, places=6)
+        self.assertAlmostEqual(east[1], 1.0, places=6)
+        self.assertAlmostEqual(east[2], 0.0, places=6)
+
+    def test_pitch_up_body_x_has_negative_ned_z(self) -> None:
+        r = body_to_ned_rotation(0.0, math.radians(10.0), 0.0)
+        ned = _matvec3(r, (1.0, 0.0, 0.0))
+        self.assertLess(ned[2], 0.0)
+
+    def test_right_pixel_with_yaw_commands_right_of_heading(self) -> None:
+        """In-view chase must turn toward a balloon on the right of the image."""
+        model = CameraModel(
+            hfov_deg=90.0, vfov_deg=70.0, width_px=640, height_px=480
+        )
+        yaw = math.radians(13.1)
+        dir_cam = pixel_to_dir_cam(model.cx + 150.0, model.cy, model)
+        ned = dir_cam_to_ned(dir_cam, model, 0.0, 0.0, yaw)
+        course = math.atan2(ned[1], ned[0])
+        self.assertGreater(course, yaw)
+        self.assertGreater(abs(course - yaw), math.radians(15.0))
+
+    def test_on_heading_level_projects_near_center(self) -> None:
+        model = CameraModel(
+            hfov_deg=90.0, vfov_deg=70.0, width_px=640, height_px=480
+        )
+        yaw = math.radians(13.1)
+        # Balloon along heading, same altitude.
+        px = project_ned_offset_to_pixel((300.0, 0.0, 0.0), model, 0.0, 0.0, 0.0)
+        assert px is not None
+        self.assertAlmostEqual(px[0], model.cx, delta=5.0)
+        self.assertAlmostEqual(px[1], model.cy, delta=5.0)
+        px_yaw = project_ned_offset_to_pixel(
+            (math.cos(yaw) * 300.0, math.sin(yaw) * 300.0, 0.0),
+            model,
+            0.0,
+            0.0,
+            yaw,
+        )
+        assert px_yaw is not None
+        self.assertAlmostEqual(px_yaw[0], model.cx, delta=8.0)
 
 
 if __name__ == "__main__":

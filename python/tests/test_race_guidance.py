@@ -85,6 +85,54 @@ class TestRacePass(unittest.TestCase):
         self.assertFalse(passed)
         self.assertEqual(race.target_idx, 0)
 
+    def test_closest_approach_after_in_view_advances(self) -> None:
+        """147 m fly-by (GZ race t≈25) must retarget; 50 m radius never fired until t≈115."""
+        race = _race(pass_radius=50.0)
+        race.update_track(True, (1.0, 0.0, 0.0))
+        self.assertFalse(race.check_pass((300.0, 140.0, 0.0), approach_dir_ned=(1.0, 0.0, 0.0)))
+        self.assertEqual(race.target_idx, 0)
+        race.update_track(False, (1.0, 0.0, 0.0))
+        self.assertTrue(race.check_pass((300.0, 155.0, 0.0), approach_dir_ned=(1.0, 0.0, 0.0)))
+        self.assertEqual(race.target_idx, 1)
+
+    def test_range_increase_without_in_view_does_not_pass(self) -> None:
+        race = _race(pass_radius=50.0)
+        self.assertFalse(race.check_pass((300.0, 140.0, 0.0), approach_dir_ned=(1.0, 0.0, 0.0)))
+        self.assertFalse(race.check_pass((300.0, 155.0, 0.0), approach_dir_ned=(1.0, 0.0, 0.0)))
+        self.assertEqual(race.target_idx, 0)
+
+    def test_range_increase_too_far_does_not_pass(self) -> None:
+        race = _race(pass_radius=50.0)
+        race.update_track(True, (1.0, 0.0, 0.0))
+        self.assertFalse(race.check_pass((300.0, 400.0, 0.0), approach_dir_ned=(1.0, 0.0, 0.0)))
+        race.update_track(False, (1.0, 0.0, 0.0))
+        self.assertFalse(race.check_pass((300.0, 420.0, 0.0), approach_dir_ned=(1.0, 0.0, 0.0)))
+        self.assertEqual(race.target_idx, 0)
+
+    def test_advance_clears_in_view_so_chase_follows_new_balloon(self) -> None:
+        race = _race()
+        race.update_track(True, (1.0, 0.0, 0.0))
+        self.assertTrue(race.check_pass((300.0, 0.0, 0.0), approach_dir_ned=(1.0, 0.0, 0.0)))
+        self.assertFalse(race.last_in_view)
+        pos = (300.0, 0.0, 0.0)
+        got = race.chase_dir_ned(pos, sim_time_s=1.0)
+        balloon = race.balloon_ned()
+        expected = _normalize3(
+            (balloon[0] - pos[0], balloon[1] - pos[1], balloon[2] - pos[2])
+        )
+        for a, b in zip(got, expected):
+            self.assertAlmostEqual(a, b, places=6)
+
+    def test_gate_uses_ground_track_not_los_to_balloon(self) -> None:
+        """LOS-as-approach makes gate_dot ≡ −range, so a 60 m abeam fly-by never passed."""
+        race = _race(pass_radius=50.0)
+        race.update_track(False, (1.0, 0.0, 0.0))
+        # South of balloon, flying north, 60 m east — inside 1.5*radius corridor.
+        race.check_pass((240.0, 60.0, 0.0), approach_dir_ned=(1.0, 0.0, 0.0))
+        passed = race.check_pass((360.0, 60.0, 0.0), approach_dir_ned=(1.0, 0.0, 0.0))
+        self.assertTrue(passed)
+        self.assertEqual(race.target_idx, 1)
+
 
 class TestRaceGuidance3DLos(unittest.TestCase):
     def test_startup_geometric_los_to_balloon_0(self) -> None:

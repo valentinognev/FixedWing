@@ -3,15 +3,17 @@
 
 from __future__ import annotations
 
+import math
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 _PYTHON_ROOT = Path(__file__).resolve().parents[1]
 if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
+from fw_sitl.attitude_pid import AttitudePid
 from fw_sitl.body_cmd_bridge import BodyCmdBridge
 from fw_sitl.body_cmd_controllers import (
     AttitudeChaseController,
@@ -20,6 +22,7 @@ from fw_sitl.body_cmd_controllers import (
     VelocityChaseController,
     make_body_cmd_controller,
 )
+from fw_sitl.quat import from_rpy, rpy_from_quat
 
 
 class TestBodyCmdMode(unittest.TestCase):
@@ -58,15 +61,105 @@ class TestVelocityChaseController(unittest.TestCase):
         self.assertEqual(aim, (100.0, 0.0, -10.0))
 
 
-class TestUnimplementedModes(unittest.TestCase):
-    def test_attitude_raises_clear_error(self) -> None:
-        ctrl = AttitudeChaseController()
-        with self.assertRaises((NotImplementedError, RuntimeError)) as ctx:
+class TestAttitudeChaseController(unittest.TestCase):
+    def test_too_low_sends_nose_up_quaternion(self) -> None:
+        bridge = BodyCmdBridge(lookahead_m=500.0, speed_mps=30.0)
+        ctrl = AttitudeChaseController(bridge, speed_mps=30.0)
+        q_act = from_rpy(0.0, 0.0, 0.0)
+        with patch("fw_sitl.body_cmd_controllers.send_attitude_quat") as send:
             ctrl.send_chase_setpoint(
-                MagicMock(), (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), 1
+                MagicMock(),
+                (0.0, 0.0, -60.0),
+                (1.0, 0.0, -0.2),
+                1,
+                yaw_rad=0.0,
+                q_act=q_act,
+                dt=0.05,
+                groundspeed=30.0,
             )
-        self.assertIn("attitude", str(ctx.exception).lower())
+        send.assert_called_once()
+        q_cmd = send.call_args[0][1]
+        thrust = send.call_args[0][2]
+        _roll, pitch, _yaw = rpy_from_quat(q_cmd)
+        self.assertGreater(pitch, 0.0)
+        self.assertGreater(thrust, 0.62)
 
+    def test_ground_track_left_of_course_banks_right(self) -> None:
+        bridge = BodyCmdBridge(lookahead_m=500.0, speed_mps=30.0)
+        ctrl = AttitudeChaseController(bridge, speed_mps=30.0, pid=AttitudePid(kp=1.0, ki=0.0, kd=0.0))
+        q_act = from_rpy(0.0, 0.0, 0.0)
+        with patch("fw_sitl.body_cmd_controllers.send_attitude_quat") as send:
+            ctrl.send_chase_setpoint(
+                MagicMock(),
+                (0.0, 0.0, -10.0),
+                (1.0, 0.0, 0.0),
+                1,
+                yaw_rad=0.0,
+                q_act=q_act,
+                dt=0.05,
+                groundspeed=30.0,
+                heading_rad=-0.21,
+            )
+        q_cmd = send.call_args[0][1]
+        roll, _p, _y = rpy_from_quat(q_cmd)
+        self.assertGreater(roll, 0.0)
+
+    def test_in_view_los_right_banks_right_not_track(self) -> None:
+        # Nose north; LOS 20° east. Track heading_rad=0 would command ~0 roll.
+        bridge = BodyCmdBridge(lookahead_m=500.0, speed_mps=30.0)
+        ctrl = AttitudeChaseController(
+            bridge, speed_mps=30.0, pid=AttitudePid(kp=1.0, ki=0.0, kd=0.0)
+        )
+        az = 0.35
+        dir_ned = (math.cos(az), math.sin(az), 0.0)
+        with patch("fw_sitl.body_cmd_controllers.send_attitude_quat") as send:
+            ctrl.send_chase_setpoint(
+                MagicMock(),
+                (0.0, 0.0, -10.0),
+                dir_ned,
+                1,
+                yaw_rad=0.0,
+                q_act=from_rpy(0.0, 0.0, 0.0),
+                dt=0.05,
+                heading_rad=0.0,
+                in_view=True,
+                z_target=-10.0,
+            )
+        roll, _p, _y = rpy_from_quat(send.call_args[0][1])
+        self.assertGreater(roll, 0.1)
+
+    def test_in_view_skips_lookahead_z(self) -> None:
+        bridge = BodyCmdBridge(lookahead_m=500.0, speed_mps=30.0)
+        ctrl = AttitudeChaseController(
+            bridge, speed_mps=30.0, pid=AttitudePid(kp=1.0, ki=0.0, kd=0.0)
+        )
+        bridge.chase_geometry = MagicMock(  # type: ignore[method-assign]
+            side_effect=AssertionError("in_view must not call chase_geometry")
+        )
+        with patch("fw_sitl.body_cmd_controllers.send_attitude_quat"):
+            ctrl.send_chase_setpoint(
+                MagicMock(),
+                (0.0, 0.0, -10.0),
+                (1.0, 0.0, -0.4),
+                1,
+                yaw_rad=0.0,
+                q_act=from_rpy(0.0, 0.0, 0.0),
+                dt=0.05,
+                heading_rad=0.0,
+                in_view=True,
+                z_target=-12.0,
+            )
+        self.assertAlmostEqual(ctrl.last_z_hold or 0.0, -12.0)
+        self.assertEqual(ctrl.last_law, "los")
+
+    def test_aim_point_ned_delegates_to_bridge(self) -> None:
+        bridge = BodyCmdBridge(lookahead_m=100.0, speed_mps=30.0)
+        ctrl = AttitudeChaseController(bridge, speed_mps=30.0)
+        aim = ctrl.aim_point_ned((0.0, 0.0, -10.0), (1.0, 0.0, 0.0))
+        self.assertEqual(aim, (100.0, 0.0, -10.0))
+
+
+class TestUnimplementedModes(unittest.TestCase):
     def test_rates_raises_clear_error(self) -> None:
         ctrl = RateChaseController()
         with self.assertRaises((NotImplementedError, RuntimeError)) as ctx:

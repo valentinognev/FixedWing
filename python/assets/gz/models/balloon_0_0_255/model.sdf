@@ -10,21 +10,11 @@
           </sphere>
         </geometry>
         <material>
-          <diffuse>
-            <r>0</r><g>0</g><b>1</b><a>1</a>
-          </diffuse>
-          <ambient>
-            <r>0</r><g>0</g><b>0.4</b><a>1</a>
-          </ambient>
+          <ambient>0 0 1 1</ambient>
+          <diffuse>0 0 1 1</diffuse>
+          <emissive>0 0 1 1</emissive>
         </material>
       </visual>
-      <collision name="collision">
-        <geometry>
-          <sphere>
-            <radius>5</radius>
-          </sphere>
-        </geometry>
-      </collision>
     </link>
   </model>
 </sdf>

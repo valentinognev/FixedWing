@@ -281,8 +281,8 @@ def _parse_guidance(raw: Any) -> GuidanceSpec:
         raise ValueError("guidance.assisted_print_period_s must be > 0")
     if stale <= 0.0:
         raise ValueError("guidance.stale_track_warn_s must be > 0")
-    if laps <= 0:
-        raise ValueError("guidance.laps must be > 0")
+    if laps < 0:
+        raise ValueError("guidance.laps must be >= 0 (0 = cycle until duration_s)")
     if duration <= 0.0:
         raise ValueError("guidance.duration_s must be > 0")
     if cmd_mode not in _ALLOWED_CMD_MODES:

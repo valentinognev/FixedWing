@@ -63,5 +63,13 @@ class TestColorAssistedZmq(unittest.TestCase):
         self.assertFalse(data.get("assisted", False))
 
 
+class TestConflateMultipart(unittest.TestCase):
+    def test_connect_sub_default_no_conflate(self) -> None:
+        """libzmq CONFLATE + multipart aborts: Assertion failed: !_more (fq.cpp:80)."""
+        text = (_PYTHON_ROOT / "fw_sitl" / "zmq_bus.py").read_text(encoding="utf-8")
+        self.assertIn("conflate: bool = False", text)
+        self.assertNotIn("conflate: bool = True", text)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -8,6 +8,9 @@ from dataclasses import dataclass, field
 from fw_sitl.flight_setup import BalloonSpec, GuidanceSpec
 
 ASSISTED_OVERLAY_TEXT = "assisted guidance"
+# After a lock, range rising by this much within 4× pass_radius counts as a fly-by.
+PASS_CLOSEST_HYST_M = 10.0
+PASS_MISS_MULT = 4.0
 
 
 def show_assisted_overlay(*, assisted: bool, in_view: bool) -> bool:
@@ -107,6 +110,8 @@ class RaceGuidance:
     _last_assisted_print: float = field(default_factory=lambda: -1e9)
     _last_stale_warn: float = field(default_factory=lambda: -1e9)
     _prev_gate_dot: float | None = None
+    _min_dist: float | None = None
+    _saw_in_view: bool = False
 
     @property
     def active_balloon(self) -> BalloonSpec:
@@ -216,34 +221,49 @@ class RaceGuidance:
         *,
         approach_dir_ned: tuple[float, float, float] | None = None,
     ) -> bool:
-        """True if within pass_radius or crossed gate plane near the balloon."""
+        """True if within pass_radius, closest-approach fly-by, or gate crossing.
+
+        ``approach_dir_ned`` must be ground track (velocity), not camera LOS:
+        LOS·(pos−balloon) is identically −range so a gate never fires.
+        """
         balloon = self.balloon_ned()
         dx = pos_ned[0] - balloon[0]
         dy = pos_ned[1] - balloon[1]
         dz = pos_ned[2] - balloon[2]
         dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if self.last_in_view:
+            self._saw_in_view = True
+        if self._min_dist is None or dist < self._min_dist:
+            self._min_dist = dist
+        miss_lim = PASS_MISS_MULT * self.guidance.pass_radius_m
+        reason: str | None = None
         if dist <= self.guidance.pass_radius_m:
-            self._advance_target("radius")
-            return True
-
+            reason = "radius"
+        elif (
+            self._saw_in_view
+            and self._min_dist is not None
+            and self._min_dist <= miss_lim
+            and dist >= self._min_dist + PASS_CLOSEST_HYST_M
+        ):
+            reason = "closest"
         approach = approach_dir_ned or self.last_dir_ned
         normal = _horizontal_unit(approach)
         gate_dot = dx * normal[0] + dy * normal[1]
-        # Gate plane alone is not enough: a heading flip far from the balloon
-        # can zero-cross gate_dot. Require being near the balloon in XY.
         horiz = math.hypot(dx, dy)
-        near_gate = horiz <= 1.5 * self.guidance.pass_radius_m
-        crossed = False
+        near_gate = horiz <= miss_lim
         if (
-            near_gate
+            reason is None
+            and near_gate
             and self._prev_gate_dot is not None
             and self._prev_gate_dot < 0.0
             and gate_dot >= 0.0
         ):
-            crossed = True
-            self._advance_target("gate")
+            reason = "gate"
         self._prev_gate_dot = gate_dot
-        return crossed
+        if reason is not None:
+            self._advance_target(reason)
+            return True
+        return False
 
     def _advance_target(self, reason: str) -> None:
         old = self.target_idx
@@ -255,10 +275,13 @@ class RaceGuidance:
         if self.target_idx == 0:
             self.laps_completed += 1
         self._prev_gate_dot = None
+        self._min_dist = None
+        self._saw_in_view = False
+        self.last_in_view = False
         print(
             f"Passed balloon {old} ({reason}) → targeting balloon {self.target_idx} "
             f"color=RGB{self.active_color} "
-            f"(laps={self.laps_completed}/{self.guidance.laps})"
+            f"(laps={self.laps_completed}/{self.guidance.laps or '∞'})"
         )
 
     def horizontal_course_rad(self, dir_ned: tuple[float, float, float]) -> float:

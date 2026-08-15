@@ -42,6 +42,12 @@ class TestGzCamera(unittest.TestCase):
         self.assertIn("time.time() >= deadline", src)
         self.assertEqual(src.count("time.time() + timeout_s"), 1)
 
+    def test_docker_exec_unbuffered_stdout(self) -> None:
+        text = (_PYTHON_ROOT / "fw_sitl" / "gz_camera.py").read_text(encoding="utf-8")
+        src = text[text.index("def run_gz_publisher_via_docker") :]
+        self.assertIn("PYTHONUNBUFFERED=1", src)
+        self.assertIn("-u", src)
+
 
 if __name__ == "__main__":
     unittest.main()

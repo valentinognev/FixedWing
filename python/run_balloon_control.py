@@ -24,13 +24,14 @@ from fw_sitl.flight_setup import load_flight_setup
 from fw_sitl.mavlink_io import (
     PX4_CUSTOM_MAIN_MODE_OFFBOARD,
     arm,
+    change_airspeed,
     connect,
     local_ned_frame,
     poll_vehicle_state,
     prepare_sitl_arming,
     reboot_autopilot,
     set_offboard,
-    wait_min_airspeed,
+    set_param,
 )
 from fw_sitl.path_geometry import ned_velocity_from_course
 from fw_sitl.race_csv import RaceCsvLogger, default_csv_path
@@ -146,14 +147,6 @@ def main() -> int:
         _stop_sim()
         return 1
 
-    if args.gz:
-        try:
-            wait_min_airspeed(master)
-        except RuntimeError as exc:
-            print(exc, file=sys.stderr)
-            _stop_sim()
-            return 1
-
     prepare_sitl_arming(master)
     # FG viz attach: skip reboot — EKF re-init while the unarmed plane falls yields
     # persistent "High Gyro Bias" / arm denied. Fresh sim already has params applied
@@ -224,6 +217,19 @@ def main() -> int:
     )
     z_hold = z_box[0]
 
+    cruise_aspd = float(setup.guidance.speed_mps)
+    aspd_sp = cruise_aspd
+    if args.gz and str(setup.guidance.cmd_mode).lower() != "attitude":
+        # Spawn velocity is gone by arm (~14 m/s). TECS tracks FW_AIRSPD_TRIM
+        # (DO_CHANGE_SPEED alone still left trim=30 → underspeed dive).
+        aspd_sp = min(cruise_aspd, 16.0)
+        set_param(master, "FW_AIRSPD_TRIM", aspd_sp)
+        change_airspeed(master, aspd_sp)
+        print(
+            f"GZ: airspeed SP {aspd_sp:.0f} m/s until GS recovers "
+            f"(cruise {cruise_aspd:.0f})"
+        )
+
     # Config balloon Z is home/aircraft-relative; also rebase onto settled local Z so
     # residual EKF offset does not recreate a huge climb setpoint.
     race_balloons = rebase_balloons_to_local_z(setup.balloons, z_hold)
@@ -291,6 +297,8 @@ def main() -> int:
             setup.guidance.alt_preserve_heading_err_deg
         ),
     )
+    if hasattr(controller, "_bridge"):
+        controller._bridge._alt_hold_z = float(z_hold)
     color_pub = ColorPublisher(setup.zmq.color)
     track_sub = TrackSubscriber(setup.zmq.track)
     stale_age_s = STALE_TRACK_CAMERA_PERIODS / setup.camera.rate_hz
@@ -325,7 +333,8 @@ def main() -> int:
 
     print(
         f"Racing balloon {race.target_idx} color=RGB{race.active_color}; "
-        f"laps={laps_target} duration_s={duration_s:.0f}; "
+        f"laps={laps_target or '∞'} duration_s={duration_s:.0f}; "
+        f"cmd_mode={cmd_mode.value}; "
         f"csv={csv_path}; track←{setup.zmq.track}; stale_age={stale_age_s:.3f}s "
         f"({STALE_TRACK_CAMERA_PERIODS}/camera.rate_hz)"
     )
@@ -344,11 +353,28 @@ def main() -> int:
                 break
 
             pos = history.poll(master)
-            while True:
-                msg = master.recv_match(type="ATTITUDE", blocking=False)
-                if msg is None:
-                    break
-                att = (float(msg.roll), float(msg.pitch), float(msg.yaw))
+            # history.poll already drains ATTITUDE into last_att_rad. A second
+            # recv_match(ATTITUDE) is empty, which used to leave att=(0,0,0):
+            # camera LOS mapped as heading-north and alt-preserve froze Z off-north.
+            if history.last_att_rad is not None:
+                att = history.last_att_rad
+
+            if (
+                args.gz
+                and str(setup.guidance.cmd_mode).lower() != "attitude"
+                and aspd_sp < cruise_aspd
+                and now_s >= 20.0
+                and history.last_groundspeed is not None
+                and history.last_vz is not None
+                and history.last_vz < 1.5
+            ):
+                aspd_sp = cruise_aspd
+                set_param(master, "FW_AIRSPD_TRIM", aspd_sp)
+                change_airspeed(master, aspd_sp)
+                print(
+                    f"GZ: airspeed SP restored to {aspd_sp:.0f} m/s "
+                    f"(gs={history.last_groundspeed:.1f} vz={history.last_vz:.1f})"
+                )
 
             if pos is None:
                 pos = (xy[0], xy[1], z_hold)
@@ -361,9 +387,11 @@ def main() -> int:
             if track is not None:
                 if track_updated:
                     race.mark_track_received(now_s)
-                last_track_in_view = track.in_view
-                if track.in_view and track.dir_cam is not None:
-                    last_dir_cam = track.dir_cam
+                    last_track_in_view = track.in_view
+                    if track.in_view and track.dir_cam is not None:
+                        last_dir_cam = track.dir_cam
+                    else:
+                        last_dir_cam = None
 
             # Startup: no track yet → chase_dir_ned uses geometric LOS to balloon 0.
             # In view / between updates with last in_view: hold last_dir_cam, re-rotate.
@@ -376,7 +404,16 @@ def main() -> int:
 
             race.tick_stale(now_s, stale_age_s)
             chase = race.chase_dir_ned(pos, sim_time_s=now_s)
-            if race.check_pass(pos, approach_dir_ned=chase):
+            approach = chase
+            if (
+                history.last_vx is not None
+                and history.last_vy is not None
+                and math.hypot(history.last_vx, history.last_vy) >= 5.0
+            ):
+                approach = (history.last_vx, history.last_vy, 0.0)
+            if race.check_pass(pos, approach_dir_ned=approach):
+                last_track_in_view = False
+                last_dir_cam = None
                 passed_idx = (
                     race.last_passed_idx
                     if race.last_passed_idx is not None
@@ -408,11 +445,37 @@ def main() -> int:
                 last_published_assisted = race.assisted
                 last_color_pub_t = now_wall
 
-            # Bridge: course from aim XY; z_hold preserves altitude on large heading error.
-            controller.send_chase_setpoint(master, pos, chase, frame, yaw_rad=att[2])
-            if hasattr(controller, "_bridge"):
+            # In-view: look along camera LOS (yaw + elevation); balloon Z is
+            # thrust-only. Assisted: path intercept + balloon Z (no 500 m LOS Z).
+            yaw_for_sp = None if last_track_in_view else att[2]
+            heading_ref = att[2]
+            if (
+                (not last_track_in_view)
+                and history.last_vx is not None
+                and history.last_vy is not None
+                and math.hypot(history.last_vx, history.last_vy) >= 5.0
+            ):
+                heading_ref = math.atan2(history.last_vy, history.last_vx)
+            controller.send_chase_setpoint(
+                master,
+                pos,
+                chase,
+                frame,
+                yaw_rad=yaw_for_sp,
+                q_act=history.last_q,
+                dt=period,
+                groundspeed=history.last_groundspeed,
+                heading_rad=heading_ref,
+                in_view=last_track_in_view,
+                z_target=race.balloon_ned()[2],
+            )
+            if getattr(controller, "last_z_hold", None) is not None:
+                last_aim_z = float(controller.last_z_hold)
+            elif hasattr(controller, "_bridge") and controller._bridge._alt_hold_z is not None:
+                last_aim_z = float(controller._bridge._alt_hold_z)
+            elif hasattr(controller, "_bridge"):
                 last_aim_z = controller._bridge.chase_geometry(
-                    pos, chase, yaw_rad=att[2]
+                    pos, chase, yaw_rad=yaw_for_sp
                 )[2]
             else:
                 last_aim_z = controller.aim_point_ned(pos, chase)[2]

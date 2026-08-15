@@ -9,6 +9,16 @@ from dataclasses import dataclass, field
 
 from pymavlink import mavutil
 
+from fw_sitl.quat import Quat, from_rpy
+
+
+def _finite_or_none(val: object) -> float | None:
+    try:
+        num = float(val)
+    except (TypeError, ValueError):
+        return None
+    return num if math.isfinite(num) else None
+
 
 @dataclass
 class FlightHistory:
@@ -33,9 +43,16 @@ class FlightHistory:
 
     _last_att_deg: tuple[float, float, float] | None = field(default=None, repr=False)
     last_att_rad: tuple[float, float, float] | None = field(default=None, repr=False)
+    last_q: Quat | None = field(default=None, repr=False)
     last_pos: tuple[float, float, float] | None = field(default=None, repr=False)
     last_armed: bool | None = field(default=None, repr=False)
     last_main_mode: int | None = field(default=None, repr=False)
+    last_vz: float | None = field(default=None, repr=False)
+    last_vx: float | None = field(default=None, repr=False)
+    last_vy: float | None = field(default=None, repr=False)
+    last_airspeed: float | None = field(default=None, repr=False)
+    last_groundspeed: float | None = field(default=None, repr=False)
+    last_throttle: float | None = field(default=None, repr=False)
 
     def __len__(self) -> int:
         return len(self.t)
@@ -45,6 +62,7 @@ class FlightHistory:
         for msg_id in (
             mavutil.mavlink.MAVLINK_MSG_ID_LOCAL_POSITION_NED,
             mavutil.mavlink.MAVLINK_MSG_ID_ATTITUDE,
+            mavutil.mavlink.MAVLINK_MSG_ID_VFR_HUD,
         ):
             master.mav.command_long_send(
                 master.target_system,
@@ -64,7 +82,7 @@ class FlightHistory:
         """Drain position + attitude + heartbeat; append on each LOCAL_POSITION_NED."""
         while True:
             msg = master.recv_match(
-                type=["LOCAL_POSITION_NED", "ATTITUDE", "HEARTBEAT"],
+                type=["LOCAL_POSITION_NED", "ATTITUDE", "HEARTBEAT", "VFR_HUD"],
                 blocking=False,
             )
             if msg is None:
@@ -80,11 +98,19 @@ class FlightHistory:
                 )
                 self.last_main_mode = (int(msg.custom_mode) >> 16) & 0xFF
                 continue
+            if mtype == "VFR_HUD":
+                self.last_airspeed = _finite_or_none(getattr(msg, "airspeed", None))
+                self.last_groundspeed = _finite_or_none(
+                    getattr(msg, "groundspeed", None)
+                )
+                self.last_throttle = _finite_or_none(getattr(msg, "throttle", None))
+                continue
             if mtype == "ATTITUDE":
                 roll = float(msg.roll)
                 pitch = float(msg.pitch)
                 yaw = float(msg.yaw)
                 self.last_att_rad = (roll, pitch, yaw)
+                self.last_q = from_rpy(roll, pitch, yaw)
                 self._last_att_deg = (
                     math.degrees(roll),
                     math.degrees(pitch),
@@ -101,7 +127,10 @@ class FlightHistory:
             self.z.append(pos[2])
             self.vx.append(float(msg.vx))
             self.vy.append(float(msg.vy))
-            self.vz.append(float(msg.vz))
+            self.last_vx = float(msg.vx)
+            self.last_vy = float(msg.vy)
+            self.last_vz = float(msg.vz)
+            self.vz.append(self.last_vz)
             self.roll_deg.append(roll_d)
             self.pitch_deg.append(pitch_d)
             self.yaw_deg.append(yaw_d)

@@ -60,6 +60,11 @@ if [[ -z "${DISPLAY:-}" ]]; then
 	echo "Error: DISPLAY is not set (Gazebo GUI required)" >&2
 	exit 1
 fi
+if ! docker image inspect "${IMAGE_TAG}" >/dev/null 2>&1; then
+	echo "Error: Docker image '${IMAGE_TAG}' not found locally (will not pull from Docker Hub)." >&2
+	echo "  Build: cd ${REPO_ROOT}/Dockerfiles && ./PX4_noble_sim_build.sh" >&2
+	exit 1
+fi
 
 MAKE_TGT="gz_rc_cessna"
 if [[ "${GZ_MODEL}" == "advanced_plane" ]]; then
@@ -203,24 +208,7 @@ if [[ -t 0 && -z "${PX4_SITL_NO_DOCKER_TTY:-}" ]]; then
 	DOCKER_IT=(-it)
 fi
 
-echo "Starting ${IMAGE_TAG} Gazebo ${GZ_MODEL} pose=${POSE} setup=${SETUP}"
-if ! docker run "${DOCKER_IT[@]}" --rm \
-	--net=host --privileged --gpus all \
-	--name "${CONTAINER_NAME}" \
-	--env="DISPLAY=${DISPLAY}" \
-	--env="QT_X11_NO_MITSHM=1" \
-	--env="XAUTHORITY=${XAUTH_FILE}" \
-	--env="XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}" \
-	--env="PX4_GZ_WORLD=default" \
-	--env="PX4_GZ_MODEL_POSE=${POSE}" \
-	--volume="/tmp/.X11-unix:/tmp/.X11-unix:rw" \
-	--volume="${XDG_RUNTIME_DIR}:${XDG_RUNTIME_DIR}" \
-	--volume="${HOST_GZ_ASSETS}:/opt/fixedwing/gz:rw" \
-	--volume="${HOST_PYTHON}:/opt/fixedwing/python:ro" \
-	--volume="${SETUP}:/opt/fixedwing/flightSetup.json:ro" \
-	${XAUTH_FILE:+--volume="${XAUTH_FILE}:${XAUTH_FILE}:ro"} \
-	"${IMAGE_TAG}" \
-	/bin/bash -lc "set -euo pipefail
+INNER_CMD="set -euo pipefail
 		cd /home/valentin/PX4-Autopilot
 		export PYTHONPATH=/opt/fixedwing/python:/opt/fixedwing/gz/systems\${PYTHONPATH:+:\$PYTHONPATH}
 		STOCK=Tools/simulation/gz/models/${GZ_MODEL}/model.sdf
@@ -258,9 +246,53 @@ PY
 		source /tmp/fw_gz_vel.env
 		export GZ_SIM_RESOURCE_PATH=/tmp/fw_gz_overlay/models:/opt/fixedwing/gz/models\${GZ_SIM_RESOURCE_PATH:+:\$GZ_SIM_RESOURCE_PATH}
 		export GZ_SIM_SYSTEM_PLUGIN_PATH=/opt/fixedwing/gz/systems\${GZ_SIM_SYSTEM_PLUGIN_PATH:+:\$GZ_SIM_SYSTEM_PLUGIN_PATH}
+		python3 -m fw_sitl.gz_gui_follow --write-gui-config /tmp/fw_gz_gui.config --model ${GZ_MODEL}
+		export GZ_GUI_CONFIG=/tmp/fw_gz_gui.config
+		python3 -m fw_sitl.gz_gui_follow --follow --model ${GZ_MODEL} --timeout-s 0 >/tmp/fw_gz_follow.log 2>&1 &
 		make px4_sitl ${MAKE_TGT}
-	"
-then
-	echo "Error: docker run failed for ${IMAGE_TAG} (--gpus all). Install nvidia-container-toolkit and confirm the image exists." >&2
-	exit 1
+"
+
+run_gz_docker() {
+	local -a gpu_args=()
+	if [[ "${1}" == "gpu" ]]; then
+		gpu_args=(--gpus all)
+	fi
+	docker run "${DOCKER_IT[@]}" --rm \
+		--net=host --privileged "${gpu_args[@]}" \
+		--name "${CONTAINER_NAME}" \
+		--env="DISPLAY=${DISPLAY}" \
+		--env="QT_X11_NO_MITSHM=1" \
+		--env="XAUTHORITY=${XAUTH_FILE}" \
+		--env="XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}" \
+		--env="PX4_GZ_WORLD=default" \
+		--env="PX4_GZ_MODEL_POSE=${POSE}" \
+		--volume="/tmp/.X11-unix:/tmp/.X11-unix:rw" \
+		--volume="${XDG_RUNTIME_DIR}:${XDG_RUNTIME_DIR}" \
+		--volume="${HOST_GZ_ASSETS}:/opt/fixedwing/gz:rw" \
+		--volume="${HOST_PYTHON}:/opt/fixedwing/python:ro" \
+		--volume="${SETUP}:/opt/fixedwing/flightSetup.json:ro" \
+		${XAUTH_FILE:+--volume="${XAUTH_FILE}:${XAUTH_FILE}:ro"} \
+		"${IMAGE_TAG}" \
+		/bin/bash -lc "${INNER_CMD}"
+}
+
+echo "Starting ${IMAGE_TAG} Gazebo ${GZ_MODEL} pose=${POSE} setup=${SETUP}"
+USE_GPU="gpu"
+if [[ "${PX4_GZ_DOCKER_GPUS:-all}" == "none" ]]; then
+	USE_GPU="nogpu"
+	echo "PX4_GZ_DOCKER_GPUS=none — starting without --gpus all"
+fi
+if ! run_gz_docker "${USE_GPU}"; then
+	if [[ "${USE_GPU}" == "gpu" ]]; then
+		echo "Warning: docker --gpus all failed; retrying without GPU (Intel/software GL)." >&2
+		echo "  Install nvidia-container-toolkit for NVIDIA inside the container." >&2
+		docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
+		if ! run_gz_docker nogpu; then
+			echo "Error: docker run failed for ${IMAGE_TAG}." >&2
+			exit 1
+		fi
+	else
+		echo "Error: docker run failed for ${IMAGE_TAG}." >&2
+		exit 1
+	fi
 fi

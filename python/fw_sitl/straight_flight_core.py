@@ -10,6 +10,7 @@ from pathlib import Path
 
 from pymavlink import mavutil
 
+from fw_sitl.attitude_pid import AttitudePid, q_des_from_path, thrust_for_hold
 from fw_sitl.flight_history import FlightHistory
 from fw_sitl.mavlink_io import (
     PX4_CUSTOM_MAIN_MODE_OFFBOARD,
@@ -21,10 +22,12 @@ from fw_sitl.mavlink_io import (
     poll_vehicle_state,
     prepare_sitl_arming,
     reboot_autopilot,
+    send_attitude_quat,
     send_path_setpoint,
     set_offboard,
 )
 from fw_sitl.path_geometry import ned_velocity_from_course
+from fw_sitl.quat import from_rpy, rpy_from_quat
 from fw_sitl.sim_lifecycle import kill_sim, start_sim
 
 
@@ -438,6 +441,7 @@ def run_locked_line_hold(
     arm_timeout_s: float,
     full_sim_restart: bool,
     accept_unhealthy: bool,
+    cmd_mode: str = "velocity",
 ) -> int:
     """Connect, engage, settle, and hold a locked-line OFFBOARD path.
 
@@ -530,6 +534,7 @@ def run_locked_line_hold(
     print(
         f"Holding path on course {math.degrees(course_rad) % 360.0:.1f}° "
         f"z_ned={z_hold:.1f}, along-advance={along_advance_m:.0f} m, {rate_hz} Hz"
+        f" cmd_mode={cmd_mode}"
         + (f" for {duration_s}s" if duration_s > 0 else " until Ctrl+C")
     )
     print(
@@ -544,6 +549,7 @@ def run_locked_line_hold(
     last_mode: int | None = None
     prev_xy: tuple[float, float] | None = None
     prev_z: float | None = None
+    att_pid = AttitudePid()
     # Step larger than this ⇒ LOCAL_POSITION_NED discontinuity (EKF).
     ned_jump_m = 40.0
     z_jump_m = 15.0
@@ -576,18 +582,55 @@ def run_locked_line_hold(
                 set_offboard(master)
             prev_xy = (xy[0], xy[1])
             prev_z = z_now
-        send_path_setpoint(
-            master,
-            (xy[0], xy[1]),
-            z_hold,
-            origin_xy,
-            course_rad,
-            along_advance_m,
-            vx,
-            vy,
-            vz,
-            frame,
-        )
+        z_now = prev_z if prev_z is not None else z_hold
+        if cmd_mode == "attitude":
+            q_act = history.last_q
+            if q_act is None and history.last_att_rad is not None:
+                q_act = from_rpy(*history.last_att_rad)
+            if q_act is None:
+                # Do not treat missing ATTITUDE as north (identity): that was a
+                # ~90° fake yaw error vs a westbound lock and slewed the PID.
+                q_act = from_rpy(0.0, 0.0, course_rad)
+                att_pid.reset()
+            yaw_act = (
+                history.last_att_rad[2] if history.last_att_rad is not None else course_rad
+            )
+            heading_ref = yaw_act
+            vx, vy = history.last_vx, history.last_vy
+            if vx is not None and vy is not None and math.hypot(vx, vy) >= 5.0:
+                heading_ref = math.atan2(vy, vx)
+            q_des = q_des_from_path(
+                yaw_rad=yaw_act,
+                z_ned=z_now,
+                xy=(xy[0], xy[1]),
+                origin_xy=origin_xy,
+                course_rad=course_rad,
+                z_hold=z_hold,
+                heading_rad=heading_ref,
+            )
+            q_cmd = att_pid.command(q_des, q_act, period)
+            roll_des = rpy_from_quat(q_des)[0]
+            thrust = thrust_for_hold(
+                z_ned=z_now,
+                z_hold=z_hold,
+                groundspeed=history.last_groundspeed,
+                speed_mps=speed_mps,
+                roll_rad=roll_des,
+            )
+            send_attitude_quat(master, q_cmd, thrust)
+        else:
+            send_path_setpoint(
+                master,
+                (xy[0], xy[1]),
+                z_hold,
+                origin_xy,
+                course_rad,
+                along_advance_m,
+                vx,
+                vy,
+                vz,
+                frame,
+            )
         now = time.time()
         master.mav.heartbeat_send(
             mavutil.mavlink.MAV_TYPE_GCS,

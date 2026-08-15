@@ -9,7 +9,7 @@ from pymavlink import mavutil
 from fw_sitl.mavlink_io import send_path_setpoint
 from fw_sitl.path_geometry import ned_velocity_from_course, wrap_pi
 
-# Cap |z_hold - pos_z| so a long LOS lookahead cannot command a stall spiral.
+# Cap |z_hold − last command| so a long LOS lookahead cannot jump hundreds of metres.
 DEFAULT_MAX_ALT_STEP_M = 40.0
 # |heading error| at/above this → hold current altitude (level turn); below → blend toward aim Z.
 DEFAULT_ALT_PRESERVE_HEADING_ERR_RAD = math.radians(20.0)
@@ -21,6 +21,7 @@ class BodyCmdBridge:
     speed_mps: float
     max_alt_step_m: float = DEFAULT_MAX_ALT_STEP_M
     alt_preserve_heading_err_rad: float = DEFAULT_ALT_PRESERVE_HEADING_ERR_RAD
+    _alt_hold_z: float | None = None
 
     def aim_point_ned(
         self,
@@ -43,29 +44,44 @@ class BodyCmdBridge:
         """Horizontal course from aim XY; altitude-preserving turn when heading error is large.
 
         Course always comes from the XY component of the 3D aim. When ``yaw_rad`` is
-        set and |course − yaw| is large, ``z_hold`` stays at current altitude so the
-        turn does not couple balloon-climb ΔZ into a spiral. When nearly aligned,
-        ``z_hold`` tracks clamped aim Z. Without yaw, behavior is clamped aim Z only.
+        set and |course − yaw| is large, ``z_hold`` stays at the last command so the
+        turn does not couple balloon-climb ΔZ into a spiral. When nearly aligned or
+        ``yaw_rad`` is None, ``z_hold`` tracks clamped aim Z.
+
+        Altitude clamp is versus the last command, not current ``pos_z``. Rebasing
+        to ``pos_z`` every tick ratchets a sink so TECS never sees a growing climb
+        error. If the aircraft is below the command, ``z_hold`` must not rise toward
+        it.
 
         Returns (aim_ned, course_rad, z_hold).
         """
         aim = self.aim_point_ned(pos_ned, dir_ned)
         course = math.atan2(aim[1] - pos_ned[1], aim[0] - pos_ned[0])
+        pos_z = float(pos_ned[2])
         z_aim = float(aim[2])
+        if self._alt_hold_z is None:
+            self._alt_hold_z = pos_z
+        ref_z = float(self._alt_hold_z)
         max_dz = float(self.max_alt_step_m)
         if max_dz > 0.0:
-            z_aim = max(pos_ned[2] - max_dz, min(pos_ned[2] + max_dz, z_aim))
+            z_aim = max(ref_z - max_dz, min(ref_z + max_dz, z_aim))
 
         z_hold = z_aim
         if yaw_rad is not None:
             heading_err = abs(wrap_pi(course - float(yaw_rad)))
             thresh = float(self.alt_preserve_heading_err_rad)
             if thresh <= 0.0 or heading_err >= thresh:
-                z_hold = float(pos_ned[2])
+                z_hold = ref_z
             else:
                 # 1 = aligned (full aim Z), 0 = at threshold (preserve altitude).
                 alpha = 1.0 - (heading_err / thresh)
-                z_hold = float(pos_ned[2]) + alpha * (z_aim - float(pos_ned[2]))
+                z_hold = ref_z + alpha * (z_aim - ref_z)
+
+        # Below the command (NED pos_z > ref): do not raise z_hold toward the sink.
+        if z_hold > ref_z and pos_z > ref_z:
+            z_hold = ref_z
+
+        self._alt_hold_z = z_hold
         return aim, course, z_hold
 
     def send_chase_setpoint(

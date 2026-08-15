@@ -95,6 +95,57 @@ class TestBankToTurn(unittest.TestCase):
         self.assertGreater(roll, 0.0)
         self.assertAlmostEqual(pitch, 0.0, places=6)
 
+    def test_right_of_course_banks_left(self) -> None:
+        # Northbound line; 80 m east (right) → left bank (negative roll) to return.
+        roll, pitch = bank_to_turn_commands(
+            yaw_rad=0.0,
+            z_ned=-100.0,
+            xy=(50.0, 80.0),
+            origin_xy=(0.0, 0.0),
+            course_rad=0.0,
+            z_hold=-100.0,
+            kp_heading=1.5,
+            kp_cross_track=0.003,
+            max_roll=0.5,
+            kp_alt=0.0,
+        )
+        self.assertLess(roll, 0.0)
+        self.assertAlmostEqual(pitch, 0.0, places=6)
+
+    def test_left_xt_with_yaw_offset_still_banks_toward_line(self) -> None:
+        # Northbound; 80 m west (left). Nose 10° right of course.
+        # Yaw-only P would cancel xt P and command ~0 roll; must still bank right.
+        roll, _pitch = bank_to_turn_commands(
+            yaw_rad=0.17,
+            z_ned=-100.0,
+            xy=(50.0, -80.0),
+            origin_xy=(0.0, 0.0),
+            course_rad=0.0,
+            z_hold=-100.0,
+            kp_heading=1.5,
+            kp_cross_track=0.003,
+            max_roll=0.5,
+            kp_alt=0.0,
+        )
+        self.assertGreater(roll, 0.1)
+
+    def test_ground_track_drives_bank_not_yaw(self) -> None:
+        # Nose on course, but track 12° left → right bank to capture the line.
+        roll, _pitch = bank_to_turn_commands(
+            yaw_rad=0.0,
+            heading_rad=-0.21,
+            z_ned=-100.0,
+            xy=(0.0, 0.0),
+            origin_xy=(0.0, 0.0),
+            course_rad=0.0,
+            z_hold=-100.0,
+            kp_heading=1.0,
+            kp_cross_track=0.0,
+            max_roll=0.5,
+            kp_alt=0.0,
+        )
+        self.assertGreater(roll, 0.0)
+
     def test_too_low_pitches_up(self) -> None:
         roll, pitch = bank_to_turn_commands(
             yaw_rad=0.0,

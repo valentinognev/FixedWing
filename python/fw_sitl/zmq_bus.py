@@ -9,7 +9,9 @@ Producers **bind**, subscribers **connect** (one publisher per endpoint):
 - ``track`` — camera binds PUB; control connects SUB
 
 Endpoints come from ``FlightSetup.zmq`` (see ``flightSetup.json``).
-Camera/control take the latest message (SUB uses CONFLATE where applicable).
+Camera/control take the latest message (`poll_and_update` drains the queue).
+Do not set ZMQ CONFLATE: these sockets are multipart, and CONFLATE+multipart
+aborts libzmq (`Assertion failed: !_more (src/fq.cpp:80)`).
 """
 from __future__ import annotations
 
@@ -102,9 +104,13 @@ def connect_sub(
     topic: bytes,
     context: zmq.Context | None = None,
     *,
-    conflate: bool = True,
+    conflate: bool = False,
 ) -> zmq.Socket:
-    """Create a SUB socket, connect, and subscribe to ``topic``."""
+    """Create a SUB socket, connect, and subscribe to ``topic``.
+
+    ``conflate`` defaults False: ZMQ CONFLATE is incompatible with multipart
+    (image is 3 parts; color/track are 2). Subscribers drain in poll_and_update.
+    """
     sock = _ctx(context).socket(zmq.SUB)
     sock.setsockopt(zmq.RCVHWM, 2)
     if conflate:

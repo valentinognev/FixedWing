@@ -1,5 +1,94 @@
 # Updates
 
+## 0.20.0 - Cycle balloons until duration (laps=0)
+- After blue, wrap already chose red (`tgt=0`) but `laps=1` ended the race 50 ms later (`end_laps` at t=60.2 s).
+- `guidance.laps=0` keeps cycling red→green→blue until `duration_s` or Ctrl+C. `laps>0` still ends after that many circuits.
+
+## 0.19.6 - Retarget on fly-by, not after orbiting into 50 m
+- Gate used camera LOS as approach, so gate_dot was identically −range and never fired. Pass waited for 50 m radius (GZ race: first fly-by 147 m east at t≈25 s, software pass t≈115 s).
+- Closest-approach after a lock (range rising ≥10 m, miss ≤4× pass_radius) plus ground-track gate. Clear in-view so chase switches to the new balloon immediately.
+
+## 0.19.5 - Gazebo balloons are visual-only (no collision)
+- Removed the 5 m `<collision>` sphere. Static visuals stay in the camera; the plane flies through without a physics hit.
+
+## 0.19.4 - In-view chase looks at the blob, not the 500 m aim point
+- Camera is body-fixed: in-view bank uses yaw vs LOS azimuth (ground-track bank left the blob far left/right).
+- Pitch follows LOS elevation; balloon Z is thrust-only. Do not scale Z by 500 m lookahead (that dove while the blob was still high).
+- Out of view: keep track+intercept path law with `z_target` = balloon Z.
+
+## 0.19.3 - Race chase uses ground-track bank (same as straight hold)
+- Attitude chase banks from ground track vs balloon course, not yaw-only.
+
+## 0.19.2 - Attitude hold crabbed ~80 m off the line
+- Yaw P cancelled xt P at ~0° roll (peak xt −83 m, then slow return). Bank now uses ground track vs course+lookahead intercept.
+- Missing ATTITUDE used identity (north) vs a west lock → 90° fake yaw error; hold until real attitude.
+
+## 0.19.1 - Attitude hold was banking the wrong way on cross-track
+- Right-of-line commanded more right bank (`+kp*xt`) → spiral (GZ run: xt −866 m rms 410 m; height held).
+- Sign is now toward the line; thrust scales by `1/cos(roll)` so banked flight keeps altitude.
+
+## 0.19.0 - Quaternion attitude PID (straight flight + race)
+- `AttitudeChaseController` streams `SET_ATTITUDE_TARGET`: SO(3) error PID (Hamilton quat), Euler only for display / 1-D path loops.
+- Thrust rises when below hold altitude. Gazebo straight flight defaults `--cmd-mode attitude`. Race `flightSetup.json` `cmd_mode` is `attitude`.
+- Path `velocity` mode unchanged (TECS). `rates` still a stub.
+
+## 0.18.13 - In-air TECS dove; chase Z followed the sink
+- `z_cmd` was `pos_z−40` every tick. Clamp vs last command; do not raise `z_hold` toward a descending `pos_z`.
+- Growing Z error still did not climb until t≈60 s (`gs≈32`). Spawn TAS ~14 vs trim 30 → TECS underspeed pitch-down. GZ race sets `FW_AIRSPD_TRIM`+airspeed SP to 16 m/s until level, then cruise 30. `FW_USE_AIRSPD=0` idled throttle — not used.
+
+## 0.18.12 - In-view chase was ratcheting a sink
+- Alt-preserve used current `pos_z` every tick during a turn, so an in-air descent became the altitude command and the balloon left the top of the image.
+- Freeze last commanded Z on large heading error; when `in_view`, command 3D LOS altitude (skip alt-preserve) so the plane can climb to the blob.
+
+## 0.18.11 - Camera LOS Euler had inverted yaw/pitch
+- Duplicate `ned_to_body_rotation` used Rz(-yaw)/wrong pitch: yaw +90° mapped body X west, nose-up to +z down.
+- In-view balloon ~150 px right only commanded ~2° heading change (3D LOS XY ≈ geometric bearing), so the plane never centered the target.
+- Single PX4 Tait-Bryan 321 DCM: yaw+ → East, pitch+ → nose up.
+
+## 0.18.10 - Race chase used yaw=0 (never homed balloons)
+- `history.poll()` already consumes `ATTITUDE`; control then `recv_match(ATTITUDE)` got nothing and left `att=(0,0,0)`.
+- Camera LOS mapped as heading-north; `alt_preserve` froze Z whenever course was off-north → plane sank under balloons and orbited.
+- Chase now uses `history.last_att_rad` after poll.
+
+## 0.18.9 - Gazebo balloons were black (invalid SDF Color)
+- `model.sdf` used nested `<r>/<g>/<b>` under `<diffuse>`; Gazebo SDF 1.9 Color is `r g b a`. Those children are dropped → default black.
+- Vector `<ambient>/<diffuse>/<emissive>` matching filename RGB (red/green/blue). Re-spawn (re-run race) to pick up.
+
+## 0.18.8 - Gazebo GUI follow uses rc_cessna_0
+- Race GUI stayed at spawn/origin: follow locked `rc_cessna` because that string is a substring of listed `rc_cessna_0`, then CameraTracking `NodeByName` failed.
+- Exact `gz model --list` names (prefer `model_0`); bake `<follow_target>rc_cessna_0</follow_target>` + 10 m / 3 m offset into `GZ_GUI_CONFIG`.
+
+## 0.18.7 - Gazebo race panes: keep conda libs, unbuffered logs
+- Camera pane aborted `Assertion failed: !_more (src/fq.cpp:80)`: ZMQ CONFLATE is incompatible with multipart image/color/track. Default `conflate=False`; `poll_and_update` already keeps the latest. Also keep conda `LD_LIBRARY_PATH` (0.18.5 unset mixed libzmq). tmux libtinfo lines are cosmetic.
+- Image pane looked stuck on `Starting gz camera bridge` because `docker exec -i` block-buffers Python stdout. `PYTHONUNBUFFERED=1` / `python -u` on race panes + gz docker exec.
+- Race launcher uses `${PYTHON:-python3}` so `(pigeon)` wins when that env is active.
+
+## 0.18.6 - Gazebo race: engage despite stalled spawn
+- PX4 `Attitude failure (pitch)` / `No connection to the GCS` are in-air SITL preflight noise (same as straight flight; `accept_unhealthy` still arms).
+- Real abort was `wait_min_airspeed` after tmux heartbeat wait: spawn velocity is one-shot, unarmed Cessna stalls (~1.4 m/s), gate blocked engage.
+- Race control no longer waits for 15 m/s before arm; engage ASAP like `run_straight_flight_gz.py`.
+
+## 0.18.5 - Gazebo race: NaN airspeed + missing cv2
+- `./run_balloon_race.sh --gz` looked dead (`libtinfo` spam + truncated `t`) but tmux did start; camera/image died `No module named 'cv2'`, control died `last=nan m/s`.
+- `wait_min_airspeed`: NaN/inf airspeed is missing → use `VFR_HUD.groundspeed` (Gazebo often publishes NaN IAS).
+- Race launcher unsets Anaconda `LD_LIBRARY_PATH` (tmux/bash libtinfo warnings) and preflights `cv2`/numpy/zmq/pymavlink with a `requirements.txt` hint.
+- `requirements.txt`: `opencv-python>=4.8,<5` (GUI camera pane; OpenCV 5 pulls numpy 2).
+
+## 0.18.4 - Gazebo chase camera closer
+- Follow offset 10 m behind / 3 m above (was 45 / 12) so the RC Cessna fills the GUI.
+
+## 0.18.3 - Gazebo GUI chase-follows the plane
+- Default gz camera looks at origin (`-6 0 6`) while the plane spawns at 500 m AGL — empty grey view.
+- `gz_gui_follow`: `GZ_GUI_CONFIG` camera at chase pose + `/gui/track` FOLLOW on `rc_cessna`/`advanced_plane` (behind/above, far clip 25 km).
+
+## 0.18.2 - Gazebo launch: local image required, GPU fallback
+- `runSimGzPlane.sh` refuses missing `px4-noble-sim-ros` (no Docker Hub pull) and prints `Dockerfiles/PX4_noble_sim_build.sh`.
+- `--gpus all` still default; on CDI/toolkit failure retry without GPU (`PX4_GZ_DOCKER_GPUS=none` skips NVIDIA).
+
+## 0.18.1 - Fail loud when Gazebo/JSBSim sim runner dies at start
+- `start_sim` always logs to `/tmp/fw_sim_runner_<pid>.log` (viz still `/tmp/jsbsim_viz_runner_<pid>.log`) and raises if the runner exits within 2 s (missing image, `docker --gpus all`, etc.) instead of waiting 180 s for a MAVLink heartbeat then `SystemExit: 1`.
+- `run_straight_flight_gz.py` appends noble-image + nvidia-container-toolkit hint on that failure.
+
 ## 0.18.0 - Gazebo PX4 plane plant (balloon race --gz)
 - Additive plant: `runSimGzPlane.sh` / `run_straight_flight_gz.py` (Cessna default, `--model advanced_plane`).
 - Race: `./run_balloon_race.sh --gz` — onboard `race_cam` → ZMQ, balloons in gz world, GUI for operator.

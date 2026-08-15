@@ -132,6 +132,19 @@ if ! command -v tmux >/dev/null 2>&1; then
   exit 1
 fi
 
+# Prefer the active conda env's interpreter (user prompt is often (pigeon)).
+PYTHON="${PYTHON:-python3}"
+
+# Do not unset conda LD_LIBRARY_PATH: pyzmq/OpenCV need those libs. Unsetting
+# mixed libzmq and aborted the camera pane (Assertion failed: !_more src/fq.cpp).
+# tmux/bash "libtinfo no version information" lines are cosmetic.
+
+if ! "${PYTHON}" -c "import cv2, numpy, zmq, pymavlink" >/dev/null 2>&1; then
+  echo "Error: balloon-race Python deps missing in $("${PYTHON}" -c 'import sys; print(sys.executable)')." >&2
+  echo "  Install: ${PYTHON} -m pip install -r ${PYTHON_ROOT}/requirements.txt" >&2
+  exit 1
+fi
+
 # Quiet when no tmux server yet (fresh machine / after kill-server).
 tmux kill-session -t "${SESSION}" 2>/dev/null || true
 
@@ -148,13 +161,13 @@ else
   fi
 fi
 
-IMG_CMD="python3 ${PYTHON_ROOT}/run_balloon_image_source.py --mode ${MODE} --setup ${SETUP} --udp ${MAVLINK_IMAGE_PORT}"
-CAM_CMD="python3 ${PYTHON_ROOT}/run_balloon_camera.py --setup ${SETUP}"
+IMG_CMD="PYTHONUNBUFFERED=1 ${PYTHON} -u ${PYTHON_ROOT}/run_balloon_image_source.py --mode ${MODE} --setup ${SETUP} --udp ${MAVLINK_IMAGE_PORT}"
+CAM_CMD="PYTHONUNBUFFERED=1 ${PYTHON} -u ${PYTHON_ROOT}/run_balloon_camera.py --setup ${SETUP}"
 # Headless e2e / no GUI: BALLOON_CAMERA_NO_DISPLAY=1 or --no-display
 if [[ "${BALLOON_CAMERA_NO_DISPLAY:-0}" == "1" ]]; then
   CAM_CMD+=" --no-display"
 fi
-CTL_CMD="python3 ${PYTHON_ROOT}/run_balloon_control.py --setup ${SETUP} --udp ${MAVLINK_CONTROL_PORT} --no-plot"
+CTL_CMD="PYTHONUNBUFFERED=1 ${PYTHON} -u ${PYTHON_ROOT}/run_balloon_control.py --setup ${SETUP} --udp ${MAVLINK_CONTROL_PORT} --no-plot"
 # Optional fixed CSV path for verification (BALLOON_RACE_CSV=/path/to.csv)
 if [[ -n "${BALLOON_RACE_CSV:-}" ]]; then
   CTL_CMD+=" --csv ${BALLOON_RACE_CSV}"

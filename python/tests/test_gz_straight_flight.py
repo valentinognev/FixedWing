@@ -14,6 +14,8 @@ class TestGzStraightFlight(unittest.TestCase):
         self.assertIn("runSimGzPlane.sh", text)
         self.assertIn('KILL_TARGET = "--gz"', text)
         self.assertIn("run_locked_line_hold", text)
+        self.assertIn("cmd_mode=args.cmd_mode", text)
+        self.assertIn('parser.set_defaults(cmd_mode="attitude")', text)
         self.assertIn("accept_unhealthy=True", text)
 
 
