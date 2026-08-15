@@ -362,6 +362,7 @@ def engage_offboard_with_retries(
     full_sim_restart: bool = True,
     accept_unhealthy: bool = False,
     sim_extra_args: list[str] | None = None,
+    skip_reboot: bool = False,
 ) -> mavutil.mavfile:
     """Engage; on failure, optionally restart sim or reboot and retry.
 
@@ -369,6 +370,8 @@ def engage_offboard_with_retries(
     FlightGear — FG restart is slow and was causing the "runs then restarts" loop.
     accept_unhealthy: keep going after a late/drifted arm lock (FG-friendly).
     sim_extra_args: passed to start_sim on full restarts (e.g. ["--viz"]).
+    skip_reboot: do not reboot PX4 (in-air spawn: reboot drops airspeed/ekf2
+    health and force-arm stays denied while the plane falls).
     """
     course_seed = course_box[0]
     for attempt in range(1, max_attempts + 1):
@@ -406,6 +409,11 @@ def engage_offboard_with_retries(
                 time.sleep(1.0)
                 start_sim(sim_script, extra_args=sim_extra_args)
                 master = connect(udp_port, timeout=180.0)
+            elif skip_reboot:
+                print(
+                    f"Unhealthy engage — retry {attempt + 1}/{max_attempts} "
+                    f"without autopilot reboot..."
+                )
             else:
                 print(
                     f"Unhealthy engage — autopilot reboot for retry "
@@ -413,7 +421,7 @@ def engage_offboard_with_retries(
                 )
                 master = reboot_autopilot(master)
             prepare_sitl_arming(master)
-            if full_sim_restart and sim_script is not None:
+            if (not skip_reboot) and full_sim_restart and sim_script is not None:
                 # Param prep after fresh sim; reboot so params stick like first boot.
                 master = reboot_autopilot(master)
                 prepare_sitl_arming(master)
@@ -442,6 +450,7 @@ def run_locked_line_hold(
     full_sim_restart: bool,
     accept_unhealthy: bool,
     cmd_mode: str = "velocity",
+    skip_reboot: bool = False,
 ) -> int:
     """Connect, engage, settle, and hold a locked-line OFFBOARD path.
 
@@ -456,13 +465,16 @@ def run_locked_line_hold(
         return 1
 
     prepare_sitl_arming(master)
-    try:
-        master = reboot_autopilot(master)
-    except Exception as exc:  # noqa: BLE001
-        print(f"Autopilot reboot/reconnect failed: {exc}", file=sys.stderr)
-        stop_sim()
-        return 1
-    prepare_sitl_arming(master)
+    if not skip_reboot:
+        try:
+            master = reboot_autopilot(master)
+        except Exception as exc:  # noqa: BLE001
+            print(f"Autopilot reboot/reconnect failed: {exc}", file=sys.stderr)
+            stop_sim()
+            return 1
+        prepare_sitl_arming(master)
+    else:
+        print("Skipping autopilot reboot: engage ASAP before in-air fall")
 
     frame = local_ned_frame()
     period = 1.0 / max(rate_hz, 1.0)
@@ -500,6 +512,7 @@ def run_locked_line_hold(
         arm_timeout_s=arm_timeout_s,
         full_sim_restart=full_sim_restart,
         accept_unhealthy=accept_unhealthy,
+        skip_reboot=skip_reboot,
     )
     z_hold = z_box[0]
     origin_xy = origin_box[0]

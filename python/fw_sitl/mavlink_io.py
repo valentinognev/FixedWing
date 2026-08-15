@@ -275,7 +275,7 @@ def prepare_sitl_arming(master: mavutil.mavfile) -> None:
         ("COM_RC_OVERRIDE", 0),
         ("COM_RC_IN_MODE", 4),  # stick input disabled
         ("CBRK_FLIGHTTERM", 121212),
-        ("CBRK_SUPPLYCHK", 894281),
+        ("CBRK_SUPPLY_CHK", 894281),
         ("CBRK_USB_CHK", 197848),
         ("CBRK_IO_SAFETY", 22027),
         ("SYS_HAS_NUM_ASPD", 0),

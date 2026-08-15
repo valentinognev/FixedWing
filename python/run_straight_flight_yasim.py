@@ -97,6 +97,7 @@ def main() -> int:
             arm_timeout_s=45.0,
             full_sim_restart=False,
             accept_unhealthy=True,
+            skip_reboot=True,
             cmd_mode=args.cmd_mode,
         )
     except EngageError as exc:

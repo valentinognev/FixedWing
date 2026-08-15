@@ -120,10 +120,11 @@ def main() -> int:
             stop_sim=_stop_sim,
             sim_script=None if args.no_sim else args.sim,
             sim_extra_args=sim_extra_args,
-            max_attempts=1 if args.viz else 3,
-            arm_timeout_s=60.0 if args.viz else 12.0,
-            full_sim_restart=not args.viz,
-            accept_unhealthy=bool(args.viz),
+            max_attempts=1,
+            arm_timeout_s=60.0,
+            full_sim_restart=False,
+            accept_unhealthy=True,
+            skip_reboot=True,
             cmd_mode=args.cmd_mode,
         )
     except EngageError as exc:
