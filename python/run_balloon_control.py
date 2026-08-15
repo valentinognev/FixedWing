@@ -77,6 +77,7 @@ def main() -> int:
         help="Gazebo plane plant (python3 run_balloon_control.py --gz uses Cessna via runSimGzPlane.sh defaults)",
     )
     parser.add_argument("--spawn-gz-balloons", action="store_true")
+    parser.add_argument("--yasim", action="store_true", help="YASim FlightGear Rascal plant (runSimYasimRascal.sh)")
     parser.add_argument("--gz-container", default="px4-noble-gz-plane")
     parser.add_argument("--no-plot", action="store_true")
     parser.add_argument(
@@ -97,9 +98,15 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    plant_flags = int(bool(args.viz)) + int(bool(args.gz)) + int(bool(args.yasim))
+    if plant_flags > 1:
+        print("Error: --viz, --gz, and --yasim are mutually exclusive", file=sys.stderr)
+        return 2
     if args.gz and args.sim == DEFAULT_SIM:
         args.sim = SCRIPTS_DIR / "runSimGzPlane.sh"
-    kill_target = "--gz" if args.gz else KILL_TARGET
+    elif args.yasim and args.sim == DEFAULT_SIM:
+        args.sim = SCRIPTS_DIR / "runSimYasimRascal.sh"
+    kill_target = "--gz" if args.gz else ("--fg" if args.yasim else KILL_TARGET)
 
     setup = load_flight_setup(args.setup)
     duration_s = (
@@ -130,7 +137,7 @@ def main() -> int:
 
     # Never block engage on FG telnet: early spawn waits ~tens of seconds while the
     # unarmed plane freefalls (deep unhealthy lock / 0 passes). Spawn after arm.
-    want_fg_balloons = bool(args.spawn_fg_balloons or args.viz)
+    want_fg_balloons = bool(args.spawn_fg_balloons or args.viz or args.yasim)
 
     stop_flag = [False]
 
@@ -151,7 +158,7 @@ def main() -> int:
     # FG viz attach: skip reboot — EKF re-init while the unarmed plane falls yields
     # persistent "High Gyro Bias" / arm denied. Fresh sim already has params applied
     # after prepare; headless still reboots so reboot-required params stick.
-    skip_reboot = bool((args.viz or args.gz) and args.no_sim)
+    skip_reboot = bool(args.no_sim or args.viz or args.gz or args.yasim)
     if not skip_reboot:
         try:
             master = reboot_autopilot(master)
@@ -161,7 +168,10 @@ def main() -> int:
             return 1
         prepare_sitl_arming(master)
     else:
-        print("Skipping autopilot reboot (--viz/--gz --no-sim): engage ASAP before in-air fall")
+        print(
+            "Skipping autopilot reboot (--no-sim/--viz/--gz/--yasim): "
+            "engage ASAP before in-air fall"
+        )
 
     frame = local_ned_frame()
     rate = setup.guidance.control_rate_hz
@@ -188,9 +198,9 @@ def main() -> int:
             sim_script=None if args.no_sim else args.sim,
             sim_extra_args=sim_extra,
             # Race attach / in-air SITL: keep flying even if EKF drifted while peers started.
-            max_attempts=1 if (args.viz or args.gz or args.no_sim) else 3,
-            arm_timeout_s=60.0 if (args.viz or args.gz or args.no_sim) else 12.0,
-            full_sim_restart=(not args.viz) and (not args.gz) and (not args.no_sim),
+            max_attempts=1 if (args.viz or args.gz or args.yasim or args.no_sim) else 3,
+            arm_timeout_s=60.0 if (args.viz or args.gz or args.yasim or args.no_sim) else 12.0,
+            full_sim_restart=(not args.viz) and (not args.gz) and (not args.yasim) and (not args.no_sim),
             accept_unhealthy=True,
         )
     except EngageError as exc:
