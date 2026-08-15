@@ -1,8 +1,9 @@
 # Updates
 
-## 0.21.1 - JSBSim/YASim straight flight in-air attach (skip reboot, CBRK_SUPPLY_CHK)
+## 0.21.1 - JSBSim/YASim straight flight in-air attach (skip reboot, CBRK_SUPPLY_CHK, FG GPU)
 - PX4 v1.17: MAVLink force-arm (21196) still runs health checks. Wrong name `CBRK_SUPPLYCHK` never set `CBRK_SUPPLY_CHK`.
 - Skip autopilot reboot; JSBSim uses 60s arm / accept_unhealthy / no sim-reset so EKF local-pos can pass the 1s validity probation while falling.
+- YASim `runSimYasimRascal.sh --gpus all`: without NVIDIA in the container FG has no visual and HIL sensors never start.
 
 ## 0.21.0 - Rascal balloon race (JSBSim + YASim) with Euler+thrust commands
 - Attitude mode: quaternion PID internally; SET_ATTITUDE_TARGET is roll/pitch/yaw + thrust on JSBSim, YASim, and Gazebo.

@@ -49,6 +49,7 @@ class TestYasimSimFanoutAndBalloons(unittest.TestCase):
         self.assertIn("/opt/fixedwing/balloons", text)
         self.assertIn("Models/FixedWing", text)
         self.assertIn("balloon_*.xml", text)
+        self.assertIn("--gpus all", text)
         self.assertNotRegex(
             text,
             r"docker run[^\n]*mavlink-server[^\n]*>/dev/null 2>&1",

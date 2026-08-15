@@ -237,9 +237,13 @@ fi
 
 echo "Starting ${IMAGE_TAG} with spawn config ${SPAWN_ENV}"
 echo "Balloons mount: ${BALLOONS_HOST} → ${CONTAINER_BALLOONS}"
+# NVIDIA GL inside the container: without --gpus, FG logs
+# "glx: failed to create dri3 screen" / "Not able to create requested visual"
+# and the YASim FDM never sends HIL (PX4 poll timeout, no accel/gyro).
 docker run "${DOCKER_IT[@]}" --rm \
 	--net=host \
 	--privileged \
+	--gpus all \
 	--name "${CONTAINER_NAME}" \
 	--env="DISPLAY=${DISPLAY}" \
 	--env="QT_X11_NO_MITSHM=1" \
