@@ -47,6 +47,15 @@ kill_gz_stack() {
 	fi
 }
 
+kill_fg_stack() {
+	kill_container "${FG_NAME}"
+	kill_container "${FG_NAME}-mavlink"
+	if pgrep -f '[m]avlink-server' >/dev/null 2>&1; then
+		pkill -f '[m]avlink-server' 2>/dev/null || true
+		echo "Stopped host mavlink-server process(es)"
+	fi
+}
+
 TARGET="${1:---fg}"
 case "${TARGET}" in
 	--help|-h)
@@ -54,7 +63,7 @@ case "${TARGET}" in
 		exit 0
 		;;
 	--fg)
-		kill_container "${FG_NAME}"
+		kill_fg_stack
 		xhost -local:docker 2>/dev/null || true
 		;;
 	--jsbsim)
@@ -64,7 +73,7 @@ case "${TARGET}" in
 		kill_gz_stack
 		;;
 	--all)
-		kill_container "${FG_NAME}"
+		kill_fg_stack
 		kill_jsbsim_stack
 		kill_gz_stack
 		xhost -local:docker 2>/dev/null || true

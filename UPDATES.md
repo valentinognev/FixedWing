@@ -1,5 +1,10 @@
 # Updates
 
+## 0.21.0 - YASim fan-out, balloons, Nasal telnet
+- `runSimYasimRascal.sh`: `--mavlink-server` / `MAVLINK_FANOUT` default 0, fail loud; balloons bind-mount `/opt/fixedwing/balloons` and copy into FG_ROOT `Models/FixedWing/`.
+- `patch_px4_flightgear_sitl.sh`: idempotent `--telnet=5501` + `--allow-nasal-from-sockets` on FG_run.py (no `--fdm=null` / hide-aircraft).
+- `kill.sh --fg` / `--all`: `kill_fg_stack` drops FG container, `${FG_NAME}-mavlink` sidecar, and host mavlink-server.
+
 ## 0.20.0 - Cycle balloons until duration (laps=0)
 - After blue, wrap already chose red (`tgt=0`) but `laps=1` ended the race 50 ms later (`end_laps` at t=60.2 s).
 - `guidance.laps=0` keeps cycling red→green→blue until `duration_s` or Ctrl+C. `laps>0` still ends after that many circuits.

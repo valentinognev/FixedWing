@@ -33,5 +33,42 @@ class TestYasimControlContracts(unittest.TestCase):
         self.assertIn("--yasim", r.stdout)
 
 
+class TestYasimSimFanoutAndBalloons(unittest.TestCase):
+    def test_yasim_sim_mavlink_and_balloons(self) -> None:
+        text = _YASIM_SIM.read_text(encoding="utf-8")
+        self.assertRegex(text, r'MAVLINK_FANOUT="\$\{MAVLINK_FANOUT:-0\}"')
+        self.assertIn("--mavlink-server", text)
+        self.assertIn("--no-mavlink-server", text)
+        self.assertIn("start_mavlink_fanout", text)
+        self.assertIn("ensure_host_mavlink_server", text)
+        self.assertIn("fetch_mavlink_server.sh", text)
+        self.assertIn("mavlink fan-out requested (MAVLINK_FANOUT=1) but failed to start", text)
+        self.assertIn("MAVLINK_SERVER_LOG:-/tmp/mavlink-server-fanout.log", text)
+        self.assertIn("--mavlink-heartbeat-frequency 0", text)
+        self.assertIn("/opt/fixedwing/balloons", text)
+        self.assertIn("Models/FixedWing", text)
+        self.assertIn("balloon_*.xml", text)
+        self.assertNotRegex(
+            text,
+            r"docker run[^\n]*mavlink-server[^\n]*>/dev/null 2>&1",
+        )
+
+    def test_fg_patch_allows_nasal_and_telnet(self) -> None:
+        patch = (
+            _PYTHON_ROOT.parent / "Dockerfiles" / "patch_px4_flightgear_sitl.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("--allow-nasal-from-sockets", patch)
+        self.assertIn("--telnet=5501", patch)
+
+    def test_kill_fg_removes_mavlink_sidecar(self) -> None:
+        text = _KILL.read_text(encoding="utf-8")
+        self.assertIn("kill_fg_stack", text)
+        fg_block = text[text.index("--fg)"): text.index("--jsbsim)")]
+        self.assertIn("kill_fg_stack", fg_block)
+        all_block = text[text.index("--all)"):]
+        self.assertIn("kill_fg_stack", all_block)
+        self.assertIn("${FG_NAME}-mavlink", text)
+
+
 if __name__ == "__main__":
     unittest.main()
