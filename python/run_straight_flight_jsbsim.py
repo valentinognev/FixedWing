@@ -61,7 +61,8 @@ def main() -> int:
         description=(
             "OFFBOARD straight flight for JSBSim Rascal SITL "
             f"(default ~{DEFAULT_SPEED_MPS:.0f} m/s; "
-            "locked-line LOCAL_NED path + course velocity)"
+            "locked-line LOCAL_NED path + course velocity). "
+            "Default --cmd-mode attitude (quaternion PID, Euler+thrust)."
         )
     )
     add_common_args(parser, default_sim=DEFAULT_SIM)
@@ -71,6 +72,7 @@ def main() -> int:
         help="Start FlightGear as visualization for the JSBSim plant (same FDM as headless)",
     )
     add_vstall_arg(parser)
+    parser.set_defaults(cmd_mode="attitude")
     args = parser.parse_args()
 
     kill_docker(target=KILL_TARGET)
@@ -122,6 +124,7 @@ def main() -> int:
             arm_timeout_s=60.0 if args.viz else 12.0,
             full_sim_restart=not args.viz,
             accept_unhealthy=bool(args.viz),
+            cmd_mode=args.cmd_mode,
         )
     except EngageError as exc:
         print(f"Engage failed: {exc}", file=sys.stderr)

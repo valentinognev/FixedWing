@@ -44,10 +44,12 @@ def main() -> int:
         description=(
             "OFFBOARD straight flight for YASim FlightGear Rascal SITL "
             f"(default ~{DEFAULT_SPEED_MPS:.0f} m/s; "
-            "locked-line LOCAL_NED path — same as JSBSim runner)"
+            "locked-line LOCAL_NED path — same as JSBSim runner). "
+            "Default --cmd-mode attitude (quaternion PID, Euler+thrust)."
         )
     )
     add_common_args(parser, default_sim=DEFAULT_SIM)
+    parser.set_defaults(cmd_mode="attitude")
     args = parser.parse_args()
 
     kill_docker(target=KILL_TARGET)
@@ -95,6 +97,7 @@ def main() -> int:
             arm_timeout_s=45.0,
             full_sim_restart=False,
             accept_unhealthy=True,
+            cmd_mode=args.cmd_mode,
         )
     except EngageError as exc:
         print(f"Engage failed: {exc}", file=sys.stderr)
