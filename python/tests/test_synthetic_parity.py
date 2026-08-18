@@ -93,6 +93,24 @@ class TestSyntheticParity(unittest.TestCase):
                     msg=f"rgb={rgb} channel[{i}] pixel={pixel}",
                 )
 
+    def test_world_fixed_z_moves_in_image_when_aircraft_climbs(self) -> None:
+        # Gazebo balloons stay in the world. Climbing must drop the disk in the
+        # image. Per-frame rebase to aircraft Z glued it to the horizon.
+        balloons = (
+            BalloonSpec(ned=(80.0, 0.0, 0.0), color=(255, 0, 0), diameter_m=10.0),
+        )
+        img_level = render_frame(
+            (0.0, 0.0, 0.0), 0.0, 0.0, 0.0, balloons, self.camera_spec
+        )
+        img_high = render_frame(
+            (0.0, 0.0, -40.0), 0.0, 0.0, 0.0, balloons, self.camera_spec
+        )
+        t0 = track_balloon(img_level, (255, 0, 0), self.model)
+        t1 = track_balloon(img_high, (255, 0, 0), self.model)
+        self.assertTrue(t0.in_view and t1.in_view)
+        assert t0.centroid_uv is not None and t1.centroid_uv is not None
+        self.assertGreater(t1.centroid_uv[1], t0.centroid_uv[1] + 5.0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -71,6 +71,22 @@ def rpy_from_quat(q: Quat) -> Vec3:
     return (roll, pitch, yaw)
 
 
+def rotate_vec(q: Quat, v: Vec3) -> Vec3:
+    """Rotate ``v`` by ``q`` (``q ⊗ v ⊗ q*``)."""
+    qn = normalize(q)
+    _, x, y, z = mul(mul(qn, (0.0, float(v[0]), float(v[1]), float(v[2]))), conjugate(qn))
+    return (x, y, z)
+
+
+def rotate_body_to_ned(q: Quat, v_body: Vec3) -> Vec3:
+    """``q`` is body→NED (same as ``from_rpy``)."""
+    return rotate_vec(q, v_body)
+
+
+def rotate_ned_to_body(q: Quat, v_ned: Vec3) -> Vec3:
+    return rotate_vec(conjugate(normalize(q)), v_ned)
+
+
 def error_xyz(q_des: Quat, q_act: Quat) -> Vec3:
     """Body-frame rotation vector from actual to desired (shortest path).
 

@@ -20,10 +20,13 @@ from fw_sitl.quat import (
     from_rpy,
     mul,
     normalize,
+    rpy_from_quat,
 )
 
 # Attitude-mode climb needs more than bank-to-turn's 7° pitch cap.
 ATT_MAX_PITCH_RAD = 0.35  # ~20°
+# Camera VFOV is 70°; NED los_el of a nearby balloon is often ~50° down.
+ATT_LOS_MAX_PITCH_RAD = 0.70  # ~40°
 ATT_MAX_ROLL_RAD = BANK_MAX_ROLL_RAD
 CRUISE_THRUST = 0.62
 CLIMB_THRUST_PER_M = 0.012
@@ -45,6 +48,7 @@ def q_des_from_path(
     kp_alt: float = BANK_KP_ALT,
     max_pitch: float = ATT_MAX_PITCH_RAD,
     heading_rad: float | None = None,
+    xt_lookahead_m: float | None = None,
 ) -> Quat:
     """Desired attitude from 1-D path errors, assembled as a quaternion.
 
@@ -65,6 +69,7 @@ def q_des_from_path(
         kp_alt=kp_alt,
         max_pitch=max_pitch,
         heading_rad=heading_rad,
+        **({"xt_lookahead_m": xt_lookahead_m} if xt_lookahead_m is not None else {}),
     )
     return from_rpy(roll, pitch, yaw_rad)
 
@@ -73,23 +78,32 @@ def q_des_from_los(
     dir_ned: tuple[float, float, float],
     *,
     yaw_rad: float,
+    q_act: Quat | None = None,
     kp_heading: float = BANK_KP_HEADING,
     max_roll: float = ATT_MAX_ROLL_RAD,
-    max_pitch: float = ATT_MAX_PITCH_RAD,
+    max_pitch: float = ATT_LOS_MAX_PITCH_RAD,
+    heading_rad: float | None = None,
 ) -> Quat:
-    """Body look-at: bank/pitch to put camera boresight on ``dir_ned``.
+    """Gazebo FW look-at: bank onto LOS azimuth, pitch to LOS elevation.
 
-    Uses yaw (not ground track): the camera is body-fixed. Elevation is
-    ``atan2(-dir_z, horiz)`` (NED z down → pitch up when dir_z < 0).
+    Same contract as ``send_bank_hold``: PX4 FW tracks roll/pitch/thrust;
+    yaw in the quaternion stays current. Roll uses ``heading_rad`` (ground
+    track when coordinated) vs LOS azimuth so a crab cannot slide past the
+    balloon while the nose is already on it. Used only while on screen.
     """
     dx, dy, dz = (float(dir_ned[0]), float(dir_ned[1]), float(dir_ned[2]))
     horiz = math.hypot(dx, dy)
-    los_az = math.atan2(dy, dx) if horiz > 1e-9 else float(yaw_rad)
+    if q_act is None:
+        yaw_act = float(yaw_rad)
+    else:
+        yaw_act = rpy_from_quat(q_act)[2]
+    los_az = math.atan2(dy, dx) if horiz > 1e-9 else yaw_act
     los_el = math.atan2(-dz, horiz) if horiz > 1e-9 else 0.0
-    heading_err = wrap_pi(los_az - float(yaw_rad))
+    heading_ref = float(heading_rad) if heading_rad is not None else yaw_act
+    heading_err = wrap_pi(los_az - heading_ref)
     roll = max(-max_roll, min(max_roll, kp_heading * heading_err))
     pitch = max(-max_pitch, min(max_pitch, los_el))
-    return from_rpy(roll, pitch, yaw_rad)
+    return from_rpy(roll, pitch, yaw_act)
 
 
 def thrust_for_hold(

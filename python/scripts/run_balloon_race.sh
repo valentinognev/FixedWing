@@ -206,6 +206,7 @@ if [[ "${GZ}" -eq 1 ]]; then
   IMG_CMD+=" --container ${CONTAINER_NAME}"
   CTL_CMD+=" --gz --spawn-gz-balloons"
   CTL_CMD+=" --gz-container ${CONTAINER_NAME}"
+  CTL_CMD+=" --model ${GZ_MODEL}"
 fi
 if [[ "${YASIM}" -eq 1 ]]; then
   CTL_CMD+=" --yasim --spawn-fg-balloons"

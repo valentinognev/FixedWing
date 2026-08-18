@@ -18,25 +18,25 @@ if str(_PYTHON_ROOT) not in sys.path:
 
 from fw_sitl.balloon_scene import spawn_balloons_fg, spawn_balloons_gz
 from fw_sitl.body_cmd_controllers import make_body_cmd_controller, parse_body_cmd_mode
-from fw_sitl.camera_model import CameraModel, dir_cam_to_ned
+from fw_sitl.camera_model import CameraModel, dir_cam_to_ned, offset_on_screen
 from fw_sitl.flight_history import FlightHistory
 from fw_sitl.flight_setup import load_flight_setup
 from fw_sitl.mavlink_io import (
     PX4_CUSTOM_MAIN_MODE_OFFBOARD,
     arm,
-    change_airspeed,
     connect,
     local_ned_frame,
     poll_vehicle_state,
     prepare_sitl_arming,
     reboot_autopilot,
     set_offboard,
-    set_param,
 )
 from fw_sitl.path_geometry import ned_velocity_from_course
+from fw_sitl.plant_gains import load_plant_gains, plant_id_from_flags
 from fw_sitl.race_csv import RaceCsvLogger, default_csv_path
 from fw_sitl.race_guidance import (
     RaceGuidance,
+    chase_uses_lookat,
     race_end_reason,
     rebase_balloons_to_local_z,
 )
@@ -76,6 +76,12 @@ def main() -> int:
         action="store_true",
         help="Gazebo plane plant (python3 run_balloon_control.py --gz uses Cessna via runSimGzPlane.sh defaults)",
     )
+    parser.add_argument(
+        "--model",
+        choices=("rc_cessna", "advanced_plane"),
+        default="rc_cessna",
+        help="Gazebo plane model when --gz (default: rc_cessna)",
+    )
     parser.add_argument("--spawn-gz-balloons", action="store_true")
     parser.add_argument("--yasim", action="store_true", help="YASim FlightGear Rascal plant (runSimYasimRascal.sh)")
     parser.add_argument("--gz-container", default="px4-noble-gz-plane")
@@ -107,6 +113,11 @@ def main() -> int:
     elif args.yasim and args.sim == DEFAULT_SIM:
         args.sim = SCRIPTS_DIR / "runSimYasimRascal.sh"
     kill_target = "--gz" if args.gz else ("--fg" if args.yasim else KILL_TARGET)
+    plant = load_plant_gains(
+        plant_id_from_flags(gz=args.gz, yasim=args.yasim, gz_model=args.model)
+    )
+    speed_mps = plant.speed_mps
+    lookahead_m = plant.lookahead_m
 
     setup = load_flight_setup(args.setup)
     duration_s = (
@@ -117,7 +128,7 @@ def main() -> int:
 
     sim_extra = ["--viz"] if args.viz else []
     if args.gz:
-        sim_extra = ["--setup", str(args.setup)]
+        sim_extra = ["--setup", str(args.setup), "--model", args.model]
     sim_owned = False
 
     def _stop_sim() -> None:
@@ -154,7 +165,7 @@ def main() -> int:
         _stop_sim()
         return 1
 
-    prepare_sitl_arming(master)
+    prepare_sitl_arming(master, plant)
     # FG viz attach: skip reboot — EKF re-init while the unarmed plane falls yields
     # persistent "High Gyro Bias" / arm denied. Fresh sim already has params applied
     # after prepare; headless still reboots so reboot-required params stick.
@@ -166,7 +177,7 @@ def main() -> int:
             print(f"Autopilot reboot failed: {exc}", file=sys.stderr)
             _stop_sim()
             return 1
-        prepare_sitl_arming(master)
+        prepare_sitl_arming(master, plant)
     else:
         print(
             "Skipping autopilot reboot (--no-sim/--viz/--gz/--yasim): "
@@ -181,7 +192,8 @@ def main() -> int:
     course_box = [float("nan")]
 
     print(
-        f"Engage for balloon race @ {rate} Hz, speed={setup.guidance.speed_mps} m/s"
+        f"Engage for balloon race @ {rate} Hz, speed={speed_mps:.1f} m/s "
+        f"plant={plant.plant_id}"
     )
     try:
         master = engage_offboard_with_retries(
@@ -190,8 +202,8 @@ def main() -> int:
             z_box,
             origin_box,
             course_box,
-            setup.guidance.lookahead_m,
-            setup.guidance.speed_mps,
+            lookahead_m,
+            speed_mps,
             frame,
             rate,
             udp_port=args.udp,
@@ -202,6 +214,7 @@ def main() -> int:
             arm_timeout_s=60.0 if (args.viz or args.gz or args.yasim or args.no_sim) else 12.0,
             full_sim_restart=(not args.viz) and (not args.gz) and (not args.yasim) and (not args.no_sim),
             accept_unhealthy=True,
+            plant=plant,
         )
     except EngageError as exc:
         print(f"Engage failed: {exc}", file=sys.stderr)
@@ -210,7 +223,7 @@ def main() -> int:
 
     z_hold = z_box[0]
     course_rad = course_box[0]
-    vx, vy, vz = ned_velocity_from_course(setup.guidance.speed_mps, course_rad)
+    vx, vy, vz = ned_velocity_from_course(speed_mps, course_rad)
 
     settle_path_altitude(
         master,
@@ -218,7 +231,7 @@ def main() -> int:
         z_box,
         origin_box[0],
         course_rad,
-        setup.guidance.lookahead_m,
+        lookahead_m,
         vx,
         vy,
         vz,
@@ -226,19 +239,6 @@ def main() -> int:
         rate,
     )
     z_hold = z_box[0]
-
-    cruise_aspd = float(setup.guidance.speed_mps)
-    aspd_sp = cruise_aspd
-    if args.gz and str(setup.guidance.cmd_mode).lower() != "attitude":
-        # Spawn velocity is gone by arm (~14 m/s). TECS tracks FW_AIRSPD_TRIM
-        # (DO_CHANGE_SPEED alone still left trim=30 → underspeed dive).
-        aspd_sp = min(cruise_aspd, 16.0)
-        set_param(master, "FW_AIRSPD_TRIM", aspd_sp)
-        change_airspeed(master, aspd_sp)
-        print(
-            f"GZ: airspeed SP {aspd_sp:.0f} m/s until GS recovers "
-            f"(cruise {cruise_aspd:.0f})"
-        )
 
     # Config balloon Z is home/aircraft-relative; also rebase onto settled local Z so
     # residual EKF offset does not recreate a huge climb setpoint.
@@ -301,11 +301,12 @@ def main() -> int:
     cmd_mode = parse_body_cmd_mode(setup.guidance.cmd_mode)
     controller = make_body_cmd_controller(
         cmd_mode,
-        lookahead_m=setup.guidance.lookahead_m,
-        speed_mps=setup.guidance.speed_mps,
+        lookahead_m=lookahead_m,
+        speed_mps=speed_mps,
         alt_preserve_heading_err_rad=math.radians(
             setup.guidance.alt_preserve_heading_err_deg
         ),
+        plant=plant,
     )
     if hasattr(controller, "_bridge"):
         controller._bridge._alt_hold_z = float(z_hold)
@@ -333,6 +334,7 @@ def main() -> int:
     att = (0.0, 0.0, 0.0)
     last_dir_cam: tuple[float, float, float] | None = None
     last_track_in_view = False
+    ignore_next_track = False
     period = 1.0 / rate
     next_t = time.time()
     last_mode: int | None = None
@@ -344,7 +346,7 @@ def main() -> int:
     print(
         f"Racing balloon {race.target_idx} color=RGB{race.active_color}; "
         f"laps={laps_target or '∞'} duration_s={duration_s:.0f}; "
-        f"cmd_mode={cmd_mode.value}; "
+        f"cmd_mode={cmd_mode.value}; plant={plant.plant_id}; "
         f"csv={csv_path}; track←{setup.zmq.track}; stale_age={stale_age_s:.3f}s "
         f"({STALE_TRACK_CAMERA_PERIODS}/camera.rate_hz)"
     )
@@ -369,23 +371,6 @@ def main() -> int:
             if history.last_att_rad is not None:
                 att = history.last_att_rad
 
-            if (
-                args.gz
-                and str(setup.guidance.cmd_mode).lower() != "attitude"
-                and aspd_sp < cruise_aspd
-                and now_s >= 20.0
-                and history.last_groundspeed is not None
-                and history.last_vz is not None
-                and history.last_vz < 1.5
-            ):
-                aspd_sp = cruise_aspd
-                set_param(master, "FW_AIRSPD_TRIM", aspd_sp)
-                change_airspeed(master, aspd_sp)
-                print(
-                    f"GZ: airspeed SP restored to {aspd_sp:.0f} m/s "
-                    f"(gs={history.last_groundspeed:.1f} vz={history.last_vz:.1f})"
-                )
-
             if pos is None:
                 pos = (xy[0], xy[1], z_hold)
             else:
@@ -397,16 +382,35 @@ def main() -> int:
             if track is not None:
                 if track_updated:
                     race.mark_track_received(now_s)
-                    last_track_in_view = track.in_view
-                    if track.in_view and track.dir_cam is not None:
-                        last_dir_cam = track.dir_cam
-                    else:
+                    if ignore_next_track:
+                        last_track_in_view = False
                         last_dir_cam = None
+                        ignore_next_track = False
+                    else:
+                        last_track_in_view = track.in_view
+                        if track.in_view and track.dir_cam is not None:
+                            last_dir_cam = track.dir_cam
+                        else:
+                            last_dir_cam = None
 
-            # Startup: no track yet → chase_dir_ned uses geometric LOS to balloon 0.
-            # In view / between updates with last in_view: hold last_dir_cam, re-rotate.
-            # Assisted: any received track with !in_view → geometric LOS to active balloon.
-            if last_dir_cam is not None and last_track_in_view:
+            # Gazebo world balloons are fixed in NED. While the active balloon
+            # projects into the camera, chase that geometric LOS (same 3D point
+            # the Cessna flies at). HSV blob is only a fallback off-projection.
+            balloon = race.balloon_ned()
+            on_screen = offset_on_screen(
+                (balloon[0] - pos[0], balloon[1] - pos[1], balloon[2] - pos[2]),
+                camera,
+                att[0],
+                att[1],
+                att[2],
+            )
+            tracker_in_view = bool(last_track_in_view and last_dir_cam is not None)
+            use_lookat = chase_uses_lookat(
+                tracker_in_view=tracker_in_view, on_screen=on_screen
+            )
+            if on_screen:
+                race.update_track(True, race.geometric_los(pos))
+            elif tracker_in_view:
                 dir_ned = dir_cam_to_ned(last_dir_cam, camera, att[0], att[1], att[2])
                 race.update_track(True, dir_ned)
             elif track is not None:
@@ -424,12 +428,42 @@ def main() -> int:
             if race.check_pass(pos, approach_dir_ned=approach):
                 last_track_in_view = False
                 last_dir_cam = None
+                ignore_next_track = True
                 passed_idx = (
                     race.last_passed_idx
                     if race.last_passed_idx is not None
                     else race.target_idx
                 )
                 passed_color = race.last_passed_color or race.active_color
+                # #region agent log
+                try:
+                    import json as _json
+
+                    with Path(
+                        "/home/valentin/Projects/FixedWing/.cursor/debug-7e98f1.log"
+                    ).open("a", encoding="utf-8") as _h:
+                        _h.write(
+                            _json.dumps(
+                                {
+                                    "sessionId": "7e98f1",
+                                    "runId": "post-fix6",
+                                    "hypothesisId": "E1",
+                                    "location": "run_balloon_control.py:pass",
+                                    "message": "balloon pass",
+                                    "data": {
+                                        "passed_idx": passed_idx,
+                                        "next_idx": race.target_idx,
+                                        "n": pos[0],
+                                        "e": pos[1],
+                                    },
+                                    "timestamp": int(time.time() * 1000),
+                                }
+                            )
+                            + "\n"
+                        )
+                except OSError:
+                    pass
+                # #endregion
                 csv_log.log_pass(
                     t_s=now_s,
                     balloon_idx=passed_idx,
@@ -437,6 +471,33 @@ def main() -> int:
                     assisted=race.assisted,
                     pos_ned=pos,
                 )
+                balloon = race.balloon_ned()
+                on_screen = offset_on_screen(
+                    (balloon[0] - pos[0], balloon[1] - pos[1], balloon[2] - pos[2]),
+                    camera,
+                    att[0],
+                    att[1],
+                    att[2],
+                )
+                use_lookat = chase_uses_lookat(
+                    tracker_in_view=False, on_screen=on_screen
+                )
+                if on_screen:
+                    race.update_track(True, race.geometric_los(pos))
+                else:
+                    race.update_track(False, race.last_dir_ned)
+                chase = race.chase_dir_ned(pos, sim_time_s=now_s)
+                now_wall = time.time()
+                color_pub.publish(
+                    TargetColor(
+                        *race.active_color,
+                        stamp=now_wall,
+                        assisted=not use_lookat,
+                    )
+                )
+                last_published_color = race.active_color
+                last_published_assisted = not use_lookat
+                last_color_pub_t = now_wall
 
             now_wall = time.time()
             color_changed = (
@@ -455,17 +516,9 @@ def main() -> int:
                 last_published_assisted = race.assisted
                 last_color_pub_t = now_wall
 
-            # In-view: look along camera LOS (yaw + elevation); balloon Z is
-            # thrust-only. Assisted: path intercept + balloon Z (no 500 m LOS Z).
-            yaw_for_sp = None if last_track_in_view else att[2]
-            heading_ref = att[2]
-            if (
-                (not last_track_in_view)
-                and history.last_vx is not None
-                and history.last_vy is not None
-                and math.hypot(history.last_vx, history.last_vy) >= 5.0
-            ):
-                heading_ref = math.atan2(history.last_vy, history.last_vx)
+            # On-screen: Gazebo FW look-at (bank onto LOS, pitch to elevation).
+            # Assisted path only when the balloon is off-screen.
+            yaw_for_sp = None if use_lookat else att[2]
             controller.send_chase_setpoint(
                 master,
                 pos,
@@ -475,9 +528,11 @@ def main() -> int:
                 q_act=history.last_q,
                 dt=period,
                 groundspeed=history.last_groundspeed,
-                heading_rad=heading_ref,
-                in_view=last_track_in_view,
+                in_view=use_lookat,
                 z_target=race.balloon_ned()[2],
+                vx=history.last_vx,
+                vy=history.last_vy,
+                path_lock_token=race.target_idx,
             )
             if getattr(controller, "last_z_hold", None) is not None:
                 last_aim_z = float(controller.last_z_hold)

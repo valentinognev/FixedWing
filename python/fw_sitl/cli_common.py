@@ -5,6 +5,7 @@ import argparse
 from pathlib import Path
 
 from fw_sitl.path_geometry import DEFAULT_SPEED_MPS
+from fw_sitl.plant_gains import PlantGains
 
 DEFAULT_LOOKAHEAD_M = 500.0
 
@@ -34,8 +35,12 @@ def add_common_args(parser: argparse.ArgumentParser, *, default_sim: Path) -> No
     parser.add_argument(
         "--speed",
         type=float,
-        default=DEFAULT_SPEED_MPS,
-        help=f"Horizontal speed m/s / airspeed target (default: {DEFAULT_SPEED_MPS:.0f})",
+        default=None,
+        help=(
+            "Horizontal speed m/s / airspeed target "
+            "(default: plant table, JSBSim Rascal "
+            f"{DEFAULT_SPEED_MPS:.0f})"
+        ),
     )
     parser.add_argument(
         "--course-deg",
@@ -46,10 +51,10 @@ def add_common_args(parser: argparse.ArgumentParser, *, default_sim: Path) -> No
     parser.add_argument(
         "--lookahead",
         type=float,
-        default=DEFAULT_LOOKAHEAD_M,
+        default=None,
         help=(
             "Along-track advance of the path position setpoint past the closest "
-            f"point on the locked line (m, default: {DEFAULT_LOOKAHEAD_M:.0f})"
+            f"point on the locked line (m, default: plant table {DEFAULT_LOOKAHEAD_M:.0f})"
         ),
     )
     parser.add_argument(
@@ -99,9 +104,20 @@ def add_vstall_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def resolve_speed(args: argparse.Namespace) -> float:
-    speed = float(args.speed)
+def resolve_speed(args: argparse.Namespace, plant: PlantGains) -> float:
+    """CLI ``--speed`` wins; else ``--vstall``; else the plant table."""
+    explicit = getattr(args, "speed", None)
+    if explicit is not None:
+        return float(explicit)
     vstall = getattr(args, "vstall", None)
-    if vstall is not None and abs(args.speed - DEFAULT_SPEED_MPS) < 1e-6:
-        speed = 1.5 * float(vstall)
-    return speed
+    if vstall is not None:
+        return 1.5 * float(vstall)
+    return float(plant.speed_mps)
+
+
+def resolve_lookahead(args: argparse.Namespace, plant: PlantGains) -> float:
+    """CLI ``--lookahead`` wins; else the plant table."""
+    explicit = getattr(args, "lookahead", None)
+    if explicit is not None:
+        return max(0.0, float(explicit))
+    return float(plant.lookahead_m)

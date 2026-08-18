@@ -6,8 +6,8 @@
   },
   "balloons": [
     {"ned": [300, 0, 0], "color": [255, 0, 0], "diameter_m": 10},
-    {"ned": [600, 80, 250], "color": [0, 255, 0], "diameter_m": 10},
-    {"ned": [900, 40, 150], "color": [0, 0, 255], "diameter_m": 10}
+    {"ned": [600, 80, 0], "color": [0, 255, 0], "diameter_m": 10},
+    {"ned": [900, 40, 0], "color": [0, 0, 255], "diameter_m": 10}
   ],
   "camera": {
     "hfov_deg": 90, "vfov_deg": 70,

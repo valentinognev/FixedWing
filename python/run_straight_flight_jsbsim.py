@@ -36,8 +36,10 @@ from fw_sitl.cli_common import (
     DEFAULT_SPEED_MPS,
     add_common_args,
     add_vstall_arg,
+    resolve_lookahead,
     resolve_speed,
 )
+from fw_sitl.plant_gains import load_plant_gains
 from fw_sitl.sim_lifecycle import SCRIPTS_DIR, kill_docker, kill_sim, start_sim
 from fw_sitl.straight_flight_core import EngageError, run_locked_line_hold
 
@@ -76,7 +78,9 @@ def main() -> int:
     args = parser.parse_args()
 
     kill_docker(target=KILL_TARGET)
-    speed = resolve_speed(args)
+    plant = load_plant_gains("jsbsim_rascal")
+    speed = resolve_speed(args, plant)
+    lookahead = resolve_lookahead(args, plant)
     sim_extra_args = ["--viz"] if args.viz else []
 
     sim_owned = False
@@ -111,7 +115,7 @@ def main() -> int:
             udp_port=args.udp,
             speed_mps=speed,
             course_deg=args.course_deg,
-            along_advance_m=max(0.0, float(args.lookahead)),
+            along_advance_m=lookahead,
             rate_hz=args.rate,
             duration_s=args.duration,
             no_plot=args.no_plot,
@@ -126,6 +130,7 @@ def main() -> int:
             accept_unhealthy=True,
             skip_reboot=True,
             cmd_mode=args.cmd_mode,
+            plant=plant,
         )
     except EngageError as exc:
         print(f"Engage failed: {exc}", file=sys.stderr)

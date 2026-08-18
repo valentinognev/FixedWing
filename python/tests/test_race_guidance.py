@@ -14,7 +14,12 @@ if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
 from fw_sitl.flight_setup import BalloonSpec, GuidanceSpec
-from fw_sitl.race_guidance import RaceGuidance, rebase_balloons_to_local_z, show_assisted_overlay
+from fw_sitl.race_guidance import (
+    RaceGuidance,
+    chase_uses_lookat,
+    rebase_balloons_to_local_z,
+    show_assisted_overlay,
+)
 
 
 def _normalize3(v: tuple[float, float, float]) -> tuple[float, float, float]:
@@ -203,11 +208,24 @@ class TestRaceGuidance3DLos(unittest.TestCase):
 
 
 class TestAssistedOverlay(unittest.TestCase):
-    def test_overlay_when_assisted_or_not_in_view(self) -> None:
+    def test_overlay_follows_assisted_flag_only(self) -> None:
+        # Balloon can be painted while the HSV tracker misses; overlay must
+        # not say "assisted" unless control is actually in assisted path.
         self.assertTrue(show_assisted_overlay(assisted=True, in_view=True))
-        self.assertTrue(show_assisted_overlay(assisted=False, in_view=False))
+        self.assertFalse(show_assisted_overlay(assisted=False, in_view=False))
         self.assertTrue(show_assisted_overlay(assisted=True, in_view=False))
         self.assertFalse(show_assisted_overlay(assisted=False, in_view=True))
+
+
+class TestLookatVsAssisted(unittest.TestCase):
+    def test_on_screen_uses_lookat_even_if_tracker_missed(self) -> None:
+        self.assertTrue(chase_uses_lookat(tracker_in_view=False, on_screen=True))
+
+    def test_off_screen_without_blob_is_assisted(self) -> None:
+        self.assertFalse(chase_uses_lookat(tracker_in_view=False, on_screen=False))
+
+    def test_tracker_blob_uses_lookat(self) -> None:
+        self.assertTrue(chase_uses_lookat(tracker_in_view=True, on_screen=False))
 
 
 class TestStaleTrackAssisted(unittest.TestCase):

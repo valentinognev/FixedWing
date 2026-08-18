@@ -1,5 +1,49 @@
 # Updates
 
+## 0.22.0 - Per plant+airframe controller constants
+- Host outer loop (PID, bank, thrust, speed, lookahead, `FW_AIRSPD_*`) and PX4 inner `FW_*` overlays live in `fw_sitl/plant_gains.py` keyed by `jsbsim_rascal` / `yasim_rascal` / `gz_rc_cessna` / `gz_advanced_plane`.
+- JSBSim headless and `--viz` share `jsbsim_rascal` (former shared numbers). YASim and Gazebo tables are distinct; `--model advanced_plane` switches the Gazebo table.
+- `prepare_sitl_arming` writes the selected plant overlay. Race/hold use that table; `flightSetup.json` speed is spawn/scenario only. CLI `--speed`/`--lookahead` still override.
+- Gazebo velocity-mode "trim 16 until GS recovers" special case removed: Cessna trim is 16 in the plant table from arm.
+
+## 0.21.10 - JSBSim race matches Gazebo balloon scenario
+- Green/blue at +250/+150 m NED made look-at dive ~35° with heading error ~0, so the Rascal flew north and never turned. Same `flightSetup` XY as Gazebo, all z=0 at cruise.
+- Synth painted balloons on the aircraft every frame; GZ models are world-fixed. Freeze synth NED on first pose.
+- Chase bank used yaw when |track−yaw|>30° (roll_des=0 while velocity missed the balloon). On-screen look-at uses track up to 90° crab. Geometric LOS while the balloon is in the camera (same 3D point GZ flies at).
+
+## 0.21.9 - On-screen chase uses Gazebo FW look-at
+- Body-azimuth roll + commanded yaw did not close the pixel loop: when rolled, body horiz was ~4° while heading error was ~20° (weak bank); yaw≠actual violates the PX4 FW attitude contract; after the blob hit center a ~21° crab still flew past.
+- Match Gazebo: bank onto LOS azimuth with coordinated heading, pitch to LOS elevation (40° cap), yaw stays actual. Look-at sends that roll/pitch on the wire (no quaternion-PID mix). Off-screen path law unchanged.
+
+## 0.21.8 - On-screen pursuit yaws to hold the blob at center
+- Look-at kept `yaw_des = yaw_act`, so only roll could turn. Body azimuth stayed tens of degrees and the balloon walked off-center until it left the frame.
+- While on screen, yaw setpoint is actual yaw + body azimuth (clipped to ±45°, half HFOV) together with roll/pitch look-at. Off-screen path law is unchanged.
+
+## 0.21.7 - Look-at while balloon is on screen; assisted only off-screen
+- Tracker `in_view` was false while the current balloon still projected into the camera, so assisted path ran with the balloon visible (overlay also treated any miss as assisted).
+- Look-at if the tracker has a blob **or** the active balloon projects into the image. Assisted path only when it is off-screen. Overlay follows the assisted flag only. After a pass, drop the old blob and publish the next color immediately.
+
+## 0.21.6 - Race look-at only in-view; assisted is bank-to-turn
+- Body look-at with `yaw_des = yaw + horiz_err` closed on red once, then assisted ~100° error commanded 40° pitch-up and a heading snap; the Rascal tumbled and never passed, so later balloons were never selected.
+- In-view: body-frame roll/pitch look-at, yaw stays actual. Out of view: freeze origin+course on target change and use the straight-hold path law.
+
+## 0.21.5 - Race look-at uses body-frame camera error
+- NED Euler look-at (`los_az − yaw`, `pitch = clip(los_el, 20°)`, `yaw_des = yaw_act`) left the blob off-center: heading error on the wire was ~0 and pitch sat at the 20° cap while `los_el` was ~−50°.
+- `q_des_from_los` rotates LOS into body: roll/yaw from body azimuth, pitch from current pitch + body elevation. Chase pitch cap ~40° (path hold still 20°).
+
+## 0.21.4 - Balloon-race attitude chase is pure pursuit
+- Assisted used the straight-hold intercept (frozen origin/course, pitch from altitude). Camera boresight followed the line, not the balloon, so the blob sat off-center.
+- Attitude chase always looks along live LOS (`q_des_from_los`): camera blob in-view, geometric balloon LOS when assisted. Straight-flight path hold is unchanged.
+
+## 0.21.3 - Balloon race assisted chase uses straight-flight bank law
+- Assisted (out-of-view) attitude chase froze origin at the aircraft every tick, so intercept xt was always 0 and the plane crabbed off the line to the balloon.
+- Lock origin+course on target change (same intercept + coordinated heading as straight hold). In-view LOS look-at is unchanged.
+- After a pass, recompute chase LOS before locking: using the pre-pass dir froze a line along the old heading (wrap to balloon 0 flew 23° instead of ~200° back).
+
+## 0.21.2 - Attitude hold ignores uncoordinated ground track
+- Bank used `atan2(vy, vx)` whenever gs ≥ 5 m/s. After late in-air arm, track was ~160° from yaw; heading error ~116° saturated +26° roll and the path S-curved (xt rms ~570 m).
+- Use ground track only when |track−yaw| ≤ 30° (keeps the 0.19.2 crab fix). Otherwise bank vs body yaw.
+
 ## 0.21.1 - JSBSim/YASim straight flight in-air attach (skip reboot, CBRK_SUPPLY_CHK, FG GPU)
 - PX4 v1.17: MAVLink force-arm (21196) still runs health checks. Wrong name `CBRK_SUPPLYCHK` never set `CBRK_SUPPLY_CHK`.
 - Skip autopilot reboot; JSBSim uses 60s arm / accept_unhealthy / no sim-reset so EKF local-pos can pass the 1s validity probation while falling.

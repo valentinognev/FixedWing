@@ -14,8 +14,17 @@ PASS_MISS_MULT = 4.0
 
 
 def show_assisted_overlay(*, assisted: bool, in_view: bool) -> bool:
-    """True when camera should overlay assisted-guidance indication."""
-    return bool(assisted) or (not bool(in_view))
+    """True when camera should overlay assisted-guidance indication.
+
+    Follows the control ``assisted`` flag only. A painted balloon with a
+    missed HSV blob must not show assisted (``in_view`` is unused).
+    """
+    return bool(assisted)
+
+
+def chase_uses_lookat(*, tracker_in_view: bool, on_screen: bool) -> bool:
+    """Look-at while the current balloon is in the image; else assisted path."""
+    return bool(tracker_in_view) or bool(on_screen)
 
 
 def rebase_balloons_to_local_z(
@@ -124,6 +133,11 @@ class RaceGuidance:
     def balloon_ned(self, idx: int | None = None) -> tuple[float, float, float]:
         i = idx if idx is not None else self.target_idx
         return tuple(self.balloons[i].ned)
+
+    def geometric_los(
+        self, pos_ned: tuple[float, float, float]
+    ) -> tuple[float, float, float]:
+        return _los_to_balloon(pos_ned, self.balloon_ned())
 
     def mark_track_received(self, now_s: float) -> None:
         """Record that a TrackMessage arrived at ``now_s`` (does not clear stale lock)."""

@@ -243,6 +243,21 @@ def project_ned_offset_to_pixel(
     return camera.dir_cam_to_pixel(rel_cam)
 
 
+def offset_on_screen(
+    offset_ned: tuple[float, float, float],
+    camera: CameraModel,
+    roll: float,
+    pitch: float,
+    yaw: float,
+) -> bool:
+    """True if the NED offset projects inside the image (current balloon on screen)."""
+    pix = project_ned_offset_to_pixel(offset_ned, camera, roll, pitch, yaw)
+    if pix is None:
+        return False
+    u, v = pix
+    return 0.0 <= u < float(camera.width_px) and 0.0 <= v < float(camera.height_px)
+
+
 def dir_cam_to_ned(
     dir_cam: tuple[float, float, float],
     camera: CameraModel,

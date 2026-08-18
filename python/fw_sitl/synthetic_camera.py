@@ -24,7 +24,7 @@ def render_frame(
     *,
     sky_rgb: tuple[int, int, int] = (135, 206, 235),
     ground_rgb: tuple[int, int, int] = (34, 120, 34),
-    rebase_z_to_aircraft: bool = True,
+    rebase_z_to_aircraft: bool = False,
 ) -> np.ndarray:
     model = CameraModel.from_spec(camera)
     img = np.zeros((model.height_px, model.width_px, 3), dtype=np.uint8)
@@ -90,6 +90,9 @@ def run_synthetic_publisher(
     period = 1.0 / setup.render_rate_hz
     pos = (0.0, 0.0, -80.0)
     att = (0.0, 0.0, 0.0)
+    # Gazebo balloons are world-fixed. Freeze NED on first pose so a climb/dive
+    # moves the disks in the image (per-frame rebase glued them to the horizon).
+    world_balloons: tuple[BalloonSpec, ...] | None = None
     next_t = time.time()
     print(f"Synthetic camera publishing @ {setup.render_rate_hz} Hz → {setup.zmq.image}")
 
@@ -102,8 +105,13 @@ def run_synthetic_publisher(
             att = (float(msg.roll), float(msg.pitch), float(msg.yaw))
         if pos_msg is not None:
             pos = pos_msg
+            if world_balloons is None:
+                world_balloons = rebase_balloons_to_local_z(setup.balloons, pos[2])
 
-        img = render_frame(pos, att[0], att[1], att[2], setup.balloons, setup.camera)
+        paint = world_balloons if world_balloons is not None else setup.balloons
+        img = render_frame(
+            pos, att[0], att[1], att[2], paint, setup.camera, rebase_z_to_aircraft=False
+        )
         pub.publish(img)
         next_t += period
         sleep = next_t - time.time()

@@ -31,8 +31,10 @@ if str(_PYTHON_ROOT) not in sys.path:
 from fw_sitl.cli_common import (
     DEFAULT_SPEED_MPS,
     add_common_args,
+    resolve_lookahead,
     resolve_speed,
 )
+from fw_sitl.plant_gains import load_plant_gains, plant_id_from_flags
 from fw_sitl.sim_lifecycle import (
     SCRIPTS_DIR,
     kill_docker,
@@ -66,7 +68,9 @@ def main() -> int:
     args = parser.parse_args()
 
     kill_docker(target=KILL_TARGET)
-    speed = resolve_speed(args)
+    plant = load_plant_gains(plant_id_from_flags(gz=True, gz_model=args.model))
+    speed = resolve_speed(args, plant)
+    lookahead = resolve_lookahead(args, plant)
     sim_extra = ["--model", args.model] if args.model != DEFAULT_MODEL else []
 
     sim_owned = False
@@ -106,7 +110,7 @@ def main() -> int:
             udp_port=args.udp,
             speed_mps=speed,
             course_deg=args.course_deg,
-            along_advance_m=max(0.0, float(args.lookahead)),
+            along_advance_m=lookahead,
             rate_hz=args.rate,
             duration_s=args.duration,
             no_plot=args.no_plot,
@@ -120,6 +124,7 @@ def main() -> int:
             full_sim_restart=False,
             accept_unhealthy=True,
             cmd_mode=args.cmd_mode,
+            plant=plant,
         )
         return rc
     except EngageError as exc:

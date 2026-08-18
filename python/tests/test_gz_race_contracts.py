@@ -38,9 +38,21 @@ class TestGzRaceContracts(unittest.TestCase):
         poll_at = ctl.index("pos = history.poll(master)")
         use_at = ctl.index("att = history.last_att_rad")
         self.assertGreater(use_at, poll_at)
-        self.assertIn("in_view=last_track_in_view", ctl)
+        self.assertIn("in_view=use_lookat", ctl)
         self.assertIn("z_target=race.balloon_ned()[2]", ctl)
+        self.assertIn("if on_screen:", ctl)
+        self.assertIn("race.update_track(True, race.geometric_los(pos))", ctl)
+        self.assertLess(
+            ctl.index("if on_screen:"),
+            ctl.index("elif tracker_in_view:"),
+        )
         self.assertIn("approach = (history.last_vx, history.last_vy, 0.0)", ctl)
+        self.assertIn("path_lock_token=race.target_idx", ctl)
+        self.assertIn("vx=history.last_vx", ctl)
+        self.assertGreaterEqual(
+            ctl.count("chase = race.chase_dir_ned(pos, sim_time_s=now_s)"),
+            2,
+        )
 
     def test_control_gz_after_engage(self) -> None:
         ctl = _CTL.read_text(encoding="utf-8")
@@ -54,13 +66,10 @@ class TestGzRaceContracts(unittest.TestCase):
         self.assertNotIn("wait_min_airspeed(master)", ctl)
         self.assertIn("--spawn-gz-balloons", ctl)
         self.assertIn("accept_unhealthy", ctl)
-        # After engage, drop airspeed SP so TECS does not underspeed-dive at ~14 m/s.
-        self.assertIn("change_airspeed(master, aspd_sp)", ctl)
-        self.assertIn('set_param(master, "FW_AIRSPD_TRIM", aspd_sp)', ctl)
-        self.assertGreater(
-            ctl.index("GZ: airspeed SP"),
-            ctl.index("engage_offboard_with_retries"),
-        )
+        # Plant table owns FW_AIRSPD_* (Cessna trim 16; no post-engage overlay).
+        self.assertIn("prepare_sitl_arming(master, plant)", ctl)
+        self.assertIn("plant_id_from_flags", ctl)
+        self.assertNotIn("GZ: airspeed SP", ctl)
 
     def test_wait_min_airspeed_exists(self) -> None:
         mav = _MAV.read_text(encoding="utf-8")

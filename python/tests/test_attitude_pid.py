@@ -87,6 +87,41 @@ class TestQDesFromLos(unittest.TestCase):
         _r, pitch, _y = rpy_from_quat(q_des)
         self.assertGreater(pitch, 0.0)
 
+    def test_los_lookat_pitches_past_old_20deg_cap(self) -> None:
+        # Race in-view: los_el ≈ -50°, pitch_des stuck at -20°, blob stays low.
+        down = math.radians(50.0)
+        dir_ned = (math.cos(down), 0.0, math.sin(down))
+        q_des = q_des_from_los(dir_ned, yaw_rad=0.0)
+        _r, pitch, _y = rpy_from_quat(q_des)
+        self.assertLess(pitch, math.radians(-35.0))
+
+    def test_los_yaw_stays_actual_fw_contract(self) -> None:
+        # Gazebo / send_bank_hold: PX4 FW tracks roll/pitch; yaw stays actual.
+        az = math.radians(20.0)
+        dir_ned = (math.cos(az), math.sin(az), 0.0)
+        q_des = q_des_from_los(dir_ned, yaw_rad=0.0)
+        roll, _p, yaw = rpy_from_quat(q_des)
+        self.assertGreater(roll, 0.1)
+        self.assertAlmostEqual(yaw, 0.0, places=2)
+
+    def test_los_pitch_follows_elevation(self) -> None:
+        el = math.radians(-28.0)
+        dir_ned = (math.cos(el), 0.0, math.sin(-el))
+        q_des = q_des_from_los(dir_ned, yaw_rad=0.0)
+        _r, pitch, _y = rpy_from_quat(q_des)
+        self.assertAlmostEqual(pitch, el, places=2)
+
+    def test_los_crab_banks_to_align_track(self) -> None:
+        # post-fix4: blob on the nose (LOS north) but track ~18° east → fly past.
+        # Bank left so ground track comes onto the balloon, as GZ does when
+        # coordinated (track≈yaw) and Rascal needs when crabbed.
+        dir_ned = (1.0, 0.0, 0.0)
+        track = math.radians(18.0)
+        q_des = q_des_from_los(dir_ned, yaw_rad=0.0, heading_rad=track)
+        roll, _p, yaw = rpy_from_quat(q_des)
+        self.assertLess(roll, -0.2)
+        self.assertAlmostEqual(yaw, 0.0, places=2)
+
 
 class TestAttitudePid(unittest.TestCase):
     def test_zero_error_command_stays_at_actual(self) -> None:

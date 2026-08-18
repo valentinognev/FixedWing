@@ -13,6 +13,15 @@ BANK_MAX_ROLL_RAD = 0.45
 BANK_KP_ALT = 0.025  # rad pitch per metre NED-z error
 BANK_MAX_PITCH_RAD = 0.12
 DEFAULT_THRUST = 0.60
+# Use ground track for bank only when it agrees with yaw (coordinated / light crab).
+# Falling in-air attach can have |track−yaw| ~160°; treating that as heading saturates
+# max bank the wrong way vs the nose (0.19.2 used track unconditionally).
+BANK_TRACK_MIN_GS_MPS = 5.0
+BANK_TRACK_MAX_SIDESLIP_RAD = math.radians(30.0)
+# On-screen chase: still use ground track with a larger crab so a 45°
+# yaw/track split (EKF settle) banks the velocity onto the balloon. Path
+# hold keeps 30° so a 160° falling-attach track cannot saturate the wrong way.
+BANK_CHASE_MAX_SIDESLIP_RAD = math.radians(90.0)
 
 
 def ned_velocity_from_course(speed_mps: float, course_rad: float) -> tuple[float, float, float]:
@@ -57,6 +66,30 @@ def wrap_pi(angle: float) -> float:
     while a <= -math.pi:
         a += 2.0 * math.pi
     return a
+
+
+def coordinated_heading_rad(
+    yaw_rad: float,
+    vx: float | None,
+    vy: float | None,
+    *,
+    min_gs_mps: float = BANK_TRACK_MIN_GS_MPS,
+    max_sideslip_rad: float = BANK_TRACK_MAX_SIDESLIP_RAD,
+) -> float:
+    """Ground track when coordinated; otherwise body yaw.
+
+    Small crab (|track−yaw| ≤ 30°) still uses track so yaw P cannot cancel
+    cross-track. Large sideslip (falling / uncoordinated) must not.
+    """
+    yaw = float(yaw_rad)
+    if vx is None or vy is None:
+        return yaw
+    if math.hypot(float(vx), float(vy)) < float(min_gs_mps):
+        return yaw
+    track = math.atan2(float(vy), float(vx))
+    if abs(wrap_pi(track - yaw)) > float(max_sideslip_rad):
+        return yaw
+    return track
 
 
 def cross_track_m(

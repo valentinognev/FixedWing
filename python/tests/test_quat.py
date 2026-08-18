@@ -19,6 +19,8 @@ from fw_sitl.quat import (
     from_rpy,
     mul,
     normalize,
+    rotate_body_to_ned,
+    rotate_ned_to_body,
     rpy_from_quat,
 )
 
@@ -91,6 +93,22 @@ class TestQuatRpy(unittest.TestCase):
         p = mul(q, ident)
         for a, b in zip(p, q):
             self.assertAlmostEqual(a, b, places=6)
+
+
+class TestQuatRotate(unittest.TestCase):
+    def test_yaw_90_body_x_is_east(self) -> None:
+        q = from_rpy(0.0, 0.0, math.pi / 2.0)
+        n, e, d = rotate_body_to_ned(q, (1.0, 0.0, 0.0))
+        self.assertAlmostEqual(n, 0.0, places=5)
+        self.assertAlmostEqual(e, 1.0, places=5)
+        self.assertAlmostEqual(d, 0.0, places=5)
+
+    def test_ned_east_is_body_x_after_yaw_90(self) -> None:
+        q = from_rpy(0.0, 0.0, math.pi / 2.0)
+        bx, by, bz = rotate_ned_to_body(q, (0.0, 1.0, 0.0))
+        self.assertAlmostEqual(bx, 1.0, places=5)
+        self.assertAlmostEqual(by, 0.0, places=5)
+        self.assertAlmostEqual(bz, 0.0, places=5)
 
 
 if __name__ == "__main__":

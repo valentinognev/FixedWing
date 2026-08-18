@@ -12,6 +12,7 @@ from fw_sitl.path_geometry import (
     bank_to_turn_commands,
     path_setpoint_on_line,
 )
+from fw_sitl.plant_gains import PlantGains
 from fw_sitl.quat import Quat, normalize
 
 # FW OFFBOARD uses position only (PX4 ignores velocity/accel on fixed-wing).
@@ -226,7 +227,7 @@ def reboot_autopilot(master: mavutil.mavfile) -> mavutil.mavfile:
     return connect(port, timeout=120.0)
 
 
-def prepare_sitl_arming(master: mavutil.mavfile) -> None:
+def prepare_sitl_arming(master: mavutil.mavfile, plant: PlantGains) -> None:
     # In-air JSBSim reports ~30–40 m/s CAS; default FW_AIRSPD_MAX (~20) blocks arm
     # with "Airspeed too high". Force-arm still refuses until that check passes.
     # Rascal airframe defaults NAV_DLL_ACT=2 (datalink-loss → leave OFFBOARD).
@@ -237,10 +238,8 @@ def prepare_sitl_arming(master: mavutil.mavfile) -> None:
     # local_position_invalid flickers (even if setpoints still stream) → failsafe to
     # ALTCTL + EKF/NED jumps on the plot. Soften EKF GPS / dead-reckon so xy stays valid.
     # INT params must use bytewise float encoding (see set_param).
-    float_params = (
-        ("FW_AIRSPD_MAX", 50.0),
-        ("FW_AIRSPD_MIN", 5.0),
-        ("FW_AIRSPD_TRIM", 30.0),
+    # FW_AIRSPD_* and inner-loop FW_* come from the plant+airframe table.
+    float_params = plant.px4_overlay() + (
         ("COM_OF_LOSS_T", 60.0),  # max; position-offboard also gated on local pos valid
         ("COM_POS_FS_EPH", 1000.0),
         ("COM_VEL_FS_EVH", 1000.0),

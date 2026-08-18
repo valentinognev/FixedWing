@@ -18,6 +18,7 @@ from fw_sitl.camera_model import (
     body_to_ned_rotation,
     dir_cam_to_ned,
     dir_cam_to_pixel,
+    offset_on_screen,
     pixel_to_dir_cam,
     project_ned_offset_to_pixel,
 )
@@ -105,6 +106,46 @@ class TestNedBodyEuler(unittest.TestCase):
         )
         assert px_yaw is not None
         self.assertAlmostEqual(px_yaw[0], model.cx, delta=8.0)
+
+
+class TestOffsetOnScreen(unittest.TestCase):
+    def _model(self) -> CameraModel:
+        return CameraModel(
+            hfov_deg=90.0, vfov_deg=70.0, width_px=640, height_px=480
+        )
+
+    def test_30deg_right_is_on_screen(self) -> None:
+        # Race logs: red ~30° right of nose, law=path because tracker in_view
+        # was false. Geometric projection must still count as on-screen.
+        az = math.radians(30.0)
+        model = self._model()
+        self.assertTrue(
+            offset_on_screen(
+                (math.cos(az) * 70.0, math.sin(az) * 70.0, 0.0),
+                model,
+                0.0,
+                0.0,
+                0.0,
+            )
+        )
+
+    def test_80deg_right_is_off_screen(self) -> None:
+        az = math.radians(80.0)
+        model = self._model()
+        self.assertFalse(
+            offset_on_screen(
+                (math.cos(az) * 70.0, math.sin(az) * 70.0, 0.0),
+                model,
+                0.0,
+                0.0,
+                0.0,
+            )
+        )
+
+    def test_behind_is_off_screen(self) -> None:
+        self.assertFalse(
+            offset_on_screen((-50.0, 0.0, 0.0), self._model(), 0.0, 0.0, 0.0)
+        )
 
 
 if __name__ == "__main__":
