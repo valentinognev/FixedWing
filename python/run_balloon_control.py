@@ -41,6 +41,7 @@ from fw_sitl.race_guidance import (
     chase_uses_lookat,
     coordinated_turn_radius_m,
     format_ned_pos_line,
+    offset_balloons_ned,
     race_end_reason,
     rebase_balloons_to_local_z,
 )
@@ -171,9 +172,11 @@ def main() -> int:
     laps_target = int(setup.guidance.laps)
     csv_path = args.csv if args.csv is not None else default_csv_path()
 
-    sim_extra = ["--viz"] if args.viz else []
+    sim_extra = ["--setup", str(args.setup)]
+    if args.viz:
+        sim_extra.append("--viz")
     if args.gz:
-        sim_extra = ["--setup", str(args.setup), "--model", args.model]
+        sim_extra.extend(["--model", args.model])
     sim_owned = False
     sim_stopped = False
 
@@ -297,7 +300,19 @@ def main() -> int:
 
     # Config balloon Z is home/aircraft-relative; also rebase onto settled local Z so
     # residual EKF offset does not recreate a huge climb setpoint.
-    race_balloons = rebase_balloons_to_local_z(setup.balloons, z_hold)
+    # JSBSim/YASim PX4 home ≈ spawn GPS, so chase NED is balloon − spawn.
+    # Gazebo chase/plots use the mesh/world frame (origin_bias); keep setup NED.
+    world_balloons = rebase_balloons_to_local_z(setup.balloons, z_hold)
+    if args.gz:
+        race_balloons = world_balloons
+    else:
+        race_balloons = rebase_balloons_to_local_z(
+            offset_balloons_ned(setup.balloons, setup.spawn.ned), z_hold
+        )
+    print(
+        f"spawn NED={tuple(round(c, 1) for c in setup.spawn.ned)} "
+        f"heading={setup.spawn.heading_deg:g}°"
+    )
     print(
         f"Balloon NED rebased to local z={z_hold:.1f}: "
         + ", ".join(
@@ -313,11 +328,9 @@ def main() -> int:
                     f"FG balloon spawn (background) → "
                     f"{args.telnet_host}:{args.telnet_port}..."
                 )
-                # Use rebased NED (same altitudes control chases). Config z≈0 at
-                # cruise MSL while a deep/unhealthy engage has z_hold≫0; spawning
-                # raw setup balloons left FG models hundreds of metres above LOS.
+                # World-frame XY (setup NED) + rebased Z. Chase may be spawn-relative.
                 spawn_balloons_fg(
-                    race_balloons,
+                    world_balloons,
                     telnet_host=args.telnet_host,
                     telnet_port=args.telnet_port,
                     connect_retries=90,
@@ -527,14 +540,19 @@ def main() -> int:
                 race.update_track(False, race.last_dir_ned)
 
             race.tick_stale(now_s, stale_age_s)
-            chase = race.chase_dir_ned(pos, sim_time_s=now_s)
-            approach = chase
+            approach_xy: tuple[float, float] | None = None
             if (
                 history.last_vx is not None
                 and history.last_vy is not None
                 and math.hypot(history.last_vx, history.last_vy) >= 5.0
             ):
-                approach = (history.last_vx, history.last_vy, 0.0)
+                approach_xy = (float(history.last_vx), float(history.last_vy))
+            chase = race.chase_dir_ned(
+                pos, sim_time_s=now_s, approach_xy=approach_xy
+            )
+            approach = chase
+            if approach_xy is not None:
+                approach = (approach_xy[0], approach_xy[1], 0.0)
             if race.check_pass(pos, approach_dir_ned=approach):
                 last_track_in_view = False
                 last_dir_cam = None
@@ -570,7 +588,9 @@ def main() -> int:
                     race.update_track(True, race.geometric_los(pos))
                 else:
                     race.update_track(False, race.last_dir_ned)
-                chase = race.chase_dir_ned(pos, sim_time_s=now_s)
+                chase = race.chase_dir_ned(
+                    pos, sim_time_s=now_s, approach_xy=approach_xy
+                )
                 now_wall = time.time()
                 color_pub.publish(
                     _race_target_color(

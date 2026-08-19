@@ -48,6 +48,8 @@ class TestMavlinkFanoutContracts(unittest.TestCase):
     def test_sim_default_fanout_off(self) -> None:
         text = _SIM_SH.read_text(encoding="utf-8")
         self.assertRegex(text, r'MAVLINK_FANOUT="\$\{MAVLINK_FANOUT:-0\}"')
+        self.assertIn("--setup", text)
+        self.assertIn("fw_sitl.spawn_ic", text)
 
     def test_sim_fanout_fails_loud(self) -> None:
         text = _SIM_SH.read_text(encoding="utf-8")

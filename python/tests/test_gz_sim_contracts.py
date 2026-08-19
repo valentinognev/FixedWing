@@ -47,6 +47,8 @@ class TestGzSimContracts(unittest.TestCase):
         self.assertIn("PX4_noble_sim_build.sh", text)
         self.assertIn("GZ_SIM_RESOURCE_PATH", text)
         self.assertIn("apply_plane_overlay", text)
+        self.assertIn("fw_sitl.spawn_ic", text)
+        self.assertIn("gz_spawn_velocity_enu", text)
         self.assertRegex(
             text, r"cp -f /tmp/fw_gz_overlay/models/.*/model\.sdf.*\$\{STOCK\}"
         )

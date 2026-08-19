@@ -13,6 +13,7 @@ if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
 import cv2
+import numpy as np
 
 from fw_sitl.balloon_tracker import track_balloon
 from fw_sitl.camera_model import CameraModel
@@ -47,7 +48,22 @@ def main() -> int:
     show_ui = not args.no_display
     win = "balloon_camera"
     if show_ui:
-        cv2.namedWindow(win, cv2.WINDOW_NORMAL)
+        # WINDOW_NORMAL is 0, same bit as WINDOW_GUI_EXPANDED. That Qt chrome
+        # plus conda OpenCV 5 (no bundled fonts) paints balloon_camera black.
+        cv2.namedWindow(win, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
+        cv2.resizeWindow(win, camera.width_px, camera.height_px)
+        placeholder = np.zeros((camera.height_px, camera.width_px, 3), dtype=np.uint8)
+        cv2.putText(
+            placeholder,
+            "waiting for image",
+            (10, 24),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (200, 200, 200),
+            2,
+        )
+        cv2.imshow(win, placeholder)
+        cv2.waitKey(1)
     print(
         f"Camera @ {setup.camera.rate_hz} Hz; image={setup.zmq.image} "
         f"track→{setup.zmq.track}; display={'on' if show_ui else 'off'}"
@@ -112,11 +128,15 @@ def main() -> int:
                         2,
                     )
                 cv2.imshow(win, display)
-        if show_ui and (cv2.waitKey(1) & 0xFF == ord("q")):
-            break
         next_t += period
         sleep = next_t - time.time()
-        if sleep > 0:
+        if show_ui:
+            delay_ms = max(1, int(sleep * 1000.0)) if sleep > 0 else 1
+            if cv2.waitKey(delay_ms) & 0xFF == ord("q"):
+                break
+            if sleep <= 0:
+                next_t = time.time()
+        elif sleep > 0:
             time.sleep(sleep)
         else:
             next_t = time.time()

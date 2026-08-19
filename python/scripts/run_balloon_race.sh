@@ -163,6 +163,28 @@ PYTHON="$(command -v "${PYTHON:-python3}")"
 # mixed libzmq and aborted the camera pane (Assertion failed: !_more src/fq.cpp).
 # tmux/bash "libtinfo no version information" lines are cosmetic.
 
+# conda base currently ships OpenCV 5 (no Qt fonts) → black balloon_camera.
+# Pin is opencv-python>=4.8,<5; fall back to envs/pigeon when present.
+_cv_major="$("${PYTHON}" -c 'import cv2; print(cv2.__version__.split(".")[0])' 2>/dev/null | tail -1)"
+_cv_major="${_cv_major:-0}"
+if [[ "${_cv_major}" -ge 5 ]]; then
+  _pigeon=""
+  if [[ -n "${CONDA_PREFIX:-}" && -x "${CONDA_PREFIX}/envs/pigeon/bin/python3" ]]; then
+    _pigeon="${CONDA_PREFIX}/envs/pigeon/bin/python3"
+  elif [[ -x "${HOME}/anaconda/envs/pigeon/bin/python3" ]]; then
+    _pigeon="${HOME}/anaconda/envs/pigeon/bin/python3"
+  fi
+  if [[ -n "${_pigeon}" ]] && "${_pigeon}" -c 'import cv2, numpy, zmq, pymavlink, matplotlib; assert int(cv2.__version__.split(".")[0]) < 5' >/dev/null 2>&1; then
+    echo "Warning: ${PYTHON} has OpenCV ${_cv_major} (need <5 for balloon_camera). Using ${_pigeon}"
+    PYTHON="${_pigeon}"
+  else
+    echo "Error: balloon_camera needs opencv-python>=4.8,<5; ${PYTHON} has OpenCV ${_cv_major}." >&2
+    echo "  conda activate pigeon" >&2
+    echo "  or: PYTHON=/path/to/python3 ./run_balloon_race.sh ..." >&2
+    exit 1
+  fi
+fi
+
 if ! "${PYTHON}" -c "import cv2, numpy, zmq, pymavlink, matplotlib" >/dev/null 2>&1; then
   echo "Error: balloon-race Python deps missing in $("${PYTHON}" -c 'import sys; print(sys.executable)')." >&2
   echo "  Install: ${PYTHON} -m pip install -r ${PYTHON_ROOT}/requirements.txt" >&2
@@ -184,12 +206,12 @@ if [[ "${GZ}" -eq 1 ]]; then
   SIM_CMD="MAVLINK_FANOUT=${MAVLINK_FANOUT} bash ${PYTHON_ROOT}/scripts/runSimGzPlane.sh --mavlink-server --setup ${SETUP} --model ${GZ_MODEL}"
 elif [[ "${YASIM}" -eq 1 ]]; then
   CONTAINER_NAME="${PX4_SITL_DOCKER_NAME:-px4-noble-sim-ros}"
-  SIM_CMD="MAVLINK_FANOUT=${MAVLINK_FANOUT} bash ${PYTHON_ROOT}/scripts/runSimYasimRascal.sh"
+  SIM_CMD="MAVLINK_FANOUT=${MAVLINK_FANOUT} bash ${PYTHON_ROOT}/scripts/runSimYasimRascal.sh --setup ${SETUP}"
   if [[ "${MAVLINK_FANOUT}" == "1" ]]; then
     SIM_CMD+=" --mavlink-server"
   fi
 else
-  SIM_CMD="MAVLINK_FANOUT=${MAVLINK_FANOUT} bash ${PYTHON_ROOT}/scripts/runSimJsbsimRascal.sh"
+  SIM_CMD="MAVLINK_FANOUT=${MAVLINK_FANOUT} bash ${PYTHON_ROOT}/scripts/runSimJsbsimRascal.sh --setup ${SETUP}"
   if [[ "${MAVLINK_FANOUT}" == "1" ]]; then
     SIM_CMD+=" --mavlink-server"
   fi
@@ -200,7 +222,7 @@ fi
 
 IMG_CMD="PYTHONUNBUFFERED=1 ${PYTHON} -u ${PYTHON_ROOT}/run_balloon_image_source.py --mode ${MODE} --setup ${SETUP} --udp ${MAVLINK_IMAGE_PORT}"
 POSE_CMD="PYTHONUNBUFFERED=1 ${PYTHON} -u ${PYTHON_ROOT}/run_balloon_gz_pose.py --setup ${SETUP}"
-CAM_CMD="PYTHONUNBUFFERED=1 ${PYTHON} -u ${PYTHON_ROOT}/run_balloon_camera.py --setup ${SETUP}"
+CAM_CMD="DISPLAY=${DISPLAY:-:0} QT_X11_NO_MITSHM=1 PYTHONUNBUFFERED=1 ${PYTHON} -u ${PYTHON_ROOT}/run_balloon_camera.py --setup ${SETUP}"
 # Headless e2e / no GUI: BALLOON_CAMERA_NO_DISPLAY=1 or --no-display
 if [[ "${BALLOON_CAMERA_NO_DISPLAY:-0}" == "1" ]]; then
   CAM_CMD+=" --no-display"

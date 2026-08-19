@@ -35,6 +35,8 @@ from fw_sitl.flight_setup import (
 class TestFlightSetupDefaults(unittest.TestCase):
     def test_empty_dict_uses_locked_defaults(self) -> None:
         setup = flight_setup_from_dict({})
+        self.assertEqual(setup.spawn.ned, (0.0, 0.0, 0.0))
+        self.assertEqual(setup.spawn.heading_deg, 0.0)
         self.assertEqual(setup.camera.fg_window_pattern, DEFAULT_FG_WINDOW_PATTERN)
         self.assertEqual(setup.guidance.stale_track_warn_s, DEFAULT_STALE_TRACK_WARN_S)
         self.assertEqual(setup.guidance.laps, DEFAULT_LAPS)
@@ -91,9 +93,22 @@ class TestFlightSetupDefaults(unittest.TestCase):
         self.assertEqual(setup.guidance.duration_s, 90.0)
         self.assertEqual(setup.guidance.cmd_mode, "attitude")
         self.assertEqual(setup.guidance.alt_preserve_heading_err_deg, 30.0)
+        self.assertEqual(setup.spawn.ned, (0.0, 0.0, 0.0))
+        self.assertEqual(setup.spawn.heading_deg, 0.0)
         self.assertEqual(setup.verification.pixel_rms_max_px, 12.0)
         self.assertEqual(setup.verification.pass_time_tol_s, 4.0)
         self.assertEqual(setup.verification.path_rms_max_m, 25.0)
+
+    def test_parse_spawn_ned_and_heading(self) -> None:
+        setup = flight_setup_from_dict(
+            {"spawn": {"ned": [50, -20, 5], "heading_deg": 90}}
+        )
+        self.assertEqual(setup.spawn.ned, (50.0, -20.0, 5.0))
+        self.assertEqual(setup.spawn.heading_deg, 90.0)
+
+    def test_spawn_ned_must_be_triple(self) -> None:
+        with self.assertRaises(ValueError):
+            flight_setup_from_dict({"spawn": {"ned": [0, 0]}})
 
     def test_laps_zero_is_unlimited(self) -> None:
         setup = flight_setup_from_dict({"guidance": {"laps": 0, "duration_s": 180}})
@@ -125,6 +140,8 @@ class TestFlightSetupDefaults(unittest.TestCase):
         self.assertEqual(setup.guidance.laps, 0)
         self.assertEqual(setup.guidance.duration_s, 60.0)
         self.assertEqual(setup.guidance.stale_track_warn_s, 10.0)
+        self.assertEqual(setup.spawn.ned, (0.0, 0.0, 0.0))
+        self.assertEqual(setup.spawn.heading_deg, 0.0)
         self.assertEqual(setup.verification.pixel_rms_max_px, 15.0)
         self.assertEqual(setup.verification.pass_time_tol_s, 5.0)
         self.assertEqual(setup.verification.path_rms_max_m, 30.0)

@@ -29,6 +29,8 @@ class TestGzRaceContracts(unittest.TestCase):
         self.assertIn("--duration", text)
         self.assertIn("--setup", text)
         self.assertIn("px4-noble-gz-plane", text)
+        self.assertIn('runSimJsbsimRascal.sh --setup ${SETUP}', text)
+        self.assertIn('runSimYasimRascal.sh --setup ${SETUP}', text)
         self.assertIn('IMG_CMD+=" --container ${CONTAINER_NAME}"', text)
         self.assertIn('CTL_CMD+=" --gz-container ${CONTAINER_NAME}"', text)
         self.assertIn("import cv2, numpy, zmq, pymavlink, matplotlib", text)
@@ -111,11 +113,15 @@ class TestGzRaceContracts(unittest.TestCase):
             ctl.index("if tracker_in_view:"),
             ctl.index("elif on_screen:"),
         )
-        self.assertIn("approach = (history.last_vx, history.last_vy, 0.0)", ctl)
+        self.assertIn("approach_xy", ctl)
+        self.assertIn("history.last_vx", ctl)
+        self.assertIn("offset_balloons_ned", ctl)
+        self.assertIn("world_balloons", ctl)
+        self.assertIn("sim_extra = [\"--setup\", str(args.setup)]", ctl)
         self.assertIn("path_lock_token=race.target_idx", ctl)
         self.assertIn("vx=history.last_vx", ctl)
         self.assertGreaterEqual(
-            ctl.count("chase = race.chase_dir_ned(pos, sim_time_s=now_s)"),
+            ctl.count("chase = race.chase_dir_ned("),
             2,
         )
 
@@ -192,6 +198,8 @@ class TestGzRaceContracts(unittest.TestCase):
         # unarmed Cessna (spawn velocity is one-shot). Straight flight engages ASAP.
         self.assertNotIn("wait_min_airspeed(master)", ctl)
         self.assertIn("--spawn-gz-balloons", ctl)
+        self.assertIn("offset_balloons_ned", ctl)
+        self.assertIn("world_balloons", ctl)
         self.assertIn("accept_unhealthy", ctl)
         # Plant table owns FW_AIRSPD_* (Cessna trim 16; no post-engage overlay).
         self.assertIn("prepare_sitl_arming(master, plant)", ctl)
@@ -265,6 +273,30 @@ class TestGzRaceContracts(unittest.TestCase):
         cam = _CAM.read_text(encoding="utf-8")
         self.assertIn("format_ned_pos_line", cam)
         self.assertIn("latest_color.pos_ned", cam)
+
+    def test_camera_window_is_simple_gui_not_qt_expanded(self) -> None:
+        """WINDOW_NORMAL==0 also means WINDOW_GUI_EXPANDED; that Qt chrome
+        plus Anaconda OpenCV 5 (no bundled fonts) shows a black balloon_camera.
+        """
+        cam = _CAM.read_text(encoding="utf-8")
+        self.assertIn("WINDOW_GUI_NORMAL", cam)
+        self.assertIn("resizeWindow", cam)
+        self.assertIn("waiting for image", cam)
+
+    def test_camera_pane_gets_display(self) -> None:
+        """Control already bakes DISPLAY; camera ran under tmux env only."""
+        text = _RACE.read_text(encoding="utf-8")
+        self.assertIn(
+            'CAM_CMD="DISPLAY=${DISPLAY:-:0}',
+            text,
+        )
+
+    def test_race_falls_back_from_opencv5_to_pigeon(self) -> None:
+        """conda base ships OpenCV 5; balloon_camera needs opencv-python<5."""
+        text = _RACE.read_text(encoding="utf-8")
+        self.assertIn("cv2.__version__", text)
+        self.assertIn("envs/pigeon", text)
+        self.assertIn("need <5", text)
 
 
 if __name__ == "__main__":

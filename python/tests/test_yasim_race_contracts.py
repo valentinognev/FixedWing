@@ -48,6 +48,8 @@ class TestYasimSimFanoutAndBalloons(unittest.TestCase):
         self.assertIn("--mavlink-heartbeat-frequency 0", text)
         self.assertIn("/opt/fixedwing/balloons", text)
         self.assertIn("Models/FixedWing", text)
+        self.assertIn("--setup", text)
+        self.assertIn("fw_sitl.spawn_ic", text)
         self.assertIn("balloon_*.xml", text)
         self.assertIn("--gpus all", text)
         self.assertNotRegex(

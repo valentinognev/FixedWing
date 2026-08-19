@@ -9,6 +9,7 @@ REPO_ROOT="$(cd "${PYTHON_ROOT}/.." && pwd)"
 CONTAINER_NAME="${PX4_SITL_DOCKER_NAME:-px4-noble-sim-ros}"
 IMAGE_TAG="${PX4_SITL_DOCKER_VER:-${CONTAINER_NAME}:latest}"
 SPAWN_ENV="${PYTHON_ROOT}/assets/fg_spawn.env"
+SETUP=""
 CONTAINER_SPAWN_ENV="/tmp/fg_spawn.env"
 PATCH_SCRIPT="${REPO_ROOT}/Dockerfiles/patch_px4_flightgear_sitl.sh"
 CONTAINER_PATCH="/tmp/patch_px4_flightgear_sitl.sh"
@@ -36,14 +37,16 @@ cleanup_on_exit() {
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--help|-h)
-			echo "Usage: $0 [--kill] [--mavlink-server|--no-mavlink-server]"
+			echo "Usage: $0 [--setup PATH] [--kill] [--mavlink-server|--no-mavlink-server]"
 			echo "  Starts YASim FlightGear FDM Rascal SITL with spawn args from ${SPAWN_ENV}"
+			echo "  --setup  flightSetup.json spawn (NED + heading) → generated FG_ARGS_EX"
 			echo "  --kill  Remove container and exit"
 			echo "  --mavlink-server     Start mavlink-server fan-out (14550→14540/14541); fail if unavailable"
 			echo "  --no-mavlink-server  Skip fan-out (default; restores single-client 14540/14550)"
 			echo "  Balloons bind-mount: ${BALLOONS_HOST} → ${CONTAINER_BALLOONS}"
 			exit 0
 			;;
+		--setup) SETUP="$2"; shift ;;
 		--mavlink-server) MAVLINK_FANOUT=1 ;;
 		--no-mavlink-server) MAVLINK_FANOUT=0 ;;
 		--kill)
@@ -57,6 +60,17 @@ while [[ $# -gt 0 ]]; do
 	esac
 	shift
 done
+
+if [[ -n "${SETUP}" ]]; then
+	if [[ ! -f "${SETUP}" ]]; then
+		echo "Error: missing setup ${SETUP}" >&2
+		exit 1
+	fi
+	SPAWN_ENV="$(mktemp /tmp/fw_fg_spawn.XXXXXX.env)"
+	PYTHONPATH="${PYTHON_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" python3 -m fw_sitl.spawn_ic \
+		--setup "${SETUP}" --fg-env "${SPAWN_ENV}"
+	echo "FG spawn from ${SETUP} → ${SPAWN_ENV}"
+fi
 
 if [[ ! -f "${SPAWN_ENV}" ]]; then
 	echo "Missing spawn config: ${SPAWN_ENV}" >&2

@@ -83,6 +83,22 @@ def rebase_balloons_to_local_z(
     )
 
 
+def offset_balloons_ned(
+    balloons: tuple[BalloonSpec, ...] | list[BalloonSpec],
+    spawn_ned: tuple[float, float, float],
+) -> tuple[BalloonSpec, ...]:
+    """Express balloon NED relative to the aircraft spawn (PX4 home ≈ spawn)."""
+    sn, se, sd = (float(spawn_ned[0]), float(spawn_ned[1]), float(spawn_ned[2]))
+    return tuple(
+        BalloonSpec(
+            ned=(float(b.ned[0]) - sn, float(b.ned[1]) - se, float(b.ned[2]) - sd),
+            color=b.color,
+            diameter_m=float(b.diameter_m),
+        )
+        for b in balloons
+    )
+
+
 def _normalize3(v: tuple[float, float, float]) -> tuple[float, float, float]:
     n = math.hypot(v[0], v[1], math.hypot(v[2], 0.0))
     if n < 1e-9:
@@ -101,6 +117,31 @@ def coordinated_turn_radius_m(speed_mps: float, max_roll_rad: float) -> float:
     """R = v^2 / (g tan φ). φ clamped to >= 1e-3 rad."""
     phi = max(abs(float(max_roll_rad)), 1e-3)
     return float(speed_mps) ** 2 / (_G_MPS2 * math.tan(phi))
+
+
+def flyby_closing_ahead(
+    pos_xy: tuple[float, float],
+    balloon_xy: tuple[float, float],
+    approach_xy: tuple[float, float],
+    *,
+    min_cos: float = 0.5,
+) -> bool:
+    """True if horizontal motion is toward the balloon within ``acos(min_cos)``.
+
+    Fly-by ``d_turn`` uses inbound = LOS to the current balloon. Abeam of it
+    (heading away) that LOS vs the next balloon is a ~180° corner, so ``d_turn``
+    explodes and chase skips the balloon you can still see. Require closing.
+    """
+    rel_n = float(balloon_xy[0]) - float(pos_xy[0])
+    rel_e = float(balloon_xy[1]) - float(pos_xy[1])
+    rel_h = math.hypot(rel_n, rel_e)
+    if rel_h < 1e-9:
+        return True
+    an, ae = float(approach_xy[0]), float(approach_xy[1])
+    speed = math.hypot(an, ae)
+    if speed < 1e-9:
+        return False
+    return (rel_n * an + rel_e * ae) >= float(min_cos) * rel_h * speed
 
 
 def flyby_turn_distance_m(
@@ -246,13 +287,14 @@ class RaceGuidance:
         pos_ned: tuple[float, float, float],
         *,
         sim_time_s: float | None = None,
+        approach_xy: tuple[float, float] | None = None,
     ) -> tuple[float, float, float]:
         """Pure 3D LOS: in-view holds last dir; else geometric to balloon.
 
         When ``turn_radius_m > 0``, switch chase to the *next* balloon once
         horizontal range to the current one is within the fly-by distance
-        (even if the tracker still holds the current balloon). Pass detection
-        still uses the current balloon.
+        *and* we are closing on it (approach within 60° of LOS). Pass
+        detection still uses the current balloon.
         """
         now = sim_time_s if sim_time_s is not None else time.time()
 
@@ -267,7 +309,12 @@ class RaceGuidance:
                 (nxt[0], nxt[1]),
                 self.turn_radius_m,
             )
-            if horiz <= d_turn:
+            closing = approach_xy is None or flyby_closing_ahead(
+                (pos_ned[0], pos_ned[1]),
+                (current[0], current[1]),
+                approach_xy,
+            )
+            if horiz <= d_turn and closing:
                 return _los_to_balloon(pos_ned, nxt)
 
         # No camera track yet: geometric LOS to the *active* balloon (not hard-coded

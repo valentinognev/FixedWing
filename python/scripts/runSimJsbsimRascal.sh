@@ -6,6 +6,7 @@ REPO_ROOT="$(cd "${PYTHON_ROOT}/.." && pwd)"
 CONTAINER_NAME="${PX4_JSBSIM_DOCKER_NAME:-px4-noble-jsbsim-rascal}"
 IMAGE_TAG="${PX4_SITL_DOCKER_VER:-px4-noble-sim-ros:latest}"
 SPAWN_XML="${PYTHON_ROOT}/assets/jsb_spawn.xml"
+SETUP=""
 CONTAINER_SCENE="/home/valentin/PX4-Autopilot/Tools/simulation/jsbsim/jsbsim_bridge/scene/LSZH.xml"
 PATCH_SCRIPT="${REPO_ROOT}/Dockerfiles/patch_px4_jsbsim_fg_viz.sh"
 CONTAINER_PATCH="/tmp/patch_px4_jsbsim_fg_viz.sh"
@@ -36,8 +37,9 @@ cleanup_on_exit() {
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--help|-h)
-			echo "Usage: $0 [--viz] [--kill] [--mavlink-server|--no-mavlink-server]"
+			echo "Usage: $0 [--viz] [--setup PATH] [--kill] [--mavlink-server|--no-mavlink-server]"
 			echo "  Starts JSBSim Rascal SITL with IC from ${SPAWN_XML}"
+			echo "  --setup  flightSetup.json spawn (NED + heading) → generated IC"
 			echo "  --viz   FlightGear visualization (same JSBSim plant; no HEADLESS)"
 			echo "  --kill  Remove container and exit"
 			echo "  --mavlink-server     Start mavlink-server fan-out (14550→14540/14541); fail if unavailable"
@@ -46,6 +48,7 @@ while [[ $# -gt 0 ]]; do
 			exit 0
 			;;
 		--viz) VIZ=1 ;;
+		--setup) SETUP="$2"; shift ;;
 		--mavlink-server) MAVLINK_FANOUT=1 ;;
 		--no-mavlink-server) MAVLINK_FANOUT=0 ;;
 		--kill) cleanup_on_exit; exit 0 ;;
@@ -53,6 +56,17 @@ while [[ $# -gt 0 ]]; do
 	esac
 	shift
 done
+
+if [[ -n "${SETUP}" ]]; then
+	if [[ ! -f "${SETUP}" ]]; then
+		echo "Error: missing setup ${SETUP}" >&2
+		exit 1
+	fi
+	SPAWN_XML="$(mktemp /tmp/fw_jsb_spawn.XXXXXX.xml)"
+	PYTHONPATH="${PYTHON_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" python3 -m fw_sitl.spawn_ic \
+		--setup "${SETUP}" --jsb-xml "${SPAWN_XML}"
+	echo "JSBSim IC from ${SETUP} spawn → ${SPAWN_XML}"
+fi
 
 if [[ ! -f "${SPAWN_XML}" ]]; then
 	echo "Missing spawn IC: ${SPAWN_XML}" >&2

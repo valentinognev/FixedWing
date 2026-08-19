@@ -10,6 +10,10 @@
     {"ned": [200, 200, -30], "color": [0, 255, 0], "diameter_m": 10},
     {"ned": [0, 200, 0], "color": [0, 0, 255], "diameter_m": 10}
   ],
+  "spawn": {
+    "ned": [0, 0, 0],
+    "heading_deg": 10
+  },
   "camera": {
     "hfov_deg": 90, "vfov_deg": 70,
     "azimuth_deg": 0, "elevation_deg": 0,

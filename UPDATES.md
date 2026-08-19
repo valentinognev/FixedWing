@@ -1,5 +1,21 @@
 # Updates
 
+## 0.32.0 - Aircraft spawn in flightSetup.json (all plants)
+- `spawn.ned` / `heading_deg` (0=north, 90=east) in the same home NED frame as balloons. Default `[0,0,0]` heading 0 (200 m south of balloon 0, nose north).
+- Race `--setup` writes JSBSim IC / FG `FG_ARGS_EX` / `PX4_GZ_MODEL_POSE` + GZ spawn velocity. JSBSim/YASim chase is balloon−spawn (PX4 home≈spawn); Gazebo keeps world NED. FG models stay on world XY.
+
+## 0.31.4 - Synth camera used yaw=0 (looked north / "backward")
+- `poll_mavlink` `recv_match(LOCAL_POSITION_NED)` discarded ATTITUDE, so synth `att` stayed (0,0,0). After passing balloon 0 southbound, balloon_camera kept looking north at the red disk (fills the FOV at ~7 m). Control plots were fine (they drain ATTITUDE with position).
+- `poll_local_position_and_attitude`; sky/ground from world-down in camera frame (roll/pitch/yaw), not a fixed cy split.
+
+## 0.31.3 - Fly-by only while closing on the current balloon
+- JSBSim fly-by used inbound = LOS-to-current. Abeam of balloon 0 heading north that vs balloon 1 is ~180°, `d_turn`≈900 m, horiz≈26 m → chase skipped red immediately. Camera showed the balloon receding; plot `x(N)` ran ~200→480.
+- `flyby_closing_ahead`: fly-by only if ground track is within 60° of LOS to the current balloon. Live start `/tmp/balloon_race_20260819_211846.csv` (settle origin (163,19) course 7.3°, race t=0 at (198,26)).
+
+## 0.31.2 - balloon_camera black on conda base OpenCV 5
+- Cause: `./run_balloon_race.sh` used Anaconda `base` python (OpenCV 5.0 Qt HighGUI, no bundled fonts). `namedWindow(WINDOW_NORMAL)` is also `WINDOW_GUI_EXPANDED` (flag 0) → black window. Frames still flowed (`seen_track=1`).
+- Camera: `WINDOW_GUI_NORMAL` + `resizeWindow` + "waiting for image" placeholder; `waitKey` for the frame period. Launcher sets `DISPLAY` on `CAM_CMD` and falls back to conda env `pigeon` when OpenCV ≥5.
+
 ## 0.31.1 - Restore JSBSim path settle; fly-by at max_roll 0.80
 - Reverted facing settle; JSBSim race uses `settle_path_altitude` like GZ/YASim. Fly-by `turn_radius_m` still JSBSim-only. `bank_max_roll_rad` 0.80 (not 0.90). Speed 18 m/s.
 - Live #1 `/tmp/balloon_race_20260819_171109.csv`: unhealthy arm z_ned=237 settle 245.5; pass_count=0; miss list empty. Extra live #2 `/tmp/balloon_race_20260819_171310.csv`: armed 1.1s z_ned=57.1 settle 66.3; pass_count=2; miss_m 6.938 (balloon 0, assisted=0), 11.676 (balloon 1, assisted=1); max miss 11.676 m. Gate pass (≥2 passes, every miss_m≤14, ≥1 unassisted).

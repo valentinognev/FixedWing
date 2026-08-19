@@ -449,6 +449,32 @@ def send_bank_hold(
     send_attitude_target(master, roll, pitch, yaw_rad, thrust)
 
 
+def poll_local_position_and_attitude(
+    master: mavutil.mavfile,
+) -> tuple[tuple[float, float, float] | None, tuple[float, float, float] | None]:
+    """Drain LOCAL_POSITION_NED + ATTITUDE together (do not drop ATTITUDE).
+
+    ``recv_match(type=LOCAL_POSITION_NED)`` discards other messages, so a
+    following ATTITUDE poll would always see an empty socket.
+    """
+    latest_pos: tuple[float, float, float] | None = None
+    latest_att: tuple[float, float, float] | None = None
+    while True:
+        msg = master.recv_match(
+            type=["LOCAL_POSITION_NED", "ATTITUDE"],
+            blocking=False,
+        )
+        if msg is None:
+            break
+        if msg.get_srcSystem() not in (0, master.target_system):
+            continue
+        if msg.get_type() == "ATTITUDE":
+            latest_att = (float(msg.roll), float(msg.pitch), float(msg.yaw))
+            continue
+        latest_pos = (float(msg.x), float(msg.y), float(msg.z))
+    return latest_pos, latest_att
+
+
 def poll_mavlink(
     master: mavutil.mavfile,
 ) -> tuple[
