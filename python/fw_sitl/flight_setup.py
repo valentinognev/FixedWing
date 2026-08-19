@@ -10,6 +10,7 @@ from typing import Any, Sequence
 DEFAULT_ZMQ_IMAGE = "tcp://127.0.0.1:5555"
 DEFAULT_ZMQ_COLOR = "tcp://127.0.0.1:5556"
 DEFAULT_ZMQ_TRACK = "tcp://127.0.0.1:5557"
+DEFAULT_ZMQ_POSE = "tcp://127.0.0.1:5558"
 
 DEFAULT_HFOV_DEG = 90.0
 DEFAULT_VFOV_DEG = 70.0
@@ -32,7 +33,7 @@ DEFAULT_LOOKAHEAD_M = 500.0
 DEFAULT_ASSISTED_PRINT_PERIOD_S = 5.0
 DEFAULT_STALE_TRACK_WARN_S = 10.0
 DEFAULT_LAPS = 1
-DEFAULT_DURATION_S = 180.0
+DEFAULT_DURATION_S = 60.0
 DEFAULT_CMD_MODE = "velocity"
 # During large heading error, hold altitude instead of chasing aim Z (level turn).
 DEFAULT_ALT_PRESERVE_HEADING_ERR_DEG = 20.0
@@ -50,6 +51,9 @@ class ZmqEndpoints:
     image: str = DEFAULT_ZMQ_IMAGE
     color: str = DEFAULT_ZMQ_COLOR
     track: str = DEFAULT_ZMQ_TRACK
+    # Gazebo model world pose (ENU), streamed continuously by gz_pose_bridge
+    # from the physics-rate dynamic_pose/info topic. --gz only.
+    pose: str = DEFAULT_ZMQ_POSE
 
 
 @dataclass(frozen=True)
@@ -165,6 +169,7 @@ def _parse_zmq(raw: Any) -> ZmqEndpoints:
         image=_as_str(data.get("image", DEFAULT_ZMQ_IMAGE), "zmq.image"),
         color=_as_str(data.get("color", DEFAULT_ZMQ_COLOR), "zmq.color"),
         track=_as_str(data.get("track", DEFAULT_ZMQ_TRACK), "zmq.track"),
+        pose=_as_str(data.get("pose", DEFAULT_ZMQ_POSE), "zmq.pose"),
     )
 
 
@@ -282,9 +287,12 @@ def _parse_guidance(raw: Any) -> GuidanceSpec:
     if stale <= 0.0:
         raise ValueError("guidance.stale_track_warn_s must be > 0")
     if laps < 0:
-        raise ValueError("guidance.laps must be >= 0 (0 = cycle until duration_s)")
-    if duration <= 0.0:
-        raise ValueError("guidance.duration_s must be > 0")
+        raise ValueError(
+            "guidance.laps must be >= 0 (0 = cycle until duration_s; "
+            "duration_s=0 = no time limit)"
+        )
+    if duration < 0.0:
+        raise ValueError("guidance.duration_s must be >= 0 (0 = no time limit)")
     if cmd_mode not in _ALLOWED_CMD_MODES:
         raise ValueError(
             "guidance.cmd_mode must be one of velocity|attitude|rates"

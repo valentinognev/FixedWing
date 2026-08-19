@@ -111,15 +111,29 @@ class TestQDesFromLos(unittest.TestCase):
         _r, pitch, _y = rpy_from_quat(q_des)
         self.assertAlmostEqual(pitch, el, places=2)
 
-    def test_los_crab_banks_to_align_track(self) -> None:
-        # post-fix4: blob on the nose (LOS north) but track ~18° east → fly past.
-        # Bank left so ground track comes onto the balloon, as GZ does when
-        # coordinated (track≈yaw) and Rascal needs when crabbed.
+    def test_los_high_pitches_down_beyond_elevation(self) -> None:
+        # Co-alt balloon, plane 10 m high: los_el is only a couple degrees,
+        # not enough to descend. Altitude term must add nose-down.
         dir_ned = (1.0, 0.0, 0.0)
-        track = math.radians(18.0)
-        q_des = q_des_from_los(dir_ned, yaw_rad=0.0, heading_rad=track)
+        q_level = q_des_from_los(dir_ned, yaw_rad=0.0, z_ned=-10.0, z_hold=0.0)
+        q_high = q_des_from_los(
+            dir_ned,
+            yaw_rad=0.0,
+            z_ned=-10.0,
+            z_hold=0.0,
+            kp_alt=0.025,
+        )
+        _r0, p_level, _y0 = rpy_from_quat(q_level)
+        _r1, p_high, _y1 = rpy_from_quat(q_high)
+        self.assertAlmostEqual(p_level, 0.0, places=2)
+        self.assertLess(p_high, p_level - math.radians(8.0))
+
+    def test_los_on_body_x_zero_roll(self) -> None:
+        """Balloon along body +X: no bank, even if a track kwarg is omitted."""
+        dir_ned = (1.0, 0.0, 0.0)
+        q_des = q_des_from_los(dir_ned, yaw_rad=0.0)
         roll, _p, yaw = rpy_from_quat(q_des)
-        self.assertLess(roll, -0.2)
+        self.assertAlmostEqual(roll, 0.0, places=2)
         self.assertAlmostEqual(yaw, 0.0, places=2)
 
 

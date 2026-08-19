@@ -83,13 +83,20 @@ def q_des_from_los(
     max_roll: float = ATT_MAX_ROLL_RAD,
     max_pitch: float = ATT_LOS_MAX_PITCH_RAD,
     heading_rad: float | None = None,
+    z_ned: float | None = None,
+    z_hold: float | None = None,
+    kp_alt: float = 0.0,
 ) -> Quat:
-    """Gazebo FW look-at: bank onto LOS azimuth, pitch to LOS elevation.
+    """Gazebo FW look-at: bank onto LOS azimuth vs body +X, pitch to elevation.
 
     Same contract as ``send_bank_hold``: PX4 FW tracks roll/pitch/thrust;
-    yaw in the quaternion stays current. Roll uses ``heading_rad`` (ground
-    track when coordinated) vs LOS azimuth so a crab cannot slide past the
-    balloon while the nose is already on it. Used only while on screen.
+    yaw in the quaternion stays current. Roll uses ``heading_rad`` if given,
+    otherwise actual yaw, vs LOS azimuth so the balloon sits in front of the
+    nose (body +X). Used only while on screen.
+
+    ``kp_alt`` mixes the path altitude loop into pitch: geometric ``los_el``
+    alone is only a few degrees when still hundreds of metres out, so a
+    high plane would never descend onto the balloon.
     """
     dx, dy, dz = (float(dir_ned[0]), float(dir_ned[1]), float(dir_ned[2]))
     horiz = math.hypot(dx, dy)
@@ -102,7 +109,10 @@ def q_des_from_los(
     heading_ref = float(heading_rad) if heading_rad is not None else yaw_act
     heading_err = wrap_pi(los_az - heading_ref)
     roll = max(-max_roll, min(max_roll, kp_heading * heading_err))
-    pitch = max(-max_pitch, min(max_pitch, los_el))
+    pitch = los_el
+    if z_ned is not None and z_hold is not None:
+        pitch += float(kp_alt) * (float(z_ned) - float(z_hold))
+    pitch = max(-max_pitch, min(max_pitch, pitch))
     return from_rpy(roll, pitch, yaw_act)
 
 

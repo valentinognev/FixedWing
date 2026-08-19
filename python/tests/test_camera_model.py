@@ -16,6 +16,7 @@ from fw_sitl.camera_model import (
     CameraModel,
     _matvec3,
     body_to_ned_rotation,
+    dir_cam_az_el_deg,
     dir_cam_to_ned,
     dir_cam_to_pixel,
     offset_on_screen,
@@ -60,6 +61,20 @@ class TestPixelLosRoundtrip(unittest.TestCase):
         n = math.sqrt(d[0] ** 2 + d[1] ** 2 + d[2] ** 2)
         self.assertAlmostEqual(n, 1.0, places=6)
         self.assertGreater(d[0], 0.0)
+
+    def test_dir_cam_az_el_zero_on_boresight(self) -> None:
+        az, el = dir_cam_az_el_deg((0.0, 0.0, 1.0))
+        self.assertAlmostEqual(az, 0.0, places=6)
+        self.assertAlmostEqual(el, 0.0, places=6)
+
+    def test_dir_cam_az_el_right_pixel_is_positive_az(self) -> None:
+        """Blob at ~75% of 90° HFOV is ~28° right of image center, not 0."""
+        model = self._model()
+        d = pixel_to_dir_cam(0.77 * model.width_px, model.cy, model)
+        az, el = dir_cam_az_el_deg(d)
+        self.assertGreater(az, 20.0)
+        self.assertLess(az, 40.0)
+        self.assertAlmostEqual(el, 0.0, delta=1.0)
 
 
 class TestNedBodyEuler(unittest.TestCase):

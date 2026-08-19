@@ -82,6 +82,9 @@ class TestYasimRaceLauncher(unittest.TestCase):
         self.assertIn("--spawn-fg-balloons", text)
         self.assertIn("BALLOON_RACE_DURATION", text)
         self.assertIn('CTL_CMD+=" --duration ${BALLOON_RACE_DURATION}"', text)
+        self.assertIn("--stop-sim-on-exit", text)
+        self.assertIn("kill.sh", text)
+        self.assertIn("--all", text)
         self.assertIn("px4-noble-sim-ros", text)
 
     def test_yasim_and_gz_exit_2(self) -> None:

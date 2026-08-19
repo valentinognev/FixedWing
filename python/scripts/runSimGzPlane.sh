@@ -26,6 +26,24 @@ cleanup_on_exit() {
 	xhost -local:docker 2>/dev/null || true
 }
 
+# Immediate GPU launch failure only. docker rm -f after a live run is 137/143
+# (or a long elapsed time) — that must not start a second Gazebo.
+gz_should_retry_without_gpu() {
+	local rc="$1"
+	local elapsed_s="$2"
+	local used_gpu="$3"
+	if [[ "${used_gpu}" != "gpu" ]]; then
+		return 1
+	fi
+	if [[ "${elapsed_s}" -ge 30 ]]; then
+		return 1
+	fi
+	if [[ "${rc}" -eq 137 || "${rc}" -eq 143 ]]; then
+		return 1
+	fi
+	return 0
+}
+
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--help|-h)
@@ -282,17 +300,22 @@ if [[ "${PX4_GZ_DOCKER_GPUS:-all}" == "none" ]]; then
 	USE_GPU="nogpu"
 	echo "PX4_GZ_DOCKER_GPUS=none — starting without --gpus all"
 fi
-if ! run_gz_docker "${USE_GPU}"; then
-	if [[ "${USE_GPU}" == "gpu" ]]; then
-		echo "Warning: docker --gpus all failed; retrying without GPU (Intel/software GL)." >&2
-		echo "  Install nvidia-container-toolkit for NVIDIA inside the container." >&2
-		docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
-		if ! run_gz_docker nogpu; then
-			echo "Error: docker run failed for ${IMAGE_TAG}." >&2
-			exit 1
-		fi
-	else
+GZ_T0=$(date +%s)
+GZ_RC=0
+run_gz_docker "${USE_GPU}" || GZ_RC=$?
+GZ_ELAPSED=$(( $(date +%s) - GZ_T0 ))
+if [[ "${GZ_RC}" -eq 0 ]]; then
+	exit 0
+fi
+if gz_should_retry_without_gpu "${GZ_RC}" "${GZ_ELAPSED}" "${USE_GPU}"; then
+	echo "Warning: docker --gpus all failed (rc=${GZ_RC} after ${GZ_ELAPSED}s); retrying without GPU (Intel/software GL)." >&2
+	echo "  Install nvidia-container-toolkit for NVIDIA inside the container." >&2
+	docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
+	if ! run_gz_docker nogpu; then
 		echo "Error: docker run failed for ${IMAGE_TAG}." >&2
 		exit 1
 	fi
+else
+	echo "Gazebo container stopped (rc=${GZ_RC} after ${GZ_ELAPSED}s); not restarting."
+	exit 0
 fi

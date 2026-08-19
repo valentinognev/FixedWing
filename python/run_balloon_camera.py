@@ -17,7 +17,7 @@ import cv2
 from fw_sitl.balloon_tracker import track_balloon
 from fw_sitl.camera_model import CameraModel
 from fw_sitl.flight_setup import load_flight_setup
-from fw_sitl.race_guidance import ASSISTED_OVERLAY_TEXT, show_assisted_overlay
+from fw_sitl.race_guidance import ASSISTED_OVERLAY_TEXT, format_ned_pos_line, show_assisted_overlay
 from fw_sitl.zmq_bus import ColorSubscriber, ImageSubscriber, TrackPublisher
 
 
@@ -93,6 +93,21 @@ def main() -> int:
                         (10, 24),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.6,
+                        (255, 255, 255),
+                        2,
+                    )
+                if latest_color is not None and latest_color.pos_ned is not None:
+                    t_s = (
+                        float(latest_color.t_s)
+                        if latest_color.t_s is not None
+                        else 0.0
+                    )
+                    cv2.putText(
+                        display,
+                        format_ned_pos_line(t_s, latest_color.pos_ned),
+                        (10, 48),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.55,
                         (255, 255, 255),
                         2,
                     )

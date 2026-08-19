@@ -12,6 +12,9 @@ YASIM=0
 GZ_MODEL="rc_cessna"
 MODEL_SET=0
 NO_SIM=0
+NO_PLOT=0
+DETACH=0
+DURATION=""
 CONTAINER_NAME="${PX4_JSBSIM_DOCKER_NAME:-px4-noble-jsbsim-rascal}"
 # Balloon race needs distinct UDP feeds for control + image-source.
 MAVLINK_FANOUT="${MAVLINK_FANOUT:-1}"
@@ -21,16 +24,20 @@ MAVLINK_IMAGE_PORT="${MAVLINK_IMAGE_PORT:-14541}"
 HEARTBEAT_TIMEOUT_S="${HEARTBEAT_TIMEOUT_S:-120}"
 
 usage() {
-  echo "Usage: $0 [--viz] [--gz] [--yasim] [--model rc_cessna|advanced_plane] [--setup PATH] [--session NAME] [--no-sim]"
-  echo "  --viz     FG viz sim + fg image capture (default: headless synth)"
-  echo "  --gz      Gazebo plane + onboard camera (--mode gz); exclusive with --viz"
-  echo "  --yasim   YASim FG Rascal FDM + fg camera; exclusive with --viz/--gz"
-  echo "  --model   gz model (requires --gz); default rc_cessna"
-  echo "  --no-sim  control connects to existing sim"
+  echo "Usage: $0 [--viz] [--gz] [--yasim] [--model rc_cessna|advanced_plane] [--setup PATH] [--session NAME] [--no-sim] [--duration SEC] [--no-plot] [--detach]"
+  echo "  --viz       FG viz sim + fg image capture (default: headless synth)"
+  echo "  --gz        Gazebo plane + onboard camera (--mode gz); exclusive with --viz"
+  echo "  --yasim     YASim FG Rascal FDM + fg camera; exclusive with --viz/--gz"
+  echo "  --model     gz model (requires --gz); default rc_cessna"
+  echo "  --no-sim    control connects to existing sim (do not kill docker)"
+  echo "  --duration  race length seconds (0 = no time limit; default: flightSetup.json)"
+  echo "  --no-plot   skip post-race plots (PNG + desktop viewer; default: show)"
+  echo "  --detach    leave tmux in the background (default: attach, control pane)"
   echo "  Enables mavlink-server fan-out by default (MAVLINK_FANOUT=1);"
   echo "  aborts image/control if fan-out is not running."
   echo "  After sim/fan-out: wait for HEARTBEAT on UDP ${MAVLINK_CONTROL_PORT}"
   echo "  (timeout HEARTBEAT_TIMEOUT_S=${HEARTBEAT_TIMEOUT_S}s, fail if none)."
+  echo "  Timed end: host matplotlib window (zoom/pan, shared time axis)."
   exit 0
 }
 
@@ -116,6 +123,9 @@ while [[ $# -gt 0 ]]; do
     --yasim) YASIM=1; MODE="fg" ;;
     --model) MODEL_SET=1; GZ_MODEL="$2"; shift ;;
     --no-sim) NO_SIM=1 ;;
+    --no-plot) NO_PLOT=1 ;;
+    --detach) DETACH=1 ;;
+    --duration) DURATION="$2"; shift ;;
     --setup) SETUP="$2"; shift ;;
     --session) SESSION="$2"; shift ;;
     -h|--help) usage ;;
@@ -147,20 +157,27 @@ if ! command -v tmux >/dev/null 2>&1; then
 fi
 
 # Prefer the active conda env's interpreter (user prompt is often (pigeon)).
-PYTHON="${PYTHON:-python3}"
+PYTHON="$(command -v "${PYTHON:-python3}")"
 
 # Do not unset conda LD_LIBRARY_PATH: pyzmq/OpenCV need those libs. Unsetting
 # mixed libzmq and aborted the camera pane (Assertion failed: !_more src/fq.cpp).
 # tmux/bash "libtinfo no version information" lines are cosmetic.
 
-if ! "${PYTHON}" -c "import cv2, numpy, zmq, pymavlink" >/dev/null 2>&1; then
+if ! "${PYTHON}" -c "import cv2, numpy, zmq, pymavlink, matplotlib" >/dev/null 2>&1; then
   echo "Error: balloon-race Python deps missing in $("${PYTHON}" -c 'import sys; print(sys.executable)')." >&2
   echo "  Install: ${PYTHON} -m pip install -r ${PYTHON_ROOT}/requirements.txt" >&2
   exit 1
 fi
 
+RACE_CSV="${BALLOON_RACE_CSV:-/tmp/balloon_race_$(date +%Y%m%d_%H%M%S).csv}"
+
 # Quiet when no tmux server yet (fresh machine / after kill-server).
 tmux kill-session -t "${SESSION}" 2>/dev/null || true
+
+if [[ "${NO_SIM}" -eq 0 ]]; then
+  echo "Removing leftover SITL docker stacks..."
+  bash "${SCRIPT_DIR}/kill.sh" --all || true
+fi
 
 if [[ "${GZ}" -eq 1 ]]; then
   CONTAINER_NAME="${PX4_GZ_DOCKER_NAME:-px4-noble-gz-plane}"
@@ -182,23 +199,29 @@ else
 fi
 
 IMG_CMD="PYTHONUNBUFFERED=1 ${PYTHON} -u ${PYTHON_ROOT}/run_balloon_image_source.py --mode ${MODE} --setup ${SETUP} --udp ${MAVLINK_IMAGE_PORT}"
+POSE_CMD="PYTHONUNBUFFERED=1 ${PYTHON} -u ${PYTHON_ROOT}/run_balloon_gz_pose.py --setup ${SETUP}"
 CAM_CMD="PYTHONUNBUFFERED=1 ${PYTHON} -u ${PYTHON_ROOT}/run_balloon_camera.py --setup ${SETUP}"
 # Headless e2e / no GUI: BALLOON_CAMERA_NO_DISPLAY=1 or --no-display
 if [[ "${BALLOON_CAMERA_NO_DISPLAY:-0}" == "1" ]]; then
   CAM_CMD+=" --no-display"
 fi
-CTL_CMD="PYTHONUNBUFFERED=1 ${PYTHON} -u ${PYTHON_ROOT}/run_balloon_control.py --setup ${SETUP} --udp ${MAVLINK_CONTROL_PORT} --no-plot"
-# Optional fixed CSV path for verification (BALLOON_RACE_CSV=/path/to.csv)
-if [[ -n "${BALLOON_RACE_CSV:-}" ]]; then
-  CTL_CMD+=" --csv ${BALLOON_RACE_CSV}"
+CTL_CMD="DISPLAY=${DISPLAY:-:0} MPLBACKEND=${MPLBACKEND:-Agg} PYTHONUNBUFFERED=1 ${PYTHON} -u ${PYTHON_ROOT}/run_balloon_control.py --setup ${SETUP} --udp ${MAVLINK_CONTROL_PORT}"
+if [[ "${NO_PLOT}" -eq 1 ]]; then
+  CTL_CMD+=" --no-plot"
 fi
-if [[ -n "${BALLOON_RACE_DURATION:-}" ]]; then
+CTL_CMD+=" --csv ${RACE_CSV}"
+if [[ -n "${DURATION}" ]]; then
+  CTL_CMD+=" --duration ${DURATION}"
+elif [[ -n "${BALLOON_RACE_DURATION:-}" ]]; then
   CTL_CMD+=" --duration ${BALLOON_RACE_DURATION}"
 fi
 # MAVLink ports with mavlink-server fan-out (started by runSimJsbsimRascal.sh):
 #   14550 GCS/QGC, 14540 control, 14541 image-source
 # Control always attaches: race owns sim, or user passed --no-sim for an existing sim.
 CTL_CMD+=" --no-sim"
+if [[ "${NO_SIM}" -eq 0 ]]; then
+  CTL_CMD+=" --stop-sim-on-exit"
+fi
 if [[ "${VIZ}" -eq 1 ]]; then
   CTL_CMD+=" --viz --spawn-fg-balloons"
 fi
@@ -207,6 +230,7 @@ if [[ "${GZ}" -eq 1 ]]; then
   CTL_CMD+=" --gz --spawn-gz-balloons"
   CTL_CMD+=" --gz-container ${CONTAINER_NAME}"
   CTL_CMD+=" --model ${GZ_MODEL}"
+  POSE_CMD+=" --container ${CONTAINER_NAME} --model ${GZ_MODEL}"
 fi
 if [[ "${YASIM}" -eq 1 ]]; then
   CTL_CMD+=" --yasim --spawn-fg-balloons"
@@ -250,12 +274,52 @@ fi
 # -d keeps focus on sim; title panes by id (tiled layout may renumber indices).
 _ctl_pane="$(tmux split-window -d -t "${SESSION}:0.0" -P -F '#{pane_id}' "${CTL_CMD}")"
 tmux select-pane -t "${_ctl_pane}" -T control
+: >/tmp/balloon_race_control.log
+tmux pipe-pane -t "${_ctl_pane}" -o 'cat >> /tmp/balloon_race_control.log'
 _img_pane="$(tmux split-window -d -t "${SESSION}:0.0" -P -F '#{pane_id}' "${IMG_CMD}")"
 tmux select-pane -t "${_img_pane}" -T image
 _cam_pane="$(tmux split-window -d -t "${SESSION}:0.0" -P -F '#{pane_id}' "${CAM_CMD}")"
 tmux select-pane -t "${_cam_pane}" -T camera
+if [[ "${GZ}" -eq 1 ]]; then
+  # Streams the plane's true Gazebo pose to control (continuous, ~40 Hz);
+  # replaces the old per-sample `docker exec gz model --pose` polling, whose
+  # subprocess latency (~0.4-0.5s) produced a jittery position staircase.
+  _pose_pane="$(tmux split-window -d -t "${SESSION}:0.0" -P -F '#{pane_id}' "${POSE_CMD}")"
+  tmux select-pane -t "${_pose_pane}" -T pose
+fi
 tmux select-layout -t "${SESSION}:0" tiled
 
-echo "tmux session '${SESSION}' started (attach: tmux attach -t ${SESSION})"
+if [[ "${NO_PLOT}" -eq 0 ]]; then
+  if [[ -f /tmp/balloon_race_plot_waiter.pid ]]; then
+    kill "$(cat /tmp/balloon_race_plot_waiter.pid)" 2>/dev/null || true
+    rm -f /tmp/balloon_race_plot_waiter.pid
+  fi
+  if [[ -n "${DURATION}" && "${DURATION}" != "0" ]]; then
+    PLOT_TIMEOUT=$(( DURATION + 300 ))
+  else
+    PLOT_TIMEOUT=3600
+  fi
+  # Do not inherit MPLBACKEND=Agg from the shell; the waiter needs a GUI backend.
+  env -u MPLBACKEND DISPLAY="${DISPLAY:-:0}" PYTHONUNBUFFERED=1 "${PYTHON}" -u "${PYTHON_ROOT}/show_race_plots.py" \
+    --csv "${RACE_CSV}" --timeout "${PLOT_TIMEOUT}" >>/tmp/balloon_race_plot.log 2>&1 &
+  echo $! >/tmp/balloon_race_plot_waiter.pid
+  disown || true
+  echo "Plots will open when the race ends (matplotlib). csv=${RACE_CSV}"
+fi
+
+echo "tmux session '${SESSION}' started"
 echo "panes (window race):"
 tmux list-panes -t "${SESSION}:0" -F '  #{session_name}:#{window_index}.#{pane_index} #{pane_title}'
+# Control pane has the 1 Hz t/x/y/z line. Attach by default so it is on screen.
+tmux select-pane -t "${_ctl_pane}"
+if [[ "${DETACH}" -eq 1 ]]; then
+  echo "detached; attach: tmux attach -t ${SESSION}"
+elif [[ -t 1 ]] && [[ -t 0 ]]; then
+  if [[ -n "${TMUX:-}" ]]; then
+    tmux switch-client -t "${SESSION}"
+  else
+    tmux attach -t "${SESSION}"
+  fi
+else
+  echo "no TTY; session left detached (tmux attach -t ${SESSION})"
+fi

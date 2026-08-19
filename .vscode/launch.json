@@ -1,6 +1,26 @@
 {
     "version": "0.2.0",
     "configurations": [
+        
+    
+        {
+            "name": "Straight flight (Gazebo)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/python/run_straight_flight_gz.py",
+            "args": ["--udp", "14540"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Straight flight (Gazebo, 60s duration)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/python/run_straight_flight_gz.py",
+            "args": ["--udp", "14540", "--duration", "60"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
         {
             "name": "Straight flight (JSBSim headless)",
             "type": "debugpy",

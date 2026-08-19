@@ -27,6 +27,7 @@ import zmq
 TOPIC_IMAGE = b"image"
 TOPIC_COLOR = b"color"
 TOPIC_TRACK = b"track"
+TOPIC_POSE = b"pose"
 
 RgbLike = tuple[int, int, int] | Sequence[int]
 
@@ -72,9 +73,31 @@ class TargetColor:
     b: int
     stamp: float = 0.0
     assisted: bool = False
+    t_s: float | None = None
+    pos_ned: tuple[float, float, float] | None = None
 
     def as_tuple(self) -> tuple[int, int, int]:
         return (int(self.r), int(self.g), int(self.b))
+
+
+@dataclass(frozen=True)
+class PoseSample:
+    """Gazebo world ENU pose of one model, streamed continuously (no polling).
+
+    Producer is the in-container ``gz_pose_bridge`` (subscribes the physics-rate
+    ``dynamic_pose/info`` topic); consumer is the host control process. This
+    replaces one-shot ``docker exec gz model --pose`` sampling, which had
+    ~0.5s latency per call and produced an irregular staircase, not a smooth
+    position.
+    """
+
+    stamp: float
+    x: float
+    y: float
+    z: float
+
+    def as_enu(self) -> tuple[float, float, float]:
+        return (self.x, self.y, self.z)
 
 
 @dataclass(frozen=True)
@@ -153,6 +176,12 @@ def send_color(sock: zmq.Socket, color: TargetColor | RgbLike) -> None:
             "stamp": float(color.stamp),
             "assisted": bool(color.assisted),
         }
+        if color.t_s is not None:
+            payload["t_s"] = float(color.t_s)
+        if color.pos_ned is not None:
+            payload["pos_n"] = float(color.pos_ned[0])
+            payload["pos_e"] = float(color.pos_ned[1])
+            payload["pos_d"] = float(color.pos_ned[2])
     else:
         r, g, b = color
         payload = {
@@ -177,12 +206,18 @@ def recv_color(sock: zmq.Socket, flags: int = 0) -> TargetColor | None:
     if len(parts) != 2:
         raise ValueError(f"color message expected 2 parts, got {len(parts)}")
     data = json.loads(parts[1].decode("utf-8"))
+    pos_ned: tuple[float, float, float] | None = None
+    if "pos_n" in data and "pos_e" in data and "pos_d" in data:
+        pos_ned = (float(data["pos_n"]), float(data["pos_e"]), float(data["pos_d"]))
+    t_raw = data.get("t_s")
     return TargetColor(
         r=int(data["r"]),
         g=int(data["g"]),
         b=int(data["b"]),
         stamp=float(data.get("stamp", 0.0)),
         assisted=bool(data.get("assisted", False)),
+        t_s=float(t_raw) if t_raw is not None else None,
+        pos_ned=pos_ned,
     )
 
 
@@ -226,6 +261,34 @@ def recv_track(sock: zmq.Socket, flags: int = 0) -> TrackMessage | None:
         dir_cam=dir_cam,
         stamp=float(data.get("stamp", 0.0)),
         centroid_uv=centroid_uv,
+    )
+
+
+def send_pose(sock: zmq.Socket, sample: PoseSample) -> None:
+    """PUB multipart: topic | JSON {stamp,x,y,z}."""
+    payload = {
+        "stamp": float(sample.stamp),
+        "x": float(sample.x),
+        "y": float(sample.y),
+        "z": float(sample.z),
+    }
+    sock.send_multipart([TOPIC_POSE, json.dumps(payload, separators=(",", ":")).encode("utf-8")])
+
+
+def recv_pose(sock: zmq.Socket, flags: int = 0) -> PoseSample | None:
+    """Receive one pose sample, or None on EAGAIN."""
+    try:
+        parts = sock.recv_multipart(flags=flags)
+    except zmq.Again:
+        return None
+    if len(parts) != 2:
+        raise ValueError(f"pose message expected 2 parts, got {len(parts)}")
+    data = json.loads(parts[1].decode("utf-8"))
+    return PoseSample(
+        stamp=float(data["stamp"]),
+        x=float(data["x"]),
+        y=float(data["y"]),
+        z=float(data["z"]),
     )
 
 
@@ -355,6 +418,43 @@ class TrackSubscriber:
         return updated
 
     def latest(self) -> TrackMessage | None:
+        return self._latest
+
+    def close(self) -> None:
+        self._sock.close(linger=0)
+
+
+class PosePublisher:
+    """Bind PUB on the pose endpoint (in-container gz_pose_bridge process)."""
+
+    def __init__(self, endpoint: str, context: zmq.Context | None = None) -> None:
+        self._sock = bind_pub(endpoint, context)
+
+    def publish(self, sample: PoseSample) -> None:
+        send_pose(self._sock, sample)
+
+    def close(self) -> None:
+        self._sock.close(linger=0)
+
+
+class PoseSubscriber:
+    """Connect SUB on the pose endpoint (control process)."""
+
+    def __init__(self, endpoint: str, context: zmq.Context | None = None) -> None:
+        self._sock = connect_sub(endpoint, TOPIC_POSE, context)
+        self._latest: PoseSample | None = None
+
+    def poll_and_update(self) -> bool:
+        updated = False
+        while True:
+            sample = recv_pose(self._sock, flags=zmq.NOBLOCK)
+            if sample is None:
+                break
+            self._latest = sample
+            updated = True
+        return updated
+
+    def latest(self) -> PoseSample | None:
         return self._latest
 
     def close(self) -> None:

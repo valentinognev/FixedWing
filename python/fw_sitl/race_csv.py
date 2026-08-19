@@ -18,6 +18,9 @@ CSV_COLUMNS = (
     "pos_n",
     "pos_e",
     "pos_d",
+    "tgt_n",
+    "tgt_e",
+    "tgt_d",
 )
 
 
@@ -47,8 +50,10 @@ class RaceCsvLogger:
         color: tuple[int, int, int],
         assisted: bool,
         pos_ned: tuple[float, float, float] | None = None,
+        tgt_ned: tuple[float, float, float] | None = None,
     ) -> None:
         pos = pos_ned if pos_ned is not None else (float("nan"), float("nan"), float("nan"))
+        tgt = tgt_ned if tgt_ned is not None else (float("nan"), float("nan"), float("nan"))
         self._writer.writerow(
             [
                 f"{t_s:.3f}",
@@ -61,6 +66,9 @@ class RaceCsvLogger:
                 f"{pos[0]:.3f}",
                 f"{pos[1]:.3f}",
                 f"{pos[2]:.3f}",
+                f"{tgt[0]:.3f}",
+                f"{tgt[1]:.3f}",
+                f"{tgt[2]:.3f}",
             ]
         )
         self._fp.flush()
@@ -73,6 +81,7 @@ class RaceCsvLogger:
         color: tuple[int, int, int],
         assisted: bool,
         pos_ned: tuple[float, float, float],
+        tgt_ned: tuple[float, float, float] | None = None,
     ) -> None:
         self.write(
             t_s=t_s,
@@ -81,6 +90,7 @@ class RaceCsvLogger:
             color=color,
             assisted=assisted,
             pos_ned=pos_ned,
+            tgt_ned=tgt_ned,
         )
 
     def log_sample(
@@ -91,6 +101,7 @@ class RaceCsvLogger:
         color: tuple[int, int, int],
         assisted: bool,
         pos_ned: tuple[float, float, float],
+        tgt_ned: tuple[float, float, float] | None = None,
     ) -> None:
         """Periodic path sample for e2e / path_rms evidence (not a pass)."""
         self.write(
@@ -100,6 +111,7 @@ class RaceCsvLogger:
             color=color,
             assisted=assisted,
             pos_ned=pos_ned,
+            tgt_ned=tgt_ned,
         )
 
     def log_end(
@@ -111,6 +123,7 @@ class RaceCsvLogger:
         color: tuple[int, int, int],
         assisted: bool,
         pos_ned: tuple[float, float, float] | None = None,
+        tgt_ned: tuple[float, float, float] | None = None,
     ) -> None:
         self.write(
             t_s=t_s,
@@ -119,6 +132,7 @@ class RaceCsvLogger:
             color=color,
             assisted=assisted,
             pos_ned=pos_ned,
+            tgt_ned=tgt_ned,
         )
 
     def close(self) -> None:

@@ -86,6 +86,7 @@ class PlantGains:
             "kp_heading": self.bank_kp_heading,
             "max_roll": self.bank_max_roll_rad,
             "max_pitch": self.att_los_max_pitch_rad,
+            "kp_alt": self.bank_kp_alt,
         }
 
     def thrust_kwargs(self) -> dict[str, float]:

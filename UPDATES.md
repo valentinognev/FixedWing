@@ -1,5 +1,67 @@
 # Updates
 
+## 0.24.3 - Fix real jitter source: history.poll() burst vs last-only patch
+- 0.24.2 fixed the *sampling* jitter (docker-exec staircase) but a second, independent bug remained and was still visible zoomed into the first few seconds of any race: `history.poll(master)` drains **all** queued MAVLink messages per call in a `while True` loop and appends one raw-EKF sample per `LOCAL_POSITION_NED` — measured ~2x `control_rate_hz`, so a *single* `poll()` call routinely appends 2 samples per control tick, not 1.
+- Three call sites only patched the *last* appended sample of that burst (`history.x[-1] = world_ned`, `apply_target_to_last()`, `apply_cam_to_last()`), leaving every other sample in the burst at its raw/stale value: half the plotted NED-position points kept the drifted PX4 EKF position instead of the true Gazebo pose (huge error right after spawn while EKF is still converging, shrinking to invisible once it settles — hence "looks fine at full-race zoom, dense zigzag zoomed into 0–3 s"), and once camera tracking started, half the LOS points silently fell back to the geometric estimate (NaN cam-LOS pads in `los_deg_series`) instead of the tracked blob, alternating between two genuinely different LOS values every other sample.
+- Fix: track `n_before_poll = len(history.x)` before calling `poll()`; new `FlightHistory.overwrite_positions_from(start_index, ned)` patches every sample appended since `start_index`, and `apply_target_to_last`/`apply_cam_to_last` take an optional `start_index` for the same reason (default `None` keeps old last-only behavior for existing callers/tests). `run_balloon_control.py` passes `n_before_poll` at all three call sites.
+- Verified live (`--gz`, 60 s): rendered the interactive pickle at 0–3 s, 0–5 s, 0–20 s, and full-race zoom — NED position, velocity, attitude, LOS az/el, and Δ-distance panels are all smooth; the camera-acquisition instant is now a single clean step, not a zigzag.
+
+## 0.24.2 - Stream Gazebo pose (ZMQ) instead of polling docker exec
+- The 0.24.1 Gazebo-pose fix still jittered: each sample came from a fresh `docker exec gz model -m <name> --pose` (~0.4-0.5s subprocess latency), polled from a background thread. Between samples the position was frozen (staircase), and step widths varied with docker/host scheduling — that irregular staircase is what showed up as jitter in the NED-position and Δ-distance plots, not sensor noise.
+- Real fix: a new `pose` tmux pane (`run_balloon_gz_pose.py` → `fw_sitl/gz_pose_bridge.py`, docker-exec'd once, long-lived) subscribes Gazebo's `/world/default/dynamic_pose/info` (`gz.transport`, `gz.msgs.Pose_V`) inside the container — measured ~40 Hz, the physics/render rate — and streams samples to control over a new ZMQ `pose` channel (`zmq_bus.PoseSample`/`PosePublisher`/`PoseSubscriber`, `flightSetup.json` `zmq.pose`). Control's per-tick `world_ned` now comes from `PoseSubscriber.latest()`, continuous and low-latency, same pattern as the existing `race_cam` image bridge (`gz_camera.py`). No more per-sample subprocess spawn.
+- `fw_sitl/gz_pose.py`'s `fetch_gz_model_enu`/`gz_model_pose_argv`/`parse_gz_model_pose_enu` (the one-shot CLI path) stay as tested utilities but are no longer used in the live control loop.
+
+## 0.24.1 - Gazebo race NED from world pose, not drifted EKF
+- On `--gz`, CSV / 1 Hz print / pass detection / history plots use the plane's Gazebo ENU pose converted with the same origin as balloon spawn. PX4 `LOCAL_POSITION_NED` can be 150 m east of the mesh while `race_cam` is already inside the sphere (`SYS_HAS_MAG=0`, loose GPS).
+- Real `gz model -m <name> --pose` output is `[x y z]`/`[roll pitch yaw]` (space-separated, brackets) — the first cut guessed `--pose --name` flags and a comma/pipe parser, which is not the real CLI; `fetch_gz_model_enu` silently returned `None` and every sample kept falling back to the EKF pos. Fixed CLI to `gz model -m <name> --pose` and the parser to a bracket-number regex; verified live against `docker exec px4-noble-gz-plane gz model -m rc_cessna_0 --pose` and a full race where `pass` events log `pos_ned` within the balloon radius.
+
+## 0.24.0 - Interactive race plots; shared time axis
+- Post-race viewer is a matplotlib window (toolbar zoom/pan), not an eog PNG. Time-series subplots share the x axis so a zoom/pan on one panel moves all of them.
+- Control writes a `.pkl` of live history next to the CSV so the host waiter keeps yaw/camera LOS; CSV is the fallback.
+
+## 0.23.11 - Race launcher attaches to tmux by default
+- `./run_balloon_race.sh` attaches to session `balloon_race` (control pane) so the 1 Hz `t x y z` line is on screen. `--detach` keeps the old return-immediately behavior. No TTY → leftover detached.
+
+## 0.23.10 - 1 Hz NED pose on stdout and balloon_camera
+- Control prints `t=…s x=… y=… z=…` (PX4 local NED) each second. The same line is drawn on `balloon_camera`.
+
+## 0.23.9 - Look-at and LOS plot follow the camera blob
+- Geometric on-screen look-at zeroed PX4 yaw vs balloon bearing, so the LOS plot sat near 0° while `balloon_camera` showed the target ~25–45° right of center. Chase the HSV blob when it is visible; geometric body +X is only the fallback if the balloon still projects but the tracker missed.
+- LOS panel uses that camera-frame az/el while a blob is logged (0=image center). `race_cam` pose is `relative_to` `base_link`.
+
+## 0.23.8 - LOS vs body +X; look-at centers the nose
+- LOS plot was azimuth minus *ground track* (0=on course). Track can sit on the balloon while yaw/camera boresight is ~10–20° off, so the panel showed 0 while the blob stayed off-center. Az is now bearing−yaw and el is elevation−pitch (0=in front of body +X); sticky-until-abeam unchanged.
+- On-screen look-at banks vs yaw, not track, so the same error goes to zero and the balloon sits in front of the plane. Off-screen path law still uses coordinated ground track.
+
+## 0.23.7 - Host eog waiter; savefig before docker kill
+- Live races wrote CSV `end_duration` but never produced PNGs: control plots ran in detached tmux *after* `kill.sh --all`, and that teardown dropped the pane before savefig. Save PNGs before docker stop.
+- `./run_balloon_race.sh` starts host `show_race_plots.py` (user shell, not tmux): wait for CSV `end_*`, write PNGs from the CSV if missing, open eog on `$DISPLAY` until closed. Log: `/tmp/balloon_race_plot.log`.
+
+## 0.23.6 - Race plots block in eog until closed
+- Tk/matplotlib windows from detached tmux never appeared, and `xdg-open` returned immediately so the process exited before anything showed. Figures are drawn with Agg, saved as PNGs, then `eog --new-instance` opens them on `$DISPLAY` and the control process waits until that window is closed.
+
+## 0.23.5 - Race plots open on the desktop after tmux teardown
+- Control runs in a detached tmux pane, so matplotlib `plt.show()` never appeared on the host display. After a race, PNGs are written next to the CSV (`/tmp/balloon_race_<stamp>_history.png` and `_trajectory.png`) and opened with `xdg-open`. `--no-plot` still skips both.
+
+## 0.23.4 - LOS until abeam; look-at holds altitude
+- Race LOS plot was NED bearing to the *chase* balloon (`az=0` north). That stays ~15° on a constant-bearing intercept, and `pass_radius` retargets ~50 m *ahead*, so a miss never showed the ±90° abeam swing. Series is now az vs ground track to the balloon until abeam (0=on course).
+- On-screen look-at pitch mixes the altitude loop (`kp_alt`); geometric `los_el` alone was only a few degrees far out, so the plane stayed high and elevation drifted to about −4°.
+
+## 0.23.3 - Gazebo timed end no longer restarts
+- `runSimGzPlane.sh` GPU→CPU fallback only on an immediate launch failure. `docker rm -f` after a live race (exit 137/143 or ≥30 s) stops the script instead of starting a second Gazebo.
+
+## 0.23.2 - NED plot dashed current target
+- Figure 1 NED position overlays dashed tgt x/y/z (current balloon at each time, same colors as the plane).
+
+## 0.23.1 - 3D history marks balloons
+- Figure 2 (3D trajectory) scatters each race balloon at rebased NED, colored RGB, and the equal-aspect box includes them.
+
+## 0.23.0 - Timed race teardown, target log, LOS plots
+- `./run_balloon_race.sh` runs `kill.sh --all` before starting a new plant (not with `--no-sim`).
+- Default `guidance.duration_s` is 60 s; `0` / `--duration 0` has no time limit. `--duration SEC` on the launcher (else `BALLOON_RACE_DURATION`).
+- Race-owned runs pass `--stop-sim-on-exit`: after duration/laps/Ctrl+C, remove SITL docker stacks, then plot vs time (`--no-plot` to skip).
+- Race CSV adds `tgt_n/e/d` beside plane `pos_n/e/d`. History plots geometric LOS az/el to the current balloon and plane−target ΔN/ΔE/ΔD (JSBSim / `--viz` / YASim / Gazebo).
+
 ## 0.22.0 - Per plant+airframe controller constants
 - Host outer loop (PID, bank, thrust, speed, lookahead, `FW_AIRSPD_*`) and PX4 inner `FW_*` overlays live in `fw_sitl/plant_gains.py` keyed by `jsbsim_rascal` / `yasim_rascal` / `gz_rc_cessna` / `gz_advanced_plane`.
 - JSBSim headless and `--viz` share `jsbsim_rascal` (former shared numbers). YASim and Gazebo tables are distinct; `--model advanced_plane` switches the Gazebo table.

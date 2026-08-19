@@ -14,7 +14,10 @@ if str(_PYTHON_ROOT) not in sys.path:
 from fw_sitl.gz_pose import (
     DEFAULT_GZ_ORIGIN_ENU,
     DEFAULT_GZ_YAW_RAD,
+    gz_enu_to_ned,
+    gz_model_pose_argv,
     ned_to_gz_enu,
+    parse_gz_model_pose_enu,
     world_velocity_enu,
 )
 
@@ -33,6 +36,76 @@ class TestGzPose(unittest.TestCase):
         self.assertAlmostEqual(x, 80.0, places=6)
         self.assertAlmostEqual(y, 0.0, places=6)
         self.assertAlmostEqual(z, 515.0, places=6)
+
+    def test_gz_enu_to_ned_inverts_spawn_frame(self) -> None:
+        ned = (300.0, 0.0, 50.1)
+        enu = ned_to_gz_enu(ned, DEFAULT_GZ_ORIGIN_ENU)
+        back = gz_enu_to_ned(enu, DEFAULT_GZ_ORIGIN_ENU)
+        self.assertAlmostEqual(back[0], ned[0], places=6)
+        self.assertAlmostEqual(back[1], ned[1], places=6)
+        self.assertAlmostEqual(back[2], ned[2], places=6)
+
+    def test_plane_on_spawned_balloon_has_matching_ned_y(self) -> None:
+        """Gazebo hit at the red balloon must log y=0 in the spawn NED frame."""
+        balloon_ned = (300.0, 0.0, 50.1)
+        balloon_enu = ned_to_gz_enu(balloon_ned, DEFAULT_GZ_ORIGIN_ENU)
+        plane_ned = gz_enu_to_ned(balloon_enu, DEFAULT_GZ_ORIGIN_ENU)
+        self.assertAlmostEqual(plane_ned[1], 0.0, places=6)
+        self.assertAlmostEqual(plane_ned[0], 300.0, places=6)
+
+    def test_parse_gz_model_pose_real_output(self) -> None:
+        # Real `gz model -m rc_cessna_0 --pose` stdout captured from a live
+        # gz-sim (Harmonic) container: space-separated numbers in brackets.
+        text = (
+            "Requesting state for world [default]...\n"
+            "Model: [10]\n"
+            "  - Name: rc_cessna_0\n"
+            "  - Pose [ XYZ (m) ] [ RPY (rad) ]:\n"
+            "    [-141.284000 104.379000 456.850000]\n"
+            "    [-0.019057 0.047817 0.919466]\n"
+        )
+        xyz = parse_gz_model_pose_enu(text)
+        self.assertIsNotNone(xyz)
+        assert xyz is not None
+        self.assertAlmostEqual(xyz[0], -141.284)
+        self.assertAlmostEqual(xyz[1], 104.379)
+        self.assertAlmostEqual(xyz[2], 456.85)
+
+    def test_parse_gz_model_pose_pipe_delimited_variant(self) -> None:
+        # Some gz-sim doc examples show "|" separators instead of spaces;
+        # support both.
+        text = (
+            "  - Pose [ XYZ (m) ] [ RPY (rad) ]:\n"
+            "    [1.500000 | 300.000000 | 449.900000]\n"
+            "    [0.010000 | -0.020000 | 1.570000]\n"
+        )
+        xyz = parse_gz_model_pose_enu(text)
+        self.assertIsNotNone(xyz)
+        assert xyz is not None
+        self.assertAlmostEqual(xyz[0], 1.5)
+        self.assertAlmostEqual(xyz[1], 300.0)
+        self.assertAlmostEqual(xyz[2], 449.9)
+
+    def test_parse_gz_model_pose_ignores_header_brackets(self) -> None:
+        # The "Pose [ XYZ (m) ] [ RPY (rad) ]:" header itself has brackets
+        # but no numeric triplet — must not be mistaken for the pose line.
+        text = "  - Pose [ XYZ (m) ] [ RPY (rad) ]:\n    [0.000000 | 2.000000 | 0.325000]\n"
+        xyz = parse_gz_model_pose_enu(text)
+        self.assertIsNotNone(xyz)
+        assert xyz is not None
+        self.assertAlmostEqual(xyz[0], 0.0)
+        self.assertAlmostEqual(xyz[1], 2.0)
+        self.assertAlmostEqual(xyz[2], 0.325)
+
+    def test_gz_model_pose_argv(self) -> None:
+        argv = gz_model_pose_argv("rc_cessna_0")
+        self.assertEqual(argv, ["gz", "model", "-m", "rc_cessna_0", "--pose"])
+
+    def test_gz_model_pose_argv_with_world(self) -> None:
+        argv = gz_model_pose_argv("rc_cessna_0", world="default")
+        self.assertEqual(
+            argv, ["gz", "model", "-m", "rc_cessna_0", "--pose", "-w", "default"]
+        )
 
     def test_default_heading_north_velocity(self) -> None:
         vx, vy, vz = world_velocity_enu(30.0, DEFAULT_GZ_YAW_RAD)

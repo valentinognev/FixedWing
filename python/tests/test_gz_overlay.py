@@ -54,6 +54,7 @@ class TestGzOverlay(unittest.TestCase):
         self.assertIn("<width>640</width>", out)
         self.assertIn("<height>480</height>", out)
         self.assertIn("<parent>base_link</parent>", out)
+        self.assertIn('relative_to="base_link"', out)
         self.assertIn("5 0 0 0 0 0", out)
         hfov = math.radians(90.0)
         self.assertIn(f"{hfov:.6f}", out)

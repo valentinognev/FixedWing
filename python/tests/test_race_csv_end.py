@@ -216,6 +216,27 @@ class TestRaceCsvLogger(unittest.TestCase):
             self.assertEqual(rows[0]["pos_n"], "10.000")
             self.assertEqual(rows[0]["pos_d"], "5.000")
 
+    def test_sample_logs_plane_and_target_ned(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "race.csv"
+            with RaceCsvLogger(path) as log:
+                log.log_sample(
+                    t_s=1.0,
+                    balloon_idx=1,
+                    color=(0, 255, 0),
+                    assisted=False,
+                    pos_ned=(10.0, 2.0, 5.0),
+                    tgt_ned=(600.0, 80.0, 0.0),
+                )
+            with path.open(encoding="utf-8") as fh:
+                rows = list(csv.DictReader(fh))
+            self.assertEqual(rows[0]["pos_n"], "10.000")
+            self.assertEqual(rows[0]["pos_e"], "2.000")
+            self.assertEqual(rows[0]["pos_d"], "5.000")
+            self.assertEqual(rows[0]["tgt_n"], "600.000")
+            self.assertEqual(rows[0]["tgt_e"], "80.000")
+            self.assertEqual(rows[0]["tgt_d"], "0.000")
+
 
 if __name__ == "__main__":
     unittest.main()

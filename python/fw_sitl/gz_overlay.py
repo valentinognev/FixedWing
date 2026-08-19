@@ -29,7 +29,7 @@ def inject_race_cam(
     hfov = math.radians(float(hfov_deg))
     snippet = f"""
     <link name="race_cam_link">
-      <pose>{float(eye_forward_m):g} 0 0 0 0 0</pose>
+      <pose relative_to="{parent}">{float(eye_forward_m):g} 0 0 0 0 0</pose>
       <inertial>
         <mass>0.01</mass>
         <inertia>

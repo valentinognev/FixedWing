@@ -17,6 +17,7 @@ from fw_sitl.flight_setup import BalloonSpec, GuidanceSpec
 from fw_sitl.race_guidance import (
     RaceGuidance,
     chase_uses_lookat,
+    format_ned_pos_line,
     rebase_balloons_to_local_z,
     show_assisted_overlay,
 )
@@ -204,6 +205,14 @@ class TestRaceGuidance3DLos(unittest.TestCase):
         self.assertFalse(
             hasattr(RaceGuidance, "z_hold_ned"),
             "soft Z blend z_hold_ned must not be the altitude path",
+        )
+
+
+class TestNedPosLine(unittest.TestCase):
+    def test_format_is_time_xyz_one_decimal(self) -> None:
+        self.assertEqual(
+            format_ned_pos_line(12.04, (151.34, -35.61, 47.12)),
+            "t=12.0s x=151.3 y=-35.6 z=47.1",
         )
 
 

@@ -14,6 +14,7 @@ if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
 from fw_sitl.attitude_pid import AttitudePid
+from fw_sitl.plant_gains import load_plant_gains
 from fw_sitl.body_cmd_bridge import BodyCmdBridge
 from fw_sitl.body_cmd_controllers import (
     AttitudeChaseController,
@@ -168,7 +169,8 @@ class TestAttitudeChaseController(unittest.TestCase):
         self.assertAlmostEqual(pitch, rpy_from_quat(ctrl.last_q_des)[1], places=5)
         self.assertAlmostEqual(yaw, 0.0, places=2)
 
-    def test_in_view_crab_banks_against_track(self) -> None:
+    def test_in_view_crab_zero_roll_when_balloon_on_nose(self) -> None:
+        """LOS along body +X: do not bank against a crabbed ground track."""
         bridge = BodyCmdBridge(lookahead_m=500.0, speed_mps=30.0)
         ctrl = AttitudeChaseController(
             bridge, speed_mps=30.0, pid=AttitudePid(kp=1.0, ki=0.0, kd=0.0)
@@ -191,35 +193,35 @@ class TestAttitudeChaseController(unittest.TestCase):
                 vy=30.0 * math.sin(track),
             )
         _master, roll, _pitch, yaw, _thrust = send.call_args[0]
-        self.assertLess(roll, -0.2)
+        self.assertAlmostEqual(roll, 0.0, places=2)
         self.assertAlmostEqual(yaw, 0.0, places=2)
 
-    def test_in_view_45deg_crab_banks_against_track(self) -> None:
-        # Path hold ignores |track−yaw|>30°. Chase must still bank the velocity
-        # onto the balloon (post-fix5: 45° crab, roll_des=0, flew past).
+    def test_in_view_banks_right_when_balloon_right_of_nose(self) -> None:
+        """Track due north, balloon 18° right of yaw: bank right onto body +X."""
         bridge = BodyCmdBridge(lookahead_m=500.0, speed_mps=30.0)
         ctrl = AttitudeChaseController(
             bridge, speed_mps=30.0, pid=AttitudePid(kp=1.0, ki=0.0, kd=0.0)
         )
-        track = math.radians(45.0)
+        az = math.radians(18.0)
+        dir_ned = (math.cos(az), math.sin(az), 0.0)
         with patch(
             "fw_sitl.body_cmd_controllers.send_attitude_target", create=True
         ) as send:
             ctrl.send_chase_setpoint(
                 MagicMock(),
                 (0.0, 0.0, -10.0),
-                (1.0, 0.0, 0.0),
+                dir_ned,
                 1,
                 yaw_rad=0.0,
                 q_act=from_rpy(0.0, 0.0, 0.0),
                 dt=0.05,
                 in_view=True,
                 z_target=-10.0,
-                vx=30.0 * math.cos(track),
-                vy=30.0 * math.sin(track),
+                vx=30.0,
+                vy=0.0,
             )
         _master, roll, _pitch, yaw, _thrust = send.call_args[0]
-        self.assertLess(roll, -0.3)
+        self.assertGreater(roll, 0.2)
         self.assertAlmostEqual(yaw, 0.0, places=2)
 
     def test_in_view_skips_lookahead_z(self) -> None:
@@ -343,6 +345,27 @@ class TestAttitudeChaseController(unittest.TestCase):
         self.assertIsNotNone(ctrl.last_q_des)
         _roll, pitch, _yaw = rpy_from_quat(ctrl.last_q_des)
         self.assertAlmostEqual(pitch, el, places=2)
+
+    def test_in_view_high_pitches_down_harder_than_los_el(self) -> None:
+        plant = load_plant_gains("jsbsim_rascal")
+        bridge = BodyCmdBridge(lookahead_m=500.0, speed_mps=30.0)
+        ctrl = AttitudeChaseController(bridge, speed_mps=30.0, plant=plant)
+        with patch(
+            "fw_sitl.body_cmd_controllers.send_attitude_target", create=True
+        ) as send:
+            ctrl.send_chase_setpoint(
+                MagicMock(),
+                (0.0, 0.0, -20.0),
+                (1.0, 0.0, 0.0),
+                1,
+                yaw_rad=0.0,
+                q_act=from_rpy(0.0, 0.0, 0.0),
+                dt=0.05,
+                in_view=True,
+                z_target=-10.0,
+            )
+        _master, _roll, pitch, _yaw, _thrust = send.call_args[0]
+        self.assertLess(pitch, math.radians(-8.0))
 
     def test_aim_point_ned_delegates_to_bridge(self) -> None:
         bridge = BodyCmdBridge(lookahead_m=100.0, speed_mps=30.0)

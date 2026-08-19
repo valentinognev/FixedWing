@@ -101,6 +101,7 @@ class TestPlantGainsRegistry(unittest.TestCase):
         self.assertAlmostEqual(p.fw_airspd_min, 5.0)
         self.assertAlmostEqual(p.fw_airspd_trim, 30.0)
         self.assertAlmostEqual(p.fw_airspd_max, 50.0)
+        self.assertAlmostEqual(p.los_kwargs()["kp_alt"], BANK_KP_ALT)
 
     def test_tables_differ_pairwise(self) -> None:
         loaded = {pid: load_plant_gains(pid) for pid in _PLANTS}

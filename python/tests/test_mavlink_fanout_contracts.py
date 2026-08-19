@@ -147,7 +147,7 @@ class TestMavlinkFanoutContracts(unittest.TestCase):
         self.assertIn("select-layout -t \"${SESSION}:0\" tiled", text)
 
     def test_race_passes_no_sim_to_control_when_race_owns_sim(self) -> None:
-        """Race launcher owns sim → control must attach (--no-sim), never kill/restart."""
+        """Race launcher owns sim → control must attach (--no-sim), never kill/restart at start."""
         text = _RACE_SH.read_text(encoding="utf-8")
         # Unconditional: race always passes --no-sim to control (owns sim or user --no-sim).
         self.assertRegex(
@@ -158,6 +158,20 @@ class TestMavlinkFanoutContracts(unittest.TestCase):
         self.assertNotRegex(
             text,
             r'if \[\[ "\$\{NO_SIM\}" -eq 1 \]\][^\n]*\n[^\n]*CTL_CMD\+=" --no-sim"',
+        )
+
+    def test_race_kills_leftover_docker_then_stops_sim_on_exit(self) -> None:
+        """New race: kill leftover containers first; timed end removes docker."""
+        text = _RACE_SH.read_text(encoding="utf-8")
+        kill_idx = text.index('kill.sh" --all')
+        session_idx = text.index("tmux new-session")
+        self.assertLess(kill_idx, session_idx)
+        self.assertIn('CTL_CMD+=" --stop-sim-on-exit"', text)
+        # User --no-sim must not tear down an already-running plant.
+        self.assertIn('NO_SIM', text)
+        self.assertNotIn(
+            'CTL_CMD="PYTHONUNBUFFERED=1 ${PYTHON} -u ${PYTHON_ROOT}/run_balloon_control.py --setup ${SETUP} --udp ${MAVLINK_CONTROL_PORT} --no-plot"',
+            text,
         )
 
     def test_control_defers_fg_balloon_spawn_until_after_engage(self) -> None:

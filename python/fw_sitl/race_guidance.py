@@ -13,6 +13,18 @@ PASS_CLOSEST_HYST_M = 10.0
 PASS_MISS_MULT = 4.0
 
 
+def format_ned_pos_line(
+    t_s: float, pos_ned: tuple[float, float, float]
+) -> str:
+    """One-line race pose for stdout and balloon_camera overlay."""
+    return (
+        f"t={float(t_s):.1f}s "
+        f"x={float(pos_ned[0]):.1f} "
+        f"y={float(pos_ned[1]):.1f} "
+        f"z={float(pos_ned[2]):.1f}"
+    )
+
+
 def show_assisted_overlay(*, assisted: bool, in_view: bool) -> bool:
     """True when camera should overlay assisted-guidance indication.
 

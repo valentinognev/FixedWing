@@ -258,6 +258,21 @@ def offset_on_screen(
     return 0.0 <= u < float(camera.width_px) and 0.0 <= v < float(camera.height_px)
 
 
+def dir_cam_az_el_deg(
+    dir_cam: tuple[float, float, float],
+) -> tuple[float, float]:
+    """Camera-frame LOS → azimuth / elevation (deg).
+
+    OpenCV optical frame: +Z boresight, +X right, +Y down. Azimuth is
+    positive to the right of the image center; elevation positive up.
+    ``(0, 0)`` is the principal point (blob on the boresight).
+    """
+    x, y, z = float(dir_cam[0]), float(dir_cam[1]), float(dir_cam[2])
+    az = math.degrees(math.atan2(x, z)) if abs(z) > 1e-12 or abs(x) > 1e-12 else 0.0
+    el = math.degrees(math.atan2(-y, z)) if abs(z) > 1e-12 or abs(y) > 1e-12 else 0.0
+    return az, el
+
+
 def dir_cam_to_ned(
     dir_cam: tuple[float, float, float],
     camera: CameraModel,

@@ -23,6 +23,7 @@ from fw_sitl.flight_setup import (
     DEFAULT_PATH_RMS_MAX_M,
     DEFAULT_PIXEL_RMS_MAX_PX,
     DEFAULT_STALE_TRACK_WARN_S,
+    DEFAULT_ZMQ_POSE,
     FlightSetup,
     GuidanceSpec,
     VerificationSpec,
@@ -43,6 +44,11 @@ class TestFlightSetupDefaults(unittest.TestCase):
             setup.guidance.alt_preserve_heading_err_deg,
             DEFAULT_ALT_PRESERVE_HEADING_ERR_DEG,
         )
+        self.assertEqual(setup.zmq.pose, DEFAULT_ZMQ_POSE)
+
+    def test_zmq_pose_overridable(self) -> None:
+        setup = flight_setup_from_dict({"zmq": {"pose": "tcp://127.0.0.1:6001"}})
+        self.assertEqual(setup.zmq.pose, "tcp://127.0.0.1:6001")
         self.assertEqual(setup.verification.pixel_rms_max_px, DEFAULT_PIXEL_RMS_MAX_PX)
         self.assertEqual(setup.verification.pass_time_tol_s, DEFAULT_PASS_TIME_TOL_S)
         self.assertEqual(setup.verification.path_rms_max_m, DEFAULT_PATH_RMS_MAX_M)
@@ -54,7 +60,7 @@ class TestFlightSetupDefaults(unittest.TestCase):
         self.assertEqual(cam.fg_window_pattern, "FlightGear|fgfs")
         self.assertEqual(g.stale_track_warn_s, 10.0)
         self.assertEqual(g.laps, 1)
-        self.assertEqual(g.duration_s, 180.0)
+        self.assertEqual(g.duration_s, 60.0)
         self.assertEqual(g.cmd_mode, "velocity")
         self.assertEqual(g.alt_preserve_heading_err_deg, 20.0)
         self.assertEqual(v.pixel_rms_max_px, 15.0)
@@ -93,6 +99,14 @@ class TestFlightSetupDefaults(unittest.TestCase):
         setup = flight_setup_from_dict({"guidance": {"laps": 0, "duration_s": 180}})
         self.assertEqual(setup.guidance.laps, 0)
 
+    def test_duration_zero_means_no_time_limit(self) -> None:
+        setup = flight_setup_from_dict({"guidance": {"laps": 0, "duration_s": 0}})
+        self.assertEqual(setup.guidance.duration_s, 0.0)
+
+    def test_negative_duration_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            flight_setup_from_dict({"guidance": {"duration_s": -1}})
+
     def test_invalid_cmd_mode_rejected(self) -> None:
         with self.assertRaises(ValueError):
             flight_setup_from_dict({"guidance": {"cmd_mode": "hover"}})
@@ -109,7 +123,7 @@ class TestFlightSetupDefaults(unittest.TestCase):
         self.assertEqual(setup.guidance.cmd_mode, "attitude")
         self.assertEqual(setup.guidance.alt_preserve_heading_err_deg, 20.0)
         self.assertEqual(setup.guidance.laps, 0)
-        self.assertEqual(setup.guidance.duration_s, 180.0)
+        self.assertEqual(setup.guidance.duration_s, 60.0)
         self.assertEqual(setup.guidance.stale_track_warn_s, 10.0)
         self.assertEqual(setup.verification.pixel_rms_max_px, 15.0)
         self.assertEqual(setup.verification.pass_time_tol_s, 5.0)

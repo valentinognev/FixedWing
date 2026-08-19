@@ -10,6 +10,7 @@ import signal
 import sys
 import threading
 import time
+import traceback
 from pathlib import Path
 
 _PYTHON_ROOT = Path(__file__).resolve().parent
@@ -21,6 +22,7 @@ from fw_sitl.body_cmd_controllers import make_body_cmd_controller, parse_body_cm
 from fw_sitl.camera_model import CameraModel, dir_cam_to_ned, offset_on_screen
 from fw_sitl.flight_history import FlightHistory
 from fw_sitl.flight_setup import load_flight_setup
+from fw_sitl.gz_pose import gz_enu_to_ned
 from fw_sitl.mavlink_io import (
     PX4_CUSTOM_MAIN_MODE_OFFBOARD,
     arm,
@@ -37,6 +39,7 @@ from fw_sitl.race_csv import RaceCsvLogger, default_csv_path
 from fw_sitl.race_guidance import (
     RaceGuidance,
     chase_uses_lookat,
+    format_ned_pos_line,
     race_end_reason,
     rebase_balloons_to_local_z,
 )
@@ -46,7 +49,7 @@ from fw_sitl.straight_flight_core import (
     engage_offboard_with_retries,
     settle_path_altitude,
 )
-from fw_sitl.zmq_bus import ColorPublisher, TargetColor, TrackSubscriber
+from fw_sitl.zmq_bus import ColorPublisher, PoseSubscriber, TargetColor, TrackSubscriber
 from pymavlink import mavutil
 
 DEFAULT_SIM = SCRIPTS_DIR / "runSimJsbsimRascal.sh"
@@ -58,6 +61,17 @@ COLOR_REPUBLISH_PERIOD_S = 1.0
 # Periodic CSV path samples + console diagnostics during the race.
 PATH_SAMPLE_PERIOD_S = 1.0
 STATUS_PRINT_PERIOD_S = 5.0
+_PLOT_LOG = Path("/tmp/balloon_race_plot.log")
+
+
+def _plot_log(msg: str) -> None:
+    line = time.strftime("%Y-%m-%d %H:%M:%S ") + msg
+    try:
+        with _PLOT_LOG.open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except OSError:
+        pass
+    print(msg, flush=True)
 
 
 def main() -> int:
@@ -87,10 +101,15 @@ def main() -> int:
     parser.add_argument("--gz-container", default="px4-noble-gz-plane")
     parser.add_argument("--no-plot", action="store_true")
     parser.add_argument(
+        "--stop-sim-on-exit",
+        action="store_true",
+        help="Remove SITL docker stacks when the race ends (timed, laps, or interrupt)",
+    )
+    parser.add_argument(
         "--duration",
         type=float,
-        default=0.0,
-        help="Override guidance.duration_s when > 0 (default: use setup)",
+        default=None,
+        help="Race length seconds; 0 = no time limit (default: guidance.duration_s)",
     )
     parser.add_argument("--warmup", type=float, default=0.0)
     parser.add_argument("--spawn-fg-balloons", action="store_true")
@@ -121,7 +140,9 @@ def main() -> int:
 
     setup = load_flight_setup(args.setup)
     duration_s = (
-        float(args.duration) if args.duration > 0 else float(setup.guidance.duration_s)
+        float(args.duration)
+        if args.duration is not None
+        else float(setup.guidance.duration_s)
     )
     laps_target = int(setup.guidance.laps)
     csv_path = args.csv if args.csv is not None else default_csv_path()
@@ -130,13 +151,21 @@ def main() -> int:
     if args.gz:
         sim_extra = ["--setup", str(args.setup), "--model", args.model]
     sim_owned = False
+    sim_stopped = False
 
     def _stop_sim() -> None:
-        nonlocal sim_owned
-        if not sim_owned:
+        nonlocal sim_owned, sim_stopped
+        if sim_stopped:
             return
-        sim_owned = False
-        kill_sim(args.sim)
+        sim_stopped = True
+        if sim_owned:
+            sim_owned = False
+            kill_sim(args.sim)
+        if args.stop_sim_on_exit:
+            kill_docker(
+                target="--all",
+                label="Race end: removing SITL docker stacks...",
+            )
 
     if not args.no_sim:
         kill_docker(target=kill_target)
@@ -144,6 +173,8 @@ def main() -> int:
         sim_owned = True
         if args.warmup > 0:
             time.sleep(args.warmup)
+        atexit.register(_stop_sim)
+    elif args.stop_sim_on_exit:
         atexit.register(_stop_sim)
 
     # Never block engage on FG telnet: early spawn waits ~tens of seconds while the
@@ -321,10 +352,13 @@ def main() -> int:
             *last_published_color,
             stamp=last_color_pub_t,
             assisted=last_published_assisted,
+            t_s=0.0,
+            pos_ned=(xy[0], xy[1], z_hold),
         )
     )
 
     history = FlightHistory()
+    history.set_balloon_markers([(b.ned, b.color) for b in race_balloons])
     history.request_streams(master, hz=rate)
     history.t0 = time.time()
     t0 = history.t0
@@ -343,9 +377,20 @@ def main() -> int:
     last_status_print_t = -1e9
     last_aim_z = z_hold
 
+    # PX4 EKF LOCAL_POSITION can drift tens/hundreds of metres from Gazebo
+    # while race_cam (on the mesh) is already on the balloon. Race NED, CSV,
+    # overlay, pass detection, and plots use the same spawn frame as the spheres.
+    #
+    # This subscribes the in-container gz_pose_bridge (physics-rate
+    # dynamic_pose/info, ~40 Hz) instead of polling `docker exec gz model
+    # --pose` per sample: that one-shot subprocess had ~0.4-0.5s latency and
+    # produced an irregular staircase (jitter) driven by docker scheduling,
+    # not by the simulation.
+    pose_sub = PoseSubscriber(setup.zmq.pose) if args.gz else None
+
     print(
         f"Racing balloon {race.target_idx} color=RGB{race.active_color}; "
-        f"laps={laps_target or '∞'} duration_s={duration_s:.0f}; "
+        f"laps={laps_target or '∞'} duration_s={'∞' if duration_s <= 0 else f'{duration_s:.0f}'}; "
         f"cmd_mode={cmd_mode.value}; plant={plant.plant_id}; "
         f"csv={csv_path}; track←{setup.zmq.track}; stale_age={stale_age_s:.3f}s "
         f"({STALE_TRACK_CAMERA_PERIODS}/camera.rate_hz)"
@@ -364,6 +409,15 @@ def main() -> int:
             if end_reason is not None:
                 break
 
+            history.note_target(race.balloon_ned())
+            # LOCAL_POSITION_NED streams faster than control_rate_hz (~2x
+            # measured): history.poll can append more than one sample per
+            # call. Only patching history.x[-1] left every other sample at
+            # its raw (EKF) position — invisible once cruise settles and EKF
+            # error shrinks, but a large, dense zigzag during the first few
+            # seconds after spawn while EKF is still converging. Patch every
+            # sample appended in *this* poll, not just the last.
+            n_before_poll = len(history.x)
             pos = history.poll(master)
             # history.poll already drains ATTITUDE into last_att_rad. A second
             # recv_match(ATTITUDE) is empty, which used to leave att=(0,0,0):
@@ -371,10 +425,19 @@ def main() -> int:
             if history.last_att_rad is not None:
                 att = history.last_att_rad
 
-            if pos is None:
+            world_ned = None
+            if pose_sub is not None:
+                pose_sub.poll_and_update()
+                sample = pose_sub.latest()
+                if sample is not None:
+                    world_ned = gz_enu_to_ned(sample.as_enu())
+            if world_ned is not None:
+                history.overwrite_positions_from(n_before_poll, world_ned)
+                history.last_pos = world_ned
+                pos = world_ned
+            elif pos is None:
                 pos = (xy[0], xy[1], z_hold)
-            else:
-                xy[0], xy[1] = pos[0], pos[1]
+            xy[0], xy[1] = pos[0], pos[1]
             last_pos = pos
 
             track_updated = track_sub.poll_and_update()
@@ -393,9 +456,10 @@ def main() -> int:
                         else:
                             last_dir_cam = None
 
-            # Gazebo world balloons are fixed in NED. While the active balloon
-            # projects into the camera, chase that geometric LOS (same 3D point
-            # the Cessna flies at). HSV blob is only a fallback off-projection.
+            # HSV blob when the tracker sees the current colour: that is the
+            # real optical axis (geometric yaw-vs-bearing can sit at 0° while
+            # the blob is on the right of balloon_camera). Geometric LOS is
+            # the fallback when the balloon still projects but HSV missed.
             balloon = race.balloon_ned()
             on_screen = offset_on_screen(
                 (balloon[0] - pos[0], balloon[1] - pos[1], balloon[2] - pos[2]),
@@ -408,11 +472,11 @@ def main() -> int:
             use_lookat = chase_uses_lookat(
                 tracker_in_view=tracker_in_view, on_screen=on_screen
             )
-            if on_screen:
-                race.update_track(True, race.geometric_los(pos))
-            elif tracker_in_view:
+            if tracker_in_view:
                 dir_ned = dir_cam_to_ned(last_dir_cam, camera, att[0], att[1], att[2])
                 race.update_track(True, dir_ned)
+            elif on_screen:
+                race.update_track(True, race.geometric_los(pos))
             elif track is not None:
                 race.update_track(False, race.last_dir_ned)
 
@@ -435,43 +499,17 @@ def main() -> int:
                     else race.target_idx
                 )
                 passed_color = race.last_passed_color or race.active_color
-                # #region agent log
-                try:
-                    import json as _json
-
-                    with Path(
-                        "/home/valentin/Projects/FixedWing/.cursor/debug-7e98f1.log"
-                    ).open("a", encoding="utf-8") as _h:
-                        _h.write(
-                            _json.dumps(
-                                {
-                                    "sessionId": "7e98f1",
-                                    "runId": "post-fix6",
-                                    "hypothesisId": "E1",
-                                    "location": "run_balloon_control.py:pass",
-                                    "message": "balloon pass",
-                                    "data": {
-                                        "passed_idx": passed_idx,
-                                        "next_idx": race.target_idx,
-                                        "n": pos[0],
-                                        "e": pos[1],
-                                    },
-                                    "timestamp": int(time.time() * 1000),
-                                }
-                            )
-                            + "\n"
-                        )
-                except OSError:
-                    pass
-                # #endregion
                 csv_log.log_pass(
                     t_s=now_s,
                     balloon_idx=passed_idx,
                     color=passed_color,
                     assisted=race.assisted,
                     pos_ned=pos,
+                    tgt_ned=race.balloon_ned(passed_idx),
                 )
                 balloon = race.balloon_ned()
+                history.note_target(balloon)
+                history.apply_target_to_last(n_before_poll)
                 on_screen = offset_on_screen(
                     (balloon[0] - pos[0], balloon[1] - pos[1], balloon[2] - pos[2]),
                     camera,
@@ -493,11 +531,18 @@ def main() -> int:
                         *race.active_color,
                         stamp=now_wall,
                         assisted=not use_lookat,
+                        t_s=now_s,
+                        pos_ned=pos,
                     )
                 )
                 last_published_color = race.active_color
                 last_published_assisted = not use_lookat
                 last_color_pub_t = now_wall
+
+            history.note_cam_los(
+                last_dir_cam if last_track_in_view and last_dir_cam is not None else None
+            )
+            history.apply_cam_to_last(n_before_poll)
 
             now_wall = time.time()
             color_changed = (
@@ -510,6 +555,8 @@ def main() -> int:
                         *race.active_color,
                         stamp=now_wall,
                         assisted=race.assisted,
+                        t_s=now_s,
+                        pos_ned=pos,
                     )
                 )
                 last_published_color = race.active_color
@@ -567,7 +614,9 @@ def main() -> int:
                     color=race.active_color,
                     assisted=race.assisted,
                     pos_ned=pos,
+                    tgt_ned=race.balloon_ned(),
                 )
+                print(format_ned_pos_line(now_s, pos), flush=True)
                 last_path_sample_t = now_s
             if now_s - last_status_print_t >= STATUS_PRINT_PERIOD_S:
                 mode_s = (
@@ -615,6 +664,7 @@ def main() -> int:
             color=race.active_color,
             assisted=race.assisted,
             pos_ned=last_pos,
+            tgt_ned=race.balloon_ned(),
         )
         csv_log.close()
         print(f"Race end reason={reason} t={t_end:.1f}s csv={csv_path}")
@@ -623,13 +673,43 @@ def main() -> int:
     summary = history.summarize_path()
     if summary:
         print(summary)
-    _stop_sim()
+    # Docker teardown (kill.sh --all) can SIGHUP this tmux pane. Save PNGs first.
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
     if not args.no_plot:
-        title = "Balloon race (FG viz)" if args.viz else "Balloon race"
-        history.plot(title=title)
+        if args.gz:
+            title = f"Balloon race (Gazebo {args.model})"
+        elif args.yasim:
+            title = "Balloon race (YASim)"
+        elif args.viz:
+            title = "Balloon race (JSBSim + FG viz)"
+        else:
+            title = "Balloon race (JSBSim)"
+        try:
+            to_plot = history
+            if not to_plot.t:
+                _plot_log(f"history empty; loading {csv_path}")
+                to_plot = FlightHistory.from_race_csv(csv_path)
+            _plot_log(
+                f"savefig n={len(to_plot.t)} exe={sys.executable} csv={csv_path}"
+            )
+            pkl = to_plot.to_pickle(csv_path.with_suffix(".pkl"))
+            written = to_plot.plot(
+                title=title,
+                save_prefix=csv_path.with_suffix(""),
+                show=False,
+            )
+            _plot_log("saved " + " ".join(str(p) for p in written) + f" pickle={pkl}")
+            if not written:
+                _plot_log("savefig produced no files")
+        except Exception as exc:  # noqa: BLE001
+            _plot_log(f"savefig failed: {exc}")
+            traceback.print_exc()
+    _stop_sim()
 
     color_pub.close()
     track_sub.close()
+    if pose_sub is not None:
+        pose_sub.close()
     return 0
 
 

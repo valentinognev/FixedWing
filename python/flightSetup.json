@@ -2,7 +2,8 @@
   "zmq": {
     "image": "tcp://127.0.0.1:5555",
     "color": "tcp://127.0.0.1:5556",
-    "track": "tcp://127.0.0.1:5557"
+    "track": "tcp://127.0.0.1:5557",
+    "pose": "tcp://127.0.0.1:5558"
   },
   "balloons": [
     {"ned": [300, 0, 0], "color": [255, 0, 0], "diameter_m": 10},
@@ -20,12 +21,12 @@
     "guidance": {
     "control_rate_hz": 20,
     "speed_mps": 30,
-    "pass_radius_m": 50,
+    "pass_radius_m": 3,
     "lookahead_m": 500,
     "assisted_print_period_s": 5,
     "stale_track_warn_s": 10,
     "laps": 0,
-    "duration_s": 180,
+    "duration_s": 60,
     "cmd_mode": "attitude",
     "alt_preserve_heading_err_deg": 20
   },
