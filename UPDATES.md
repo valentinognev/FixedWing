@@ -1,5 +1,9 @@
 # Updates
 
+## 0.31.1 - Restore JSBSim path settle; fly-by at max_roll 0.80
+- Reverted facing settle; JSBSim race uses `settle_path_altitude` like GZ/YASim. Fly-by `turn_radius_m` still JSBSim-only. `bank_max_roll_rad` 0.80 (not 0.90). Speed 18 m/s.
+- Live #1 `/tmp/balloon_race_20260819_171109.csv`: unhealthy arm z_ned=237 settle 245.5; pass_count=0; miss list empty. Extra live #2 `/tmp/balloon_race_20260819_171310.csv`: armed 1.1s z_ned=57.1 settle 66.3; pass_count=2; miss_m 6.938 (balloon 0, assisted=0), 11.676 (balloon 1, assisted=1); max miss 11.676 m. Gate pass (≥2 passes, every miss_m≤14, ≥1 unassisted).
+
 ## 0.31.0 - JSBSim fly-by 90° corners; face balloon 0 at race start
 - `coordinated_turn_radius_m` / `flyby_turn_distance_m`; JSBSim-only `RaceGuidance.turn_radius_m` aims the next balloon inside d_turn (pass still uses current). Gz/YASim stay `turn_radius_m=0`.
 - JSBSim settle is `settle_altitude_facing_xy` (pursuit to balloon 0 XY, `|Δz|≤2 m` for 1.5 s, timeout 4 s, along_advance 40 m). `jsbsim_rascal.bank_max_roll_rad` 0.80 then allowed bump 0.90. Speed 18 m/s unchanged.

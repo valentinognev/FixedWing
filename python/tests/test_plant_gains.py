@@ -70,7 +70,7 @@ class TestPlantGainsRegistry(unittest.TestCase):
         self.assertAlmostEqual(p.bank_kp_heading, 2.0)
         self.assertAlmostEqual(p.bank_kp_cross_track, 0.003)
         self.assertAlmostEqual(p.bank_xt_lookahead_m, 180.0)
-        self.assertAlmostEqual(p.bank_max_roll_rad, 0.90)
+        self.assertAlmostEqual(p.bank_max_roll_rad, 0.80)
         self.assertAlmostEqual(p.bank_kp_alt, 0.028)
         self.assertAlmostEqual(p.bank_max_pitch_rad, 0.12)
         self.assertAlmostEqual(p.att_max_pitch_rad, 0.35)
@@ -86,7 +86,7 @@ class TestPlantGainsRegistry(unittest.TestCase):
         self.assertAlmostEqual(p.fw_airspd_max, 40.0)
         self.assertAlmostEqual(p.los_kwargs()["kp_heading"], 2.0)
         self.assertAlmostEqual(p.los_kwargs()["kp_alt"], 0.028)
-        self.assertAlmostEqual(p.los_kwargs()["max_roll"], 0.90)
+        self.assertAlmostEqual(p.los_kwargs()["max_roll"], 0.80)
 
     def test_tables_differ_pairwise(self) -> None:
         loaded = {pid: load_plant_gains(pid) for pid in _PLANTS}

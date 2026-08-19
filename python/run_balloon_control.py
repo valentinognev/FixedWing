@@ -48,7 +48,6 @@ from fw_sitl.sim_lifecycle import SCRIPTS_DIR, kill_docker, kill_sim, start_sim
 from fw_sitl.straight_flight_core import (
     EngageError,
     engage_offboard_with_retries,
-    settle_altitude_facing_xy,
     settle_path_altitude,
 )
 from fw_sitl.zmq_bus import ColorPublisher, PoseSubscriber, TargetColor, TrackSubscriber
@@ -281,30 +280,19 @@ def main() -> int:
     course_rad = course_box[0]
     vx, vy, vz = ned_velocity_from_course(speed_mps, course_rad)
 
-    if plant.plant_id == "jsbsim_rascal":
-        settle_altitude_facing_xy(
-            master,
-            xy,
-            z_box,
-            (setup.balloons[0].ned[0], setup.balloons[0].ned[1]),
-            speed_mps,
-            frame,
-            rate,
-        )
-    else:
-        settle_path_altitude(
-            master,
-            xy,
-            z_box,
-            origin_box[0],
-            course_rad,
-            lookahead_m,
-            vx,
-            vy,
-            vz,
-            frame,
-            rate,
-        )
+    settle_path_altitude(
+        master,
+        xy,
+        z_box,
+        origin_box[0],
+        course_rad,
+        lookahead_m,
+        vx,
+        vy,
+        vz,
+        frame,
+        rate,
+    )
     z_hold = z_box[0]
 
     # Config balloon Z is home/aircraft-relative; also rebase onto settled local Z so
