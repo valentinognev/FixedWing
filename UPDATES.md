@@ -1,5 +1,9 @@
 # Updates
 
+## 0.30.1 - Restore JSBSim Rascal cruise 18 m/s
+- Task 5 16 m/s live stalled: unhealthy-armed, z_ned≈307 m, 0 passes. Restored `jsbsim_rascal.speed_mps=18.0` and `fw_airspd_trim=18.0` (min 10 / max 40). Heading 2.0, max_roll 0.70, look-at always-on unchanged.
+- Live 60 s headless JSBSim `/tmp/balloon_race_20260819_153806.csv`: pass_count=1; miss_m 6.322 (balloon 0, assisted=0); max miss 6.322 m. Gate fail (≥2 passes). Plane armed healthy at z_ned≈58 m.
+
 ## 0.30.0 - JSBSim Rascal race cruise 16 m/s
 - `jsbsim_rascal.speed_mps` and `fw_airspd_trim` 16.0 (`fw_airspd` min 10 / max 40). Heading 2.0, max_roll 0.70, inner `FW_RR_*`, pid/thrust unchanged. Fingerprint still unique vs `gz_rc_cessna` (`max_roll`).
 - Live 60 s headless JSBSim `/tmp/balloon_race_20260819_152314.csv`: pass_count=0; miss list empty; max miss n/a. Gate fail (≥2 passes, every miss_m≤14.0, ≥1 unassisted). One run only; no second retune.
