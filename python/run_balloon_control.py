@@ -64,6 +64,29 @@ STATUS_PRINT_PERIOD_S = 5.0
 _PLOT_LOG = Path("/tmp/balloon_race_plot.log")
 
 
+def _race_target_color(
+    race: RaceGuidance,
+    *,
+    stamp: float,
+    assisted: bool,
+    t_s: float,
+    pos_ned: tuple[float, float, float],
+    balloons_ned: tuple[tuple[float, float, float], ...] | None = None,
+) -> TargetColor:
+    return TargetColor(
+        *race.active_color,
+        stamp=stamp,
+        assisted=assisted,
+        t_s=t_s,
+        pos_ned=pos_ned,
+        balloons_ned=(
+            balloons_ned
+            if balloons_ned is not None
+            else tuple(b.ned for b in race.balloons)
+        ),
+    )
+
+
 def _plot_log(msg: str) -> None:
     line = time.strftime("%Y-%m-%d %H:%M:%S ") + msg
     try:
@@ -348,12 +371,13 @@ def main() -> int:
     last_published_assisted = True  # no track yet → assisted
     last_color_pub_t = time.time()
     color_pub.publish(
-        TargetColor(
-            *last_published_color,
+        _race_target_color(
+            race,
             stamp=last_color_pub_t,
             assisted=last_published_assisted,
             t_s=0.0,
             pos_ned=(xy[0], xy[1], z_hold),
+            balloons_ned=tuple(b.ned for b in race.balloons),
         )
     )
 
@@ -544,12 +568,13 @@ def main() -> int:
                 chase = race.chase_dir_ned(pos, sim_time_s=now_s)
                 now_wall = time.time()
                 color_pub.publish(
-                    TargetColor(
-                        *race.active_color,
+                    _race_target_color(
+                        race,
                         stamp=now_wall,
                         assisted=not use_lookat,
                         t_s=now_s,
                         pos_ned=pos,
+                        balloons_ned=tuple(b.ned for b in race.balloons),
                     )
                 )
                 last_published_color = race.active_color
@@ -568,12 +593,13 @@ def main() -> int:
             )
             if color_changed or (now_wall - last_color_pub_t >= COLOR_REPUBLISH_PERIOD_S):
                 color_pub.publish(
-                    TargetColor(
-                        *race.active_color,
+                    _race_target_color(
+                        race,
                         stamp=now_wall,
                         assisted=race.assisted,
                         t_s=now_s,
                         pos_ned=pos,
+                        balloons_ned=tuple(b.ned for b in race.balloons),
                     )
                 )
                 last_published_color = race.active_color

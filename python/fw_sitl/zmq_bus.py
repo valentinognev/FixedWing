@@ -75,6 +75,7 @@ class TargetColor:
     assisted: bool = False
     t_s: float | None = None
     pos_ned: tuple[float, float, float] | None = None
+    balloons_ned: tuple[tuple[float, float, float], ...] | None = None
 
     def as_tuple(self) -> tuple[int, int, int]:
         return (int(self.r), int(self.g), int(self.b))
@@ -182,6 +183,8 @@ def send_color(sock: zmq.Socket, color: TargetColor | RgbLike) -> None:
             payload["pos_n"] = float(color.pos_ned[0])
             payload["pos_e"] = float(color.pos_ned[1])
             payload["pos_d"] = float(color.pos_ned[2])
+        if color.balloons_ned is not None:
+            payload["balloons"] = [list(map(float, p)) for p in color.balloons_ned]
     else:
         r, g, b = color
         payload = {
@@ -210,6 +213,13 @@ def recv_color(sock: zmq.Socket, flags: int = 0) -> TargetColor | None:
     if "pos_n" in data and "pos_e" in data and "pos_d" in data:
         pos_ned = (float(data["pos_n"]), float(data["pos_e"]), float(data["pos_d"]))
     t_raw = data.get("t_s")
+    balloons_ned: tuple[tuple[float, float, float], ...] | None = None
+    if "balloons" in data:
+        balloons_ned = tuple(
+            tuple(float(x) for x in triple) for triple in data["balloons"]
+        )
+        if any(len(triple) != 3 for triple in balloons_ned):
+            raise ValueError("balloons NED entries must be length 3")
     return TargetColor(
         r=int(data["r"]),
         g=int(data["g"]),
@@ -218,6 +228,7 @@ def recv_color(sock: zmq.Socket, flags: int = 0) -> TargetColor | None:
         assisted=bool(data.get("assisted", False)),
         t_s=float(t_raw) if t_raw is not None else None,
         pos_ned=pos_ned,
+        balloons_ned=balloons_ned,
     )
 
 

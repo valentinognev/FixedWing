@@ -11,7 +11,7 @@ from fw_sitl.camera_model import CameraModel, project_ned_offset_to_pixel
 from fw_sitl.flight_setup import BalloonSpec, CameraSpec, FlightSetup
 from fw_sitl.mavlink_io import connect, poll_mavlink, request_local_position
 from fw_sitl.race_guidance import rebase_balloons_to_local_z
-from fw_sitl.zmq_bus import ImagePublisher
+from fw_sitl.zmq_bus import ColorSubscriber, ImagePublisher, TargetColor
 
 
 def render_frame(
@@ -66,6 +66,25 @@ def render_frame(
     return img
 
 
+def lock_world_balloons(
+    *,
+    template: tuple[BalloonSpec, ...],
+    color: TargetColor | None,
+    locked: tuple[BalloonSpec, ...] | None,
+) -> tuple[BalloonSpec, ...] | None:
+    """Freeze world balloons from control color NED; keep template color/size."""
+    if locked is not None:
+        return locked
+    if color is None or color.balloons_ned is None:
+        return None
+    if len(color.balloons_ned) != len(template):
+        return None
+    return tuple(
+        BalloonSpec(ned=ned, color=spec.color, diameter_m=spec.diameter_m)
+        for spec, ned in zip(template, color.balloons_ned, strict=True)
+    )
+
+
 def run_synthetic_publisher(
     setup: FlightSetup,
     udp_port: int = 14541,
@@ -87,16 +106,23 @@ def run_synthetic_publisher(
     )
 
     pub = ImagePublisher(setup.zmq.image)
+    color_sub = ColorSubscriber(setup.zmq.color)
     period = 1.0 / setup.render_rate_hz
     pos = (0.0, 0.0, -80.0)
     att = (0.0, 0.0, 0.0)
-    # Gazebo balloons are world-fixed. Freeze NED on first pose so a climb/dive
-    # moves the disks in the image (per-frame rebase glued them to the horizon).
+    # World balloons lock from control color `balloons` (rebased NED), not the
+    # first falling MAVLink pose.
     world_balloons: tuple[BalloonSpec, ...] | None = None
     next_t = time.time()
     print(f"Synthetic camera publishing @ {setup.render_rate_hz} Hz → {setup.zmq.image}")
 
     while True:
+        color_sub.poll_and_update()
+        world_balloons = lock_world_balloons(
+            template=setup.balloons,
+            color=color_sub.latest(),
+            locked=world_balloons,
+        )
         pos_msg, _, _ = poll_mavlink(master)
         while True:
             msg = master.recv_match(type="ATTITUDE", blocking=False)
@@ -105,10 +131,8 @@ def run_synthetic_publisher(
             att = (float(msg.roll), float(msg.pitch), float(msg.yaw))
         if pos_msg is not None:
             pos = pos_msg
-            if world_balloons is None:
-                world_balloons = rebase_balloons_to_local_z(setup.balloons, pos[2])
 
-        paint = world_balloons if world_balloons is not None else setup.balloons
+        paint = world_balloons or setup.balloons
         img = render_frame(
             pos, att[0], att[1], att[2], paint, setup.camera, rebase_z_to_aircraft=False
         )

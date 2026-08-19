@@ -1,5 +1,9 @@
 # Updates
 
+## 0.27.0 - Synth scene lock from control
+- Color ZMQ payload may include `balloons: [[n,e,d], ...]`; `TargetColor.balloons_ned` is `None` on legacy messages.
+- Control publishes rebased race NED on every color message. Headless synth subscribes that channel and freezes world balloons from it (template RGB/size kept), instead of rebasing onto the first falling MAVLink pose.
+
 ## 0.26.0 - Gz origin-bias lock; race NED = EKF − bias
 - `--gz` locks a constant NED `origin_bias` from the first good EKF+mesh pair (`|h| >= 1 m`), then race/CSV/pass/plots use `pos = ekf − bias` (spawn/balloon frame). Stops per-tick mesh overwrite after lock. Pose tmux pane stays for the lock sample.
 - 1 Hz `ekf_err_h` is still raw horizontal |EKF−mesh| (~50 m SITL origin offset). Do not treat raw EKF as balloon-frame NED.
