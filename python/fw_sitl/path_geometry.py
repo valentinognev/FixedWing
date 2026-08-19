@@ -7,11 +7,21 @@ import math
 DEFAULT_SPEED_MPS = 30.0
 
 BANK_KP_HEADING = 1.5
-BANK_KP_CROSS_TRACK = 0.003  # rad per metre of cross-track
+BANK_KP_CROSS_TRACK = 0.003  # rad per metre of cross-track (legacy P; intercept preferred)
+BANK_XT_LOOKAHEAD_M = 180.0
 BANK_MAX_ROLL_RAD = 0.45
 BANK_KP_ALT = 0.025  # rad pitch per metre NED-z error
 BANK_MAX_PITCH_RAD = 0.12
 DEFAULT_THRUST = 0.60
+# Use ground track for bank only when it agrees with yaw (coordinated / light crab).
+# Falling in-air attach can have |track−yaw| ~160°; treating that as heading saturates
+# max bank the wrong way vs the nose (0.19.2 used track unconditionally).
+BANK_TRACK_MIN_GS_MPS = 5.0
+BANK_TRACK_MAX_SIDESLIP_RAD = math.radians(30.0)
+# On-screen chase: still use ground track with a larger crab so a 45°
+# yaw/track split (EKF settle) banks the velocity onto the balloon. Path
+# hold keeps 30° so a 160° falling-attach track cannot saturate the wrong way.
+BANK_CHASE_MAX_SIDESLIP_RAD = math.radians(90.0)
 
 
 def ned_velocity_from_course(speed_mps: float, course_rad: float) -> tuple[float, float, float]:
@@ -56,6 +66,30 @@ def wrap_pi(angle: float) -> float:
     while a <= -math.pi:
         a += 2.0 * math.pi
     return a
+
+
+def coordinated_heading_rad(
+    yaw_rad: float,
+    vx: float | None,
+    vy: float | None,
+    *,
+    min_gs_mps: float = BANK_TRACK_MIN_GS_MPS,
+    max_sideslip_rad: float = BANK_TRACK_MAX_SIDESLIP_RAD,
+) -> float:
+    """Ground track when coordinated; otherwise body yaw.
+
+    Small crab (|track−yaw| ≤ 30°) still uses track so yaw P cannot cancel
+    cross-track. Large sideslip (falling / uncoordinated) must not.
+    """
+    yaw = float(yaw_rad)
+    if vx is None or vy is None:
+        return yaw
+    if math.hypot(float(vx), float(vy)) < float(min_gs_mps):
+        return yaw
+    track = math.atan2(float(vy), float(vx))
+    if abs(wrap_pi(track - yaw)) > float(max_sideslip_rad):
+        return yaw
+    return track
 
 
 def cross_track_m(
@@ -103,11 +137,24 @@ def bank_to_turn_commands(
     max_roll: float = BANK_MAX_ROLL_RAD,
     kp_alt: float = BANK_KP_ALT,
     max_pitch: float = BANK_MAX_PITCH_RAD,
+    heading_rad: float | None = None,
+    xt_lookahead_m: float = BANK_XT_LOOKAHEAD_M,
 ) -> tuple[float, float]:
-    """Return (roll, pitch) rad for straight-line hold via bank-to-turn."""
-    heading_err = wrap_pi(course_rad - float(yaw_rad))
+    """Return (roll, pitch) rad for straight-line hold via bank-to-turn.
+
+    Bank tracks ``course + atan2(-xt, lookahead)`` vs ``heading_rad`` (ground
+    track when provided, else yaw). A yaw-only P plus xt P can cancel at a
+    wings-level crab; the intercept law does not.
+    """
+    href = float(yaw_rad) if heading_rad is None else float(heading_rad)
     xt = cross_track_m(xy[0], xy[1], origin_xy, course_rad)
-    roll = kp_heading * heading_err + kp_cross_track * xt
+    intercept = 0.0
+    if xt_lookahead_m > 1.0:
+        intercept = math.atan2(-xt, float(xt_lookahead_m))
+    heading_err = wrap_pi(course_rad + intercept - href)
+    roll = kp_heading * heading_err
+    if xt_lookahead_m <= 1.0:
+        roll -= kp_cross_track * xt
     roll = max(-max_roll, min(max_roll, roll))
     # NED z positive down: z_ned > z_hold ⇒ too low ⇒ pitch up.
     pitch = kp_alt * (float(z_ned) - float(z_hold))

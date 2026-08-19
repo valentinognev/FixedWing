@@ -10,6 +10,7 @@ from pathlib import Path
 
 from pymavlink import mavutil
 
+from fw_sitl.attitude_pid import q_des_from_path, thrust_for_hold
 from fw_sitl.flight_history import FlightHistory
 from fw_sitl.mavlink_io import (
     PX4_CUSTOM_MAIN_MODE_OFFBOARD,
@@ -21,10 +22,16 @@ from fw_sitl.mavlink_io import (
     poll_vehicle_state,
     prepare_sitl_arming,
     reboot_autopilot,
+    send_attitude_target,
     send_path_setpoint,
     set_offboard,
 )
-from fw_sitl.path_geometry import ned_velocity_from_course
+from fw_sitl.path_geometry import (
+    coordinated_heading_rad,
+    ned_velocity_from_course,
+)
+from fw_sitl.plant_gains import PlantGains
+from fw_sitl.quat import from_rpy, rpy_from_quat
 from fw_sitl.sim_lifecycle import kill_sim, start_sim
 
 
@@ -359,6 +366,8 @@ def engage_offboard_with_retries(
     full_sim_restart: bool = True,
     accept_unhealthy: bool = False,
     sim_extra_args: list[str] | None = None,
+    skip_reboot: bool = False,
+    plant: PlantGains,
 ) -> mavutil.mavfile:
     """Engage; on failure, optionally restart sim or reboot and retry.
 
@@ -366,6 +375,8 @@ def engage_offboard_with_retries(
     FlightGear — FG restart is slow and was causing the "runs then restarts" loop.
     accept_unhealthy: keep going after a late/drifted arm lock (FG-friendly).
     sim_extra_args: passed to start_sim on full restarts (e.g. ["--viz"]).
+    skip_reboot: do not reboot PX4 (in-air spawn: reboot drops airspeed/ekf2
+    health and force-arm stays denied while the plane falls).
     """
     course_seed = course_box[0]
     for attempt in range(1, max_attempts + 1):
@@ -403,17 +414,22 @@ def engage_offboard_with_retries(
                 time.sleep(1.0)
                 start_sim(sim_script, extra_args=sim_extra_args)
                 master = connect(udp_port, timeout=180.0)
+            elif skip_reboot:
+                print(
+                    f"Unhealthy engage — retry {attempt + 1}/{max_attempts} "
+                    f"without autopilot reboot..."
+                )
             else:
                 print(
                     f"Unhealthy engage — autopilot reboot for retry "
                     f"{attempt + 1}/{max_attempts}..."
                 )
                 master = reboot_autopilot(master)
-            prepare_sitl_arming(master)
-            if full_sim_restart and sim_script is not None:
+            prepare_sitl_arming(master, plant)
+            if (not skip_reboot) and full_sim_restart and sim_script is not None:
                 # Param prep after fresh sim; reboot so params stick like first boot.
                 master = reboot_autopilot(master)
-                prepare_sitl_arming(master)
+                prepare_sitl_arming(master, plant)
         except EngageError:
             raise
         except Exception as exc:  # noqa: BLE001
@@ -438,6 +454,9 @@ def run_locked_line_hold(
     arm_timeout_s: float,
     full_sim_restart: bool,
     accept_unhealthy: bool,
+    cmd_mode: str = "velocity",
+    skip_reboot: bool = False,
+    plant: PlantGains,
 ) -> int:
     """Connect, engage, settle, and hold a locked-line OFFBOARD path.
 
@@ -451,14 +470,17 @@ def run_locked_line_hold(
         stop_sim()
         return 1
 
-    prepare_sitl_arming(master)
-    try:
-        master = reboot_autopilot(master)
-    except Exception as exc:  # noqa: BLE001
-        print(f"Autopilot reboot/reconnect failed: {exc}", file=sys.stderr)
-        stop_sim()
-        return 1
-    prepare_sitl_arming(master)
+    prepare_sitl_arming(master, plant)
+    if not skip_reboot:
+        try:
+            master = reboot_autopilot(master)
+        except Exception as exc:  # noqa: BLE001
+            print(f"Autopilot reboot/reconnect failed: {exc}", file=sys.stderr)
+            stop_sim()
+            return 1
+        prepare_sitl_arming(master, plant)
+    else:
+        print("Skipping autopilot reboot: engage ASAP before in-air fall")
 
     frame = local_ned_frame()
     period = 1.0 / max(rate_hz, 1.0)
@@ -478,6 +500,7 @@ def run_locked_line_hold(
     print(
         f"Engage ASAP: OFFBOARD locked-line path hold "
         f"(|v|_ref={speed_mps:.2f} m/s, along-advance={along_advance_m:.0f} m @ {rate_hz} Hz)"
+        f" plant={plant.plant_id}"
     )
     master = engage_offboard_with_retries(
         master,
@@ -496,6 +519,8 @@ def run_locked_line_hold(
         arm_timeout_s=arm_timeout_s,
         full_sim_restart=full_sim_restart,
         accept_unhealthy=accept_unhealthy,
+        skip_reboot=skip_reboot,
+        plant=plant,
     )
     z_hold = z_box[0]
     origin_xy = origin_box[0]
@@ -530,6 +555,7 @@ def run_locked_line_hold(
     print(
         f"Holding path on course {math.degrees(course_rad) % 360.0:.1f}° "
         f"z_ned={z_hold:.1f}, along-advance={along_advance_m:.0f} m, {rate_hz} Hz"
+        f" cmd_mode={cmd_mode}"
         + (f" for {duration_s}s" if duration_s > 0 else " until Ctrl+C")
     )
     print(
@@ -544,6 +570,7 @@ def run_locked_line_hold(
     last_mode: int | None = None
     prev_xy: tuple[float, float] | None = None
     prev_z: float | None = None
+    att_pid = plant.make_pid()
     # Step larger than this ⇒ LOCAL_POSITION_NED discontinuity (EKF).
     ned_jump_m = 40.0
     z_jump_m = 15.0
@@ -576,18 +603,56 @@ def run_locked_line_hold(
                 set_offboard(master)
             prev_xy = (xy[0], xy[1])
             prev_z = z_now
-        send_path_setpoint(
-            master,
-            (xy[0], xy[1]),
-            z_hold,
-            origin_xy,
-            course_rad,
-            along_advance_m,
-            vx,
-            vy,
-            vz,
-            frame,
-        )
+        z_now = prev_z if prev_z is not None else z_hold
+        if cmd_mode == "attitude":
+            q_act = history.last_q
+            if q_act is None and history.last_att_rad is not None:
+                q_act = from_rpy(*history.last_att_rad)
+            if q_act is None:
+                # Do not treat missing ATTITUDE as north (identity): that was a
+                # ~90° fake yaw error vs a westbound lock and slewed the PID.
+                q_act = from_rpy(0.0, 0.0, course_rad)
+                att_pid.reset()
+            yaw_act = (
+                history.last_att_rad[2] if history.last_att_rad is not None else course_rad
+            )
+            vx, vy = history.last_vx, history.last_vy
+            heading_ref = coordinated_heading_rad(yaw_act, vx, vy)
+            q_des = q_des_from_path(
+                yaw_rad=yaw_act,
+                z_ned=z_now,
+                xy=(xy[0], xy[1]),
+                origin_xy=origin_xy,
+                course_rad=course_rad,
+                z_hold=z_hold,
+                heading_rad=heading_ref,
+                **plant.path_kwargs(),
+            )
+            q_cmd = att_pid.command(q_des, q_act, period)
+            roll_des = rpy_from_quat(q_des)[0]
+            thrust = thrust_for_hold(
+                z_ned=z_now,
+                z_hold=z_hold,
+                groundspeed=history.last_groundspeed,
+                speed_mps=speed_mps,
+                roll_rad=roll_des,
+                **plant.thrust_kwargs(),
+            )
+            roll, pitch, yaw = rpy_from_quat(q_cmd)
+            send_attitude_target(master, roll, pitch, yaw, thrust)
+        else:
+            send_path_setpoint(
+                master,
+                (xy[0], xy[1]),
+                z_hold,
+                origin_xy,
+                course_rad,
+                along_advance_m,
+                vx,
+                vy,
+                vz,
+                frame,
+            )
         now = time.time()
         master.mav.heartbeat_send(
             mavutil.mavlink.MAV_TYPE_GCS,

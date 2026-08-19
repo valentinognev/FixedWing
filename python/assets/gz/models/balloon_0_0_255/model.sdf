@@ -1,0 +1,20 @@
+<?xml version="1.0" ?>
+<sdf version="1.9">
+  <model name="balloon_0_0_255">
+    <static>true</static>
+    <link name="link">
+      <visual name="visual">
+        <geometry>
+          <sphere>
+            <radius>5</radius>
+          </sphere>
+        </geometry>
+        <material>
+          <ambient>0 0 1 1</ambient>
+          <diffuse>0 0 1 1</diffuse>
+          <emissive>0 0 1 1</emissive>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

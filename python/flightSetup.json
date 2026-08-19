@@ -1,0 +1,38 @@
+{
+  "zmq": {
+    "image": "tcp://127.0.0.1:5555",
+    "color": "tcp://127.0.0.1:5556",
+    "track": "tcp://127.0.0.1:5557",
+    "pose": "tcp://127.0.0.1:5558"
+  },
+  "balloons": [
+    {"ned": [300, 0, 0], "color": [255, 0, 0], "diameter_m": 10},
+    {"ned": [600, 80, 0], "color": [0, 255, 0], "diameter_m": 10},
+    {"ned": [900, 40, 0], "color": [0, 0, 255], "diameter_m": 10}
+  ],
+  "camera": {
+    "hfov_deg": 90, "vfov_deg": 70,
+    "azimuth_deg": 0, "elevation_deg": 0,
+    "width_px": 640, "height_px": 480,
+    "rate_hz": 10,
+    "fg_window_pattern": "FlightGear|fgfs"
+  },
+  "render_rate_hz": 20,
+    "guidance": {
+    "control_rate_hz": 20,
+    "speed_mps": 30,
+    "pass_radius_m": 3,
+    "lookahead_m": 500,
+    "assisted_print_period_s": 5,
+    "stale_track_warn_s": 10,
+    "laps": 0,
+    "duration_s": 60,
+    "cmd_mode": "attitude",
+    "alt_preserve_heading_err_deg": 20
+  },
+  "verification": {
+    "pixel_rms_max_px": 15,
+    "pass_time_tol_s": 5,
+    "path_rms_max_m": 30
+  }
+}

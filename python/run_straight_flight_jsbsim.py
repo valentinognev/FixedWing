@@ -36,8 +36,10 @@ from fw_sitl.cli_common import (
     DEFAULT_SPEED_MPS,
     add_common_args,
     add_vstall_arg,
+    resolve_lookahead,
     resolve_speed,
 )
+from fw_sitl.plant_gains import load_plant_gains
 from fw_sitl.sim_lifecycle import SCRIPTS_DIR, kill_docker, kill_sim, start_sim
 from fw_sitl.straight_flight_core import EngageError, run_locked_line_hold
 
@@ -61,7 +63,8 @@ def main() -> int:
         description=(
             "OFFBOARD straight flight for JSBSim Rascal SITL "
             f"(default ~{DEFAULT_SPEED_MPS:.0f} m/s; "
-            "locked-line LOCAL_NED path + course velocity)"
+            "locked-line LOCAL_NED path + course velocity). "
+            "Default --cmd-mode attitude (quaternion PID, Euler+thrust)."
         )
     )
     add_common_args(parser, default_sim=DEFAULT_SIM)
@@ -71,10 +74,13 @@ def main() -> int:
         help="Start FlightGear as visualization for the JSBSim plant (same FDM as headless)",
     )
     add_vstall_arg(parser)
+    parser.set_defaults(cmd_mode="attitude")
     args = parser.parse_args()
 
     kill_docker(target=KILL_TARGET)
-    speed = resolve_speed(args)
+    plant = load_plant_gains("jsbsim_rascal")
+    speed = resolve_speed(args, plant)
+    lookahead = resolve_lookahead(args, plant)
     sim_extra_args = ["--viz"] if args.viz else []
 
     sim_owned = False
@@ -109,7 +115,7 @@ def main() -> int:
             udp_port=args.udp,
             speed_mps=speed,
             course_deg=args.course_deg,
-            along_advance_m=max(0.0, float(args.lookahead)),
+            along_advance_m=lookahead,
             rate_hz=args.rate,
             duration_s=args.duration,
             no_plot=args.no_plot,
@@ -118,10 +124,13 @@ def main() -> int:
             stop_sim=_stop_sim,
             sim_script=None if args.no_sim else args.sim,
             sim_extra_args=sim_extra_args,
-            max_attempts=1 if args.viz else 3,
-            arm_timeout_s=60.0 if args.viz else 12.0,
-            full_sim_restart=not args.viz,
-            accept_unhealthy=bool(args.viz),
+            max_attempts=1,
+            arm_timeout_s=60.0,
+            full_sim_restart=False,
+            accept_unhealthy=True,
+            skip_reboot=True,
+            cmd_mode=args.cmd_mode,
+            plant=plant,
         )
     except EngageError as exc:
         print(f"Engage failed: {exc}", file=sys.stderr)
