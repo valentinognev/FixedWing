@@ -1,5 +1,9 @@
 # Updates
 
+## 0.30.0 - JSBSim Rascal race cruise 16 m/s
+- `jsbsim_rascal.speed_mps` and `fw_airspd_trim` 16.0 (`fw_airspd` min 10 / max 40). Heading 2.0, max_roll 0.70, inner `FW_RR_*`, pid/thrust unchanged. Fingerprint still unique vs `gz_rc_cessna` (`max_roll`).
+- Live 60 s headless JSBSim `/tmp/balloon_race_20260819_152314.csv`: pass_count=0; miss list empty; max miss n/a. Gate fail (≥2 passes, every miss_m≤14.0, ≥1 unassisted). One run only; no second retune.
+
 ## 0.29.0 - Close balloon-race LOS off-screen
 - `chase_uses_lookat` is always True (blob, on-screen geometric, and off-screen geometric). Frozen assisted path is unused for balloon-race attitude; tracker dir still preferred at the call site when in view.
 - Live 60 s headless JSBSim `/tmp/balloon_race_20260819_151009.csv`: pass_count=2; miss_m 6.312 (balloon 0, assisted=0), 22.091 (balloon 1, assisted=1); max miss 22.091 m. Gate fail (every miss_m≤14.0).
