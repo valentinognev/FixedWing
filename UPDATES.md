@@ -1,5 +1,10 @@
 # Updates
 
+## 0.28.0 - JSBSim Rascal race gains
+- `jsbsim_rascal` race/hold cruise is 20 m/s (`fw_airspd` 10/20/40); heading kp 1.9, max roll 0.60, alt kp 0.028 so LOS can close a 7 m gate on the 200 m triangle.
+- Tighter PX4 roll inner: `FW_RR_FF=0.50`, `FW_RR_I=0.18`, `FW_RR_P=0.15`. Pitch/`FW_R_TC`/`FW_THR_TRIM` unchanged. YASim/Gazebo tables untouched.
+- Host `test_load_shipped_flight_setup_json` now matches shipped balloon NED `[200,0,30]` / `[200,200,-30]` / `[0,200,0]` (JSON unchanged).
+
 ## 0.27.0 - Synth scene lock from control
 - Color ZMQ payload may include `balloons: [[n,e,d], ...]`; `TargetColor.balloons_ned` is `None` on legacy messages.
 - Control publishes rebased race NED on every color message. Headless synth subscribes that channel and freezes world balloons from it (template RGB/size kept), instead of rebasing onto the first falling MAVLink pose.

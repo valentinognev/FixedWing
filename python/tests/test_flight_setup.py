@@ -115,9 +115,9 @@ class TestFlightSetupDefaults(unittest.TestCase):
         path = _PYTHON_ROOT / "flightSetup.json"
         setup = load_flight_setup(path)
         self.assertEqual(len(setup.balloons), 3)
-        self.assertEqual(setup.balloons[0].ned, (300.0, 0.0, 0.0))
-        self.assertEqual(setup.balloons[1].ned, (600.0, 80.0, 0.0))
-        self.assertEqual(setup.balloons[2].ned, (900.0, 40.0, 0.0))
+        self.assertEqual(setup.balloons[0].ned, (200.0, 0.0, 30.0))
+        self.assertEqual(setup.balloons[1].ned, (200.0, 200.0, -30.0))
+        self.assertEqual(setup.balloons[2].ned, (0.0, 200.0, 0.0))
         self.assertEqual(setup.balloons[2].color, (0, 0, 255))
         self.assertEqual(setup.camera.fg_window_pattern, "FlightGear|fgfs")
         self.assertEqual(setup.guidance.cmd_mode, "attitude")

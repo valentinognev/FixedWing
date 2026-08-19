@@ -18,23 +18,6 @@ from fw_sitl.plant_gains import (
     load_plant_gains,
     plant_id_from_flags,
 )
-from fw_sitl.path_geometry import (
-    BANK_KP_ALT,
-    BANK_KP_CROSS_TRACK,
-    BANK_KP_HEADING,
-    BANK_MAX_PITCH_RAD,
-    BANK_MAX_ROLL_RAD,
-    BANK_XT_LOOKAHEAD_M,
-    DEFAULT_SPEED_MPS,
-)
-from fw_sitl.attitude_pid import (
-    ATT_LOS_MAX_PITCH_RAD,
-    ATT_MAX_PITCH_RAD,
-    CLIMB_THRUST_PER_M,
-    CRUISE_THRUST,
-    MAX_THRUST,
-    MIN_THRUST,
-)
 
 
 _PLANTS = (
@@ -78,30 +61,32 @@ class TestPlantGainsRegistry(unittest.TestCase):
         with self.assertRaises(KeyError):
             load_plant_gains("gazebo")
 
-    def test_jsbsim_rascal_matches_former_shared_outer_loop(self) -> None:
+    def test_jsbsim_rascal_race_snapshot(self) -> None:
         p = load_plant_gains("jsbsim_rascal")
         self.assertEqual(p.plant_id, "jsbsim_rascal")
         self.assertAlmostEqual(p.pid_kp, 0.8)
         self.assertAlmostEqual(p.pid_ki, 0.12)
         self.assertAlmostEqual(p.pid_kd, 0.04)
-        self.assertAlmostEqual(p.bank_kp_heading, BANK_KP_HEADING)
-        self.assertAlmostEqual(p.bank_kp_cross_track, BANK_KP_CROSS_TRACK)
-        self.assertAlmostEqual(p.bank_xt_lookahead_m, BANK_XT_LOOKAHEAD_M)
-        self.assertAlmostEqual(p.bank_max_roll_rad, BANK_MAX_ROLL_RAD)
-        self.assertAlmostEqual(p.bank_kp_alt, BANK_KP_ALT)
-        self.assertAlmostEqual(p.bank_max_pitch_rad, BANK_MAX_PITCH_RAD)
-        self.assertAlmostEqual(p.att_max_pitch_rad, ATT_MAX_PITCH_RAD)
-        self.assertAlmostEqual(p.att_los_max_pitch_rad, ATT_LOS_MAX_PITCH_RAD)
-        self.assertAlmostEqual(p.cruise_thrust, CRUISE_THRUST)
-        self.assertAlmostEqual(p.climb_thrust_per_m, CLIMB_THRUST_PER_M)
-        self.assertAlmostEqual(p.min_thrust, MIN_THRUST)
-        self.assertAlmostEqual(p.max_thrust, MAX_THRUST)
-        self.assertAlmostEqual(p.speed_mps, DEFAULT_SPEED_MPS)
+        self.assertAlmostEqual(p.bank_kp_heading, 1.9)
+        self.assertAlmostEqual(p.bank_kp_cross_track, 0.003)
+        self.assertAlmostEqual(p.bank_xt_lookahead_m, 180.0)
+        self.assertAlmostEqual(p.bank_max_roll_rad, 0.60)
+        self.assertAlmostEqual(p.bank_kp_alt, 0.028)
+        self.assertAlmostEqual(p.bank_max_pitch_rad, 0.12)
+        self.assertAlmostEqual(p.att_max_pitch_rad, 0.35)
+        self.assertAlmostEqual(p.att_los_max_pitch_rad, 0.70)
+        self.assertAlmostEqual(p.cruise_thrust, 0.62)
+        self.assertAlmostEqual(p.climb_thrust_per_m, 0.012)
+        self.assertAlmostEqual(p.min_thrust, 0.40)
+        self.assertAlmostEqual(p.max_thrust, 1.0)
+        self.assertAlmostEqual(p.speed_mps, 20.0)
         self.assertAlmostEqual(p.lookahead_m, 500.0)
-        self.assertAlmostEqual(p.fw_airspd_min, 5.0)
-        self.assertAlmostEqual(p.fw_airspd_trim, 30.0)
-        self.assertAlmostEqual(p.fw_airspd_max, 50.0)
-        self.assertAlmostEqual(p.los_kwargs()["kp_alt"], BANK_KP_ALT)
+        self.assertAlmostEqual(p.fw_airspd_min, 10.0)
+        self.assertAlmostEqual(p.fw_airspd_trim, 20.0)
+        self.assertAlmostEqual(p.fw_airspd_max, 40.0)
+        self.assertAlmostEqual(p.los_kwargs()["kp_heading"], 1.9)
+        self.assertAlmostEqual(p.los_kwargs()["kp_alt"], 0.028)
+        self.assertAlmostEqual(p.los_kwargs()["max_roll"], 0.60)
 
     def test_tables_differ_pairwise(self) -> None:
         loaded = {pid: load_plant_gains(pid) for pid in _PLANTS}
@@ -121,7 +106,6 @@ class TestPlantGainsRegistry(unittest.TestCase):
         self.assertGreater(yas.pid_kd, jsb.pid_kd)
         self.assertLess(yas.bank_kp_heading, jsb.bank_kp_heading)
         self.assertGreater(yas.cruise_thrust, jsb.cruise_thrust)
-        self.assertLess(yas.speed_mps, jsb.speed_mps)
 
     def test_gz_cessna_is_smaller_faster_than_jsbsim(self) -> None:
         jsb = load_plant_gains("jsbsim_rascal")
@@ -143,7 +127,11 @@ class TestPlantGainsRegistry(unittest.TestCase):
     def test_px4_inner_jsbsim_snapshot(self) -> None:
         inner = dict(load_plant_gains("jsbsim_rascal").px4_inner)
         self.assertAlmostEqual(inner["FW_PR_P"], 0.05)
-        self.assertAlmostEqual(inner["FW_RR_P"], 0.085)
+        self.assertAlmostEqual(inner["FW_RR_FF"], 0.50)
+        self.assertAlmostEqual(inner["FW_RR_I"], 0.18)
+        self.assertAlmostEqual(inner["FW_RR_P"], 0.15)
+        self.assertAlmostEqual(inner["FW_R_TC"], 0.45)
+        self.assertAlmostEqual(inner["FW_THR_TRIM"], 0.62)
 
     def test_px4_inner_yasim_not_jsbsim(self) -> None:
         jsb = dict(load_plant_gains("jsbsim_rascal").px4_inner)
