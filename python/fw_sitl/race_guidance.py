@@ -6,6 +6,9 @@ import time
 from dataclasses import dataclass, field
 
 from fw_sitl.flight_setup import BalloonSpec, GuidanceSpec
+from fw_sitl.path_geometry import wrap_pi
+
+_G_MPS2 = 9.81
 
 ASSISTED_OVERLAY_TEXT = "assisted guidance"
 # After a lock, range rising by this much within 4× pass_radius counts as a fly-by.
@@ -94,6 +97,30 @@ def _horizontal_unit(v: tuple[float, float, float]) -> tuple[float, float, float
     return (v[0] / n, v[1] / n, 0.0)
 
 
+def coordinated_turn_radius_m(speed_mps: float, max_roll_rad: float) -> float:
+    """R = v^2 / (g tan φ). φ clamped to >= 1e-3 rad."""
+    phi = max(abs(float(max_roll_rad)), 1e-3)
+    return float(speed_mps) ** 2 / (_G_MPS2 * math.tan(phi))
+
+
+def flyby_turn_distance_m(
+    pos_xy: tuple[float, float],
+    current_xy: tuple[float, float],
+    next_xy: tuple[float, float],
+    turn_radius_m: float,
+) -> float:
+    """Standard fly-by: R * tan(θ/2) with θ = |wrap_pi(outbound_az − inbound_az)|.
+
+    Cap θ at π − 1e-3 so tan does not explode on a 180° U-turn; then d_turn
+    is large and chase switches to next (still finite).
+    """
+    inbound_az = math.atan2(current_xy[1] - pos_xy[1], current_xy[0] - pos_xy[0])
+    outbound_az = math.atan2(next_xy[1] - current_xy[1], next_xy[0] - current_xy[0])
+    theta = abs(wrap_pi(outbound_az - inbound_az))
+    theta = min(theta, math.pi - 1e-3)
+    return float(turn_radius_m) * math.tan(0.5 * theta)
+
+
 def _los_to_balloon(
     pos_ned: tuple[float, float, float],
     balloon_ned: tuple[float, float, float],
@@ -130,6 +157,7 @@ class RaceGuidance:
     balloons: tuple[BalloonSpec, ...]
     guidance: GuidanceSpec
     target_idx: int = 0
+    turn_radius_m: float = 0.0
     last_dir_ned: tuple[float, float, float] = (1.0, 0.0, 0.0)
     last_in_view: bool = False
     assisted: bool = False
@@ -219,8 +247,28 @@ class RaceGuidance:
         *,
         sim_time_s: float | None = None,
     ) -> tuple[float, float, float]:
-        """Pure 3D LOS: in-view holds last dir; else geometric to balloon."""
+        """Pure 3D LOS: in-view holds last dir; else geometric to balloon.
+
+        When ``turn_radius_m > 0``, switch chase to the *next* balloon once
+        horizontal range to the current one is within the fly-by distance
+        (even if the tracker still holds the current balloon). Pass detection
+        still uses the current balloon.
+        """
         now = sim_time_s if sim_time_s is not None else time.time()
+
+        if self.turn_radius_m > 0.0 and self.balloons:
+            current = self.balloon_ned()
+            next_idx = (self.target_idx + 1) % len(self.balloons)
+            nxt = self.balloon_ned(next_idx)
+            horiz = math.hypot(pos_ned[0] - current[0], pos_ned[1] - current[1])
+            d_turn = flyby_turn_distance_m(
+                (pos_ned[0], pos_ned[1]),
+                (current[0], current[1]),
+                (nxt[0], nxt[1]),
+                self.turn_radius_m,
+            )
+            if horiz <= d_turn:
+                return _los_to_balloon(pos_ned, nxt)
 
         # No camera track yet: geometric LOS to the *active* balloon (not hard-coded
         # 0). After a radius/gate pass without ever receiving track, target_idx advances

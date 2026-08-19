@@ -1,5 +1,11 @@
 # Updates
 
+## 0.31.0 - JSBSim fly-by 90° corners; face balloon 0 at race start
+- `coordinated_turn_radius_m` / `flyby_turn_distance_m`; JSBSim-only `RaceGuidance.turn_radius_m` aims the next balloon inside d_turn (pass still uses current). Gz/YASim stay `turn_radius_m=0`.
+- JSBSim settle is `settle_altitude_facing_xy` (pursuit to balloon 0 XY, `|Δz|≤2 m` for 1.5 s, timeout 4 s, along_advance 40 m). `jsbsim_rascal.bank_max_roll_rad` 0.80 then allowed bump 0.90. Speed 18 m/s unchanged.
+- Live 60 s headless JSBSim #1 (max_roll 0.80) `/tmp/balloon_race_20260819_165139.csv`: pass_count=1; miss_m 14.320 (balloon 0, assisted=1); max miss 14.320 m. Gate fail (≥2 passes, every miss_m≤14, ≥1 unassisted). t=0 south of balloon 0 (N=-119); facing settle + fly-by wired. Unhealthy arm z_ned≈235.
+- Live #2 (max_roll 0.90) `/tmp/balloon_race_20260819_165531.csv`: pass_count=0; miss list empty; max miss n/a. Gate fail. Armed 18 s z_ned≈222. Stopped after the one allowed bump.
+
 ## 0.30.1 - Restore JSBSim Rascal cruise 18 m/s
 - Task 5 16 m/s live stalled: unhealthy-armed, z_ned≈307 m, 0 passes. Restored `jsbsim_rascal.speed_mps=18.0` and `fw_airspd_trim=18.0` (min 10 / max 40). Heading 2.0, max_roll 0.70, look-at always-on unchanged.
 - Live 60 s headless JSBSim `/tmp/balloon_race_20260819_153806.csv`: pass_count=1; miss_m 6.322 (balloon 0, assisted=0); max miss 6.322 m. Gate fail (≥2 passes). Plane armed healthy at z_ned≈58 m.

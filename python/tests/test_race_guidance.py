@@ -17,6 +17,8 @@ from fw_sitl.flight_setup import BalloonSpec, GuidanceSpec
 from fw_sitl.race_guidance import (
     RaceGuidance,
     chase_uses_lookat,
+    coordinated_turn_radius_m,
+    flyby_turn_distance_m,
     format_ned_pos_line,
     rebase_balloons_to_local_z,
     show_assisted_overlay,
@@ -289,6 +291,57 @@ class TestStaleTrackAssisted(unittest.TestCase):
             self.assertEqual(mocked.call_count, 1)
             race.chase_dir_ned((0.0, 0.0, 0.0), sim_time_s=5.0)
             self.assertEqual(mocked.call_count, 2)
+
+
+class TestFlybyTurn(unittest.TestCase):
+    def test_coordinated_turn_radius_18mps_0_80_roll(self) -> None:
+        r = coordinated_turn_radius_m(18.0, 0.80)
+        self.assertGreaterEqual(r, 31.0)
+        self.assertLessEqual(r, 34.0)
+        expected = (18.0 ** 2) / (9.81 * math.tan(0.80))
+        self.assertAlmostEqual(r, expected, places=1)
+
+    def test_flyby_90deg_distance_equals_radius(self) -> None:
+        d_turn = flyby_turn_distance_m(
+            (160.0, 0.0), (200.0, 0.0), (200.0, 200.0), 32.0
+        )
+        self.assertAlmostEqual(d_turn, 32.0, places=5)
+
+    def test_chase_dir_flyby_aims_next_inside_d_turn(self) -> None:
+        race = _race(
+            balloons=(
+                BalloonSpec(ned=(200.0, 0.0, 0.0), color=(255, 0, 0), diameter_m=10.0),
+                BalloonSpec(ned=(200.0, 200.0, 0.0), color=(0, 255, 0), diameter_m=10.0),
+            )
+        )
+        race.turn_radius_m = 32.0
+        held = _normalize3((1.0, 0.0, 0.0))
+        race.update_track(True, held)
+        pos = (175.0, 0.0, 0.0)
+        got = race.chase_dir_ned(pos, sim_time_s=0.0)
+        nxt = race.balloon_ned(1)
+        expected = _normalize3((nxt[0] - pos[0], nxt[1] - pos[1], nxt[2] - pos[2]))
+        for a, b in zip(got, expected):
+            self.assertAlmostEqual(a, b, places=6)
+        self.assertGreater(abs(got[1]), abs(got[0]))
+
+    def test_chase_dir_no_flyby_when_radius_zero(self) -> None:
+        race = _race(
+            balloons=(
+                BalloonSpec(ned=(200.0, 0.0, 0.0), color=(255, 0, 0), diameter_m=10.0),
+                BalloonSpec(ned=(200.0, 200.0, 0.0), color=(0, 255, 0), diameter_m=10.0),
+            )
+        )
+        race.turn_radius_m = 0.0
+        held = _normalize3((0.5, 0.2, -0.3))
+        race.update_track(True, held)
+        got = race.chase_dir_ned((175.0, 0.0, 0.0), sim_time_s=0.0)
+        for a, b in zip(got, held):
+            self.assertAlmostEqual(a, b, places=6)
+
+    def test_jsbsim_90deg_flyby_miss_class_under_14(self) -> None:
+        r = coordinated_turn_radius_m(18.0, 0.80)
+        self.assertLessEqual(r * (math.sqrt(2.0) - 1.0), 14.0)
 
 
 class TestRebaseBalloonsToLocalZ(unittest.TestCase):

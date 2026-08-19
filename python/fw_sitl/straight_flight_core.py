@@ -157,6 +157,86 @@ def settle_path_altitude(
     print(f"Altitude settle timeout — using z_ned={z_box[0]:.1f}")
 
 
+def settle_altitude_facing_xy(
+    master: mavutil.mavfile,
+    xy: list[float],
+    z_box: list[float],
+    target_xy: tuple[float, float],
+    speed_mps: float,
+    frame: int,
+    rate: float,
+    *,
+    along_advance_m: float = 40.0,
+    timeout_s: float = 4.0,
+    stable_s: float = 1.5,
+    max_step_m: float = 2.0,
+) -> None:
+    """Settle EKF height while pursuing ``target_xy`` (N, E).
+
+    Same |Δz|≤2 m for 1.5 s rule as ``settle_path_altitude``, timeout 4 s.
+    Each tick the path course is atan2(target_e - y, target_n - x) from the
+    latest xy. Does not rebase balloons.
+    """
+    period = 1.0 / max(rate, 1.0)
+    t_end = time.time() + max(1.0, timeout_s)
+    stable_need = max(0.5, stable_s)
+    stable_since: float | None = None
+    prev_z: float | None = None
+    next_t = time.time()
+    target_n = float(target_xy[0])
+    target_e = float(target_xy[1])
+    print(
+        f"Settling altitude facing ({target_n:.0f},{target_e:.0f}) "
+        f"(need |Δz|≤{max_step_m:.0f} m for {stable_need:.1f}s, "
+        f"timeout {timeout_s:.0f}s)..."
+    )
+    while time.time() < t_end:
+        got, _, _ = poll_mavlink(master)
+        if got is not None:
+            xy[0], xy[1] = got[0], got[1]
+            z_cur = float(got[2])
+            z_box[0] = z_cur
+            if prev_z is not None:
+                step = abs(z_cur - prev_z)
+                if step <= max_step_m:
+                    if stable_since is None:
+                        stable_since = time.time()
+                    elif time.time() - stable_since >= stable_need:
+                        print(f"Altitude settled at z_ned={z_cur:.1f}")
+                        return
+                else:
+                    stable_since = None
+            prev_z = z_cur
+        course_rad = math.atan2(target_e - xy[1], target_n - xy[0])
+        vx, vy, vz = ned_velocity_from_course(speed_mps, course_rad)
+        send_path_setpoint(
+            master,
+            (xy[0], xy[1]),
+            z_box[0],
+            (xy[0], xy[1]),
+            course_rad,
+            along_advance_m,
+            vx,
+            vy,
+            vz,
+            frame,
+        )
+        master.mav.heartbeat_send(
+            mavutil.mavlink.MAV_TYPE_GCS,
+            mavutil.mavlink.MAV_AUTOPILOT_INVALID,
+            0,
+            0,
+            0,
+        )
+        next_t += period
+        sleep_for = next_t - time.time()
+        if sleep_for > 0:
+            time.sleep(sleep_for)
+        else:
+            next_t = time.time()
+    print(f"Altitude settle timeout — using z_ned={z_box[0]:.1f}")
+
+
 def engage_offboard_asap(
     master: mavutil.mavfile,
     xy: list[float],

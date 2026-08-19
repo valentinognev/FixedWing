@@ -39,6 +39,7 @@ from fw_sitl.race_csv import RaceCsvLogger, default_csv_path
 from fw_sitl.race_guidance import (
     RaceGuidance,
     chase_uses_lookat,
+    coordinated_turn_radius_m,
     format_ned_pos_line,
     race_end_reason,
     rebase_balloons_to_local_z,
@@ -47,6 +48,7 @@ from fw_sitl.sim_lifecycle import SCRIPTS_DIR, kill_docker, kill_sim, start_sim
 from fw_sitl.straight_flight_core import (
     EngageError,
     engage_offboard_with_retries,
+    settle_altitude_facing_xy,
     settle_path_altitude,
 )
 from fw_sitl.zmq_bus import ColorPublisher, PoseSubscriber, TargetColor, TrackSubscriber
@@ -279,19 +281,30 @@ def main() -> int:
     course_rad = course_box[0]
     vx, vy, vz = ned_velocity_from_course(speed_mps, course_rad)
 
-    settle_path_altitude(
-        master,
-        xy,
-        z_box,
-        origin_box[0],
-        course_rad,
-        lookahead_m,
-        vx,
-        vy,
-        vz,
-        frame,
-        rate,
-    )
+    if plant.plant_id == "jsbsim_rascal":
+        settle_altitude_facing_xy(
+            master,
+            xy,
+            z_box,
+            (setup.balloons[0].ned[0], setup.balloons[0].ned[1]),
+            speed_mps,
+            frame,
+            rate,
+        )
+    else:
+        settle_path_altitude(
+            master,
+            xy,
+            z_box,
+            origin_box[0],
+            course_rad,
+            lookahead_m,
+            vx,
+            vy,
+            vz,
+            frame,
+            rate,
+        )
     z_hold = z_box[0]
 
     # Config balloon Z is home/aircraft-relative; also rebase onto settled local Z so
@@ -352,6 +365,10 @@ def main() -> int:
 
     camera = CameraModel.from_spec(setup.camera)
     race = RaceGuidance(race_balloons, setup.guidance)
+    if plant.plant_id == "jsbsim_rascal":
+        race.turn_radius_m = coordinated_turn_radius_m(
+            speed_mps, plant.bank_max_roll_rad
+        )
     cmd_mode = parse_body_cmd_mode(setup.guidance.cmd_mode)
     controller = make_body_cmd_controller(
         cmd_mode,
