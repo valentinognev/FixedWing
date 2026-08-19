@@ -42,8 +42,13 @@ def show_assisted_overlay(*, assisted: bool, in_view: bool) -> bool:
 
 
 def chase_uses_lookat(*, tracker_in_view: bool, on_screen: bool) -> bool:
-    """Look-at while the current balloon is in the image; else assisted path."""
-    return bool(tracker_in_view) or bool(on_screen)
+    """Bank onto chase LOS whenever we have a target (blob or geometric).
+
+    Off-screen used to freeze a path line. If engage already passed the
+    balloon, that line never puts the blob in the camera. Always close the
+    LOS angle; tracker dir still preferred at the call site when in view.
+    """
+    return True
 
 
 def rebase_balloons_to_local_z(

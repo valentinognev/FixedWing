@@ -606,8 +606,8 @@ def main() -> int:
                 last_published_assisted = race.assisted
                 last_color_pub_t = now_wall
 
-            # On-screen: Gazebo FW look-at (bank onto LOS, pitch to elevation).
-            # Assisted path only when the balloon is off-screen.
+            # Always close chase LOS (blob when visible, else geometric).
+            # Overlay still follows race.assisted; frozen path is unused.
             yaw_for_sp = None if use_lookat else att[2]
             controller.send_chase_setpoint(
                 master,

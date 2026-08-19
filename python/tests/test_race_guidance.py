@@ -240,8 +240,8 @@ class TestLookatVsAssisted(unittest.TestCase):
     def test_on_screen_uses_lookat_even_if_tracker_missed(self) -> None:
         self.assertTrue(chase_uses_lookat(tracker_in_view=False, on_screen=True))
 
-    def test_off_screen_without_blob_is_assisted(self) -> None:
-        self.assertFalse(chase_uses_lookat(tracker_in_view=False, on_screen=False))
+    def test_off_screen_without_blob_still_closes_los(self) -> None:
+        self.assertTrue(chase_uses_lookat(tracker_in_view=False, on_screen=False))
 
     def test_tracker_blob_uses_lookat(self) -> None:
         self.assertTrue(chase_uses_lookat(tracker_in_view=True, on_screen=False))

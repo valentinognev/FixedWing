@@ -1,5 +1,9 @@
 # Updates
 
+## 0.29.0 - Close balloon-race LOS off-screen
+- `chase_uses_lookat` is always True (blob, on-screen geometric, and off-screen geometric). Frozen assisted path is unused for balloon-race attitude; tracker dir still preferred at the call site when in view.
+- Live 60 s headless JSBSim `/tmp/balloon_race_20260819_151009.csv`: pass_count=2; miss_m 6.312 (balloon 0, assisted=0), 22.091 (balloon 1, assisted=1); max miss 22.091 m. Gate fail (every miss_m≤14.0).
+
 ## 0.28.1 - Race pass-miss helpers; live JSBSim gate
 - `pass_miss_m(pos_ned, tgt_ned)` is 3D hypot; `load_pass_misses(path)` returns `(balloon_idx, miss_m, assisted)` for `event=="pass"` only.
 - First live 60 s headless JSBSim (`/tmp/balloon_race_20260819_145504.csv`): 0 passes (spawned ~N of balloon 0, assisted, flew away). One allowed `jsbsim_rascal` retune: `speed_mps` 18, `bank_kp_heading` 2.0, `bank_max_roll_rad` 0.70. Gz heading comparison now equal at 2.0; tables still differ (`max_roll`).
