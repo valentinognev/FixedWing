@@ -14,15 +14,22 @@ PASS_MISS_MULT = 4.0
 
 
 def format_ned_pos_line(
-    t_s: float, pos_ned: tuple[float, float, float]
+    t_s: float,
+    pos_ned: tuple[float, float, float],
+    ekf_err_h: float | None = None,
 ) -> str:
     """One-line race pose for stdout and balloon_camera overlay."""
-    return (
+    line = (
         f"t={float(t_s):.1f}s "
         f"x={float(pos_ned[0]):.1f} "
         f"y={float(pos_ned[1]):.1f} "
         f"z={float(pos_ned[2]):.1f}"
     )
+    if ekf_err_h is None:
+        return line
+    if math.isnan(ekf_err_h):
+        return f"{line} ekf_err_h=nan"
+    return f"{line} ekf_err_h={float(ekf_err_h):.1f}m"
 
 
 def show_assisted_overlay(*, assisted: bool, in_view: bool) -> bool:

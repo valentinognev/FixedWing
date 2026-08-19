@@ -31,6 +31,26 @@ def gz_enu_to_ned(
     return (north - oy, east - ox, oz - up)
 
 
+def horiz_ned_err_m(
+    a: tuple[float, float, float],
+    b: tuple[float, float, float],
+) -> float:
+    """Horizontal |a−b| in NED metres (ignore D)."""
+    return math.hypot(float(a[0]) - float(b[0]), float(a[1]) - float(b[1]))
+
+
+def ned_sub(
+    a: tuple[float, float, float],
+    b: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    """Componentwise a−b. ``bias = ned_sub(ekf, mesh)``; spawn-frame ``pos = ned_sub(ekf, bias)``."""
+    return (
+        float(a[0]) - float(b[0]),
+        float(a[1]) - float(b[1]),
+        float(a[2]) - float(b[2]),
+    )
+
+
 def world_velocity_enu(speed_mps: float, yaw_rad: float) -> tuple[float, float, float]:
     """Body +X airspeed in Gazebo ENU. yaw=0 → +X (east); yaw=π/2 → +Y (north)."""
     return (

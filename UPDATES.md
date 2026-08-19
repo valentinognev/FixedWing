@@ -1,5 +1,14 @@
 # Updates
 
+## 0.26.0 - Gz origin-bias lock; race NED = EKF − bias
+- `--gz` locks a constant NED `origin_bias` from the first good EKF+mesh pair (`|h| >= 1 m`), then race/CSV/pass/plots use `pos = ekf − bias` (spawn/balloon frame). Stops per-tick mesh overwrite after lock. Pose tmux pane stays for the lock sample.
+- 1 Hz `ekf_err_h` is still raw horizontal |EKF−mesh| (~50 m SITL origin offset). Do not treat raw EKF as balloon-frame NED.
+- Verified live `--gz` 60 s: lock `|h|=48.6 m` (N=5.9,E=48.2); raw `ekf_err_h` stayed ~49–52 m; CSV passes at balloon 0 `(293.5,-1.7)` vs `(300,0)` and balloon 1 `(593.2,79.2)` vs `(600,80)` (within `pass_radius_m=7`).
+
+## 0.25.0 - Gz mag default, GPS automatic, log |EKF−mesh|
+- `prepare_sitl_arming` omits `SYS_HAS_MAG` on gz plants (leave airframe default; `--gz` still skips reboot) and sets `EKF2_GPS_MODE=0` (Automatic). JSBSim/YASim keep `SYS_HAS_MAG=0` and `EKF2_GPS_MODE=1`. `COM_ARM_MAG_STR=0` on all plants.
+- `--gz` 1 Hz `t x y z` line appends `ekf_err_h=…m` (horizontal EKF vs Gazebo mesh; `nan` if mesh sample missing). Race NED, CSV, plots, and pass still overwrite from the ZMQ pose stream.
+
 ## 0.24.3 - Fix real jitter source: history.poll() burst vs last-only patch
 - 0.24.2 fixed the *sampling* jitter (docker-exec staircase) but a second, independent bug remained and was still visible zoomed into the first few seconds of any race: `history.poll(master)` drains **all** queued MAVLink messages per call in a `while True` loop and appends one raw-EKF sample per `LOCAL_POSITION_NED` — measured ~2x `control_rate_hz`, so a *single* `poll()` call routinely appends 2 samples per control tick, not 1.
 - Three call sites only patched the *last* appended sample of that burst (`history.x[-1] = world_ned`, `apply_target_to_last()`, `apply_cam_to_last()`), leaving every other sample in the burst at its raw/stale value: half the plotted NED-position points kept the drifted PX4 EKF position instead of the true Gazebo pose (huge error right after spawn while EKF is still converging, shrinking to invisible once it settles — hence "looks fine at full-race zoom, dense zigzag zoomed into 0–3 s"), and once camera tracking started, half the LOS points silently fell back to the geometric estimate (NaN cam-LOS pads in `los_deg_series`) instead of the tracked blob, alternating between two genuinely different LOS values every other sample.

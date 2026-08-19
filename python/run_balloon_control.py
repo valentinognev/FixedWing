@@ -22,7 +22,7 @@ from fw_sitl.body_cmd_controllers import make_body_cmd_controller, parse_body_cm
 from fw_sitl.camera_model import CameraModel, dir_cam_to_ned, offset_on_screen
 from fw_sitl.flight_history import FlightHistory
 from fw_sitl.flight_setup import load_flight_setup
-from fw_sitl.gz_pose import gz_enu_to_ned
+from fw_sitl.gz_pose import gz_enu_to_ned, horiz_ned_err_m, ned_sub
 from fw_sitl.mavlink_io import (
     PX4_CUSTOM_MAIN_MODE_OFFBOARD,
     arm,
@@ -377,16 +377,13 @@ def main() -> int:
     last_status_print_t = -1e9
     last_aim_z = z_hold
 
-    # PX4 EKF LOCAL_POSITION can drift tens/hundreds of metres from Gazebo
-    # while race_cam (on the mesh) is already on the balloon. Race NED, CSV,
-    # overlay, pass detection, and plots use the same spawn frame as the spheres.
-    #
-    # This subscribes the in-container gz_pose_bridge (physics-rate
-    # dynamic_pose/info, ~40 Hz) instead of polling `docker exec gz model
-    # --pose` per sample: that one-shot subprocess had ~0.4-0.5s latency and
-    # produced an irregular staircase (jitter) driven by docker scheduling,
-    # not by the simulation.
+    # PX4 EKF LOCAL_POSITION can sit ~50 m from the Gazebo mesh (SITL origin
+    # offset, not mag coast). Race NED, CSV, overlay, pass, and plots use
+    # spawn-frame pos = ekf − origin_bias, locked from the first good EKF+mesh
+    # pair (|h| >= 1 m). PoseSubscriber stays for that lock sample; do not
+    # per-tick mesh-overwrite after lock, and do not use raw EKF as balloon NED.
     pose_sub = PoseSubscriber(setup.zmq.pose) if args.gz else None
+    origin_bias: tuple[float, float, float] | None = None
 
     print(
         f"Racing balloon {race.target_idx} color=RGB{race.active_color}; "
@@ -419,6 +416,9 @@ def main() -> int:
             # sample appended in *this* poll, not just the last.
             n_before_poll = len(history.x)
             pos = history.poll(master)
+            # Fresh LOCAL_POSITION_NED only. Stale last_pos is often last tick's
+            # mesh/spawn-frame sample — locking that vs mesh yields |h|≈0.
+            ekf_ned = pos if len(history.x) > n_before_poll else None
             # history.poll already drains ATTITUDE into last_att_rad. A second
             # recv_match(ATTITUDE) is empty, which used to leave att=(0,0,0):
             # camera LOS mapped as heading-north and alt-preserve froze Z off-north.
@@ -431,11 +431,28 @@ def main() -> int:
                 sample = pose_sub.latest()
                 if sample is not None:
                     world_ned = gz_enu_to_ned(sample.as_enu())
-            if world_ned is not None:
-                history.overwrite_positions_from(n_before_poll, world_ned)
-                history.last_pos = world_ned
-                pos = world_ned
-            elif pos is None:
+                if (
+                    origin_bias is None
+                    and ekf_ned is not None
+                    and world_ned is not None
+                    and horiz_ned_err_m(ekf_ned, world_ned) >= 1.0
+                ):
+                    origin_bias = ned_sub(ekf_ned, world_ned)
+                    h = horiz_ned_err_m(ekf_ned, world_ned)
+                    print(
+                        f"gz origin_bias N,E,D={origin_bias[0]:.1f},{origin_bias[1]:.1f},{origin_bias[2]:.1f} "
+                        f"|h|={h:.1f}m",
+                        flush=True,
+                    )
+                if origin_bias is not None and ekf_ned is not None:
+                    pos = ned_sub(ekf_ned, origin_bias)
+                    history.last_pos = pos
+                    history.overwrite_positions_from(n_before_poll, pos)
+                elif origin_bias is None and world_ned is not None:
+                    history.overwrite_positions_from(n_before_poll, world_ned)
+                    history.last_pos = world_ned
+                    pos = world_ned
+            if pos is None:
                 pos = (xy[0], xy[1], z_hold)
             xy[0], xy[1] = pos[0], pos[1]
             last_pos = pos
@@ -616,7 +633,17 @@ def main() -> int:
                     pos_ned=pos,
                     tgt_ned=race.balloon_ned(),
                 )
-                print(format_ned_pos_line(now_s, pos), flush=True)
+                if args.gz:
+                    if ekf_ned is not None and world_ned is not None:
+                        ekf_err_h = horiz_ned_err_m(ekf_ned, world_ned)
+                    else:
+                        ekf_err_h = float("nan")
+                    print(
+                        format_ned_pos_line(now_s, pos, ekf_err_h=ekf_err_h),
+                        flush=True,
+                    )
+                else:
+                    print(format_ned_pos_line(now_s, pos), flush=True)
                 last_path_sample_t = now_s
             if now_s - last_status_print_t >= STATUS_PRINT_PERIOD_S:
                 mode_s = (

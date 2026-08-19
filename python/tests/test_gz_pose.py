@@ -16,6 +16,8 @@ from fw_sitl.gz_pose import (
     DEFAULT_GZ_YAW_RAD,
     gz_enu_to_ned,
     gz_model_pose_argv,
+    horiz_ned_err_m,
+    ned_sub,
     ned_to_gz_enu,
     parse_gz_model_pose_enu,
     world_velocity_enu,
@@ -106,6 +108,18 @@ class TestGzPose(unittest.TestCase):
         self.assertEqual(
             argv, ["gz", "model", "-m", "rc_cessna_0", "--pose", "-w", "default"]
         )
+
+    def test_horiz_ned_err_m_ignores_down(self) -> None:
+        self.assertEqual(horiz_ned_err_m((0, 0, 0), (3, 4, -100)), 5.0)
+
+    def test_ned_sub_componentwise(self) -> None:
+        self.assertEqual(ned_sub((10, 20, -3), (3, 4, -1)), (7, 16, -2))
+
+    def test_ned_sub_round_trip_recovers_mesh(self) -> None:
+        """bias = ekf − mesh; pos = ekf − bias recovers mesh (N/E/D)."""
+        ekf = (10, 20, 0)
+        mesh = (7, 16, 1)
+        self.assertEqual(ned_sub(ekf, ned_sub(ekf, mesh)), mesh)
 
     def test_default_heading_north_velocity(self) -> None:
         vx, vy, vz = world_velocity_enu(30.0, DEFAULT_GZ_YAW_RAD)

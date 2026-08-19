@@ -259,7 +259,11 @@ def prepare_sitl_arming(master: mavutil.mavfile, plant: PlantGains) -> None:
         ("COM_ARM_EKF_YAW", -1.0),
         ("COM_ARM_EKF_VEL", -1.0),
     )
-    int_params = (
+    # Gz: omit SYS_HAS_MAG (airframe default; --gz skips reboot so 0/1 over
+    # MAVLink would not apply anyway) and EKF2_GPS_MODE=0 (Automatic).
+    # JSBSim/YASim keep mag off + GPS dead-reckon. COM_ARM_MAG_STR=0 on all.
+    gz_plant = plant.plant_id.startswith("gz_")
+    int_params: list[tuple[str, int]] = [
         ("COM_ARM_WO_GPS", 1),
         ("COM_ARM_CHK_ESCS", 0),
         ("COM_ARM_SDCARD", 0),  # SITL: no SD → otherwise blocks arm
@@ -278,19 +282,24 @@ def prepare_sitl_arming(master: mavutil.mavfile, plant: PlantGains) -> None:
         ("CBRK_USB_CHK", 197848),
         ("CBRK_IO_SAFETY", 22027),
         ("SYS_HAS_NUM_ASPD", 0),
-        ("SYS_HAS_MAG", 0),
-        ("ASPD_PRIMARY", 0),  # groundspeed−wind; avoids sensor-failure failsafe
-        ("ASPD_FALLBACK", 1),
-        ("ASPD_DO_CHECKS", 0),
-        ("GF_ACTION", 0),
-        ("FD_FAIL_P", 0),
-        ("FD_FAIL_R", 0),
-        ("EKF2_GPS_CHECK", 0),  # SITL: avoid GPS-check trips that invalidate local pos
-        ("EKF2_GPS_MODE", 1),  # dead-reckon: less aggressive GPS fusion reset
-        # Lon/lat + 3D vel only (no GPS altitude bit) — GPS alt vs baro snaps caused ~50 m Z jumps.
-        ("EKF2_GPS_CTRL", 5),
-        ("EKF2_HGT_REF", 0),  # baro height reference (reboot-applied)
-        ("EKF2_NOAID_TOUT", 10_000_000),  # max µs — keep local xy valid longer w/o GPS
+    ]
+    if not gz_plant:
+        int_params.append(("SYS_HAS_MAG", 0))
+    int_params.extend(
+        [
+            ("ASPD_PRIMARY", 0),  # groundspeed−wind; avoids sensor-failure failsafe
+            ("ASPD_FALLBACK", 1),
+            ("ASPD_DO_CHECKS", 0),
+            ("GF_ACTION", 0),
+            ("FD_FAIL_P", 0),
+            ("FD_FAIL_R", 0),
+            ("EKF2_GPS_CHECK", 0),  # SITL: avoid GPS-check trips that invalidate local pos
+            ("EKF2_GPS_MODE", 0 if gz_plant else 1),  # gz Automatic; else dead-reckon
+            # Lon/lat + 3D vel only (no GPS altitude bit) — GPS alt vs baro snaps caused ~50 m Z jumps.
+            ("EKF2_GPS_CTRL", 5),
+            ("EKF2_HGT_REF", 0),  # baro height reference (reboot-applied)
+            ("EKF2_NOAID_TOUT", 10_000_000),  # max µs — keep local xy valid longer w/o GPS
+        ]
     )
     for name, value in float_params:
         set_param(master, name, value)

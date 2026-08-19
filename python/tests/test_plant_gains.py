@@ -224,6 +224,33 @@ class TestPrepareSitlArmingUsesPlant(unittest.TestCase):
         with self.assertRaises(TypeError):
             prepare_sitl_arming(MagicMock())
 
+    def _arming_written(self, plant_id: str) -> dict:
+        from fw_sitl.mavlink_io import prepare_sitl_arming
+
+        plant = load_plant_gains(plant_id)
+        with (
+            patch("fw_sitl.mavlink_io.time.sleep"),
+            patch("fw_sitl.mavlink_io.set_param") as set_param,
+        ):
+            prepare_sitl_arming(MagicMock(), plant)
+        return {call.args[1]: call.args[2] for call in set_param.call_args_list}
+
+    def test_gz_omits_sys_has_mag_and_uses_automatic_gps(self) -> None:
+        for plant_id in ("gz_rc_cessna", "gz_advanced_plane"):
+            with self.subTest(plant_id=plant_id):
+                written = self._arming_written(plant_id)
+                self.assertNotIn("SYS_HAS_MAG", written)
+                self.assertEqual(written["EKF2_GPS_MODE"], 0)
+                self.assertEqual(written["COM_ARM_MAG_STR"], 0)
+
+    def test_jsbsim_yasim_keep_mag_off_and_gps_dead_reckon(self) -> None:
+        for plant_id in ("jsbsim_rascal", "yasim_rascal"):
+            with self.subTest(plant_id=plant_id):
+                written = self._arming_written(plant_id)
+                self.assertEqual(written["SYS_HAS_MAG"], 0)
+                self.assertEqual(written["EKF2_GPS_MODE"], 1)
+                self.assertEqual(written["COM_ARM_MAG_STR"], 0)
+
 
 class TestMakeBodyCmdControllerUsesPlant(unittest.TestCase):
     def test_attitude_pid_from_plant(self) -> None:

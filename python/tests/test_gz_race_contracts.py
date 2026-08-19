@@ -146,6 +146,23 @@ class TestGzRaceContracts(unittest.TestCase):
         # starts, not sensor noise. Both must be passed n_before_poll.
         self.assertIn("apply_target_to_last(n_before_poll)", ctl)
         self.assertIn("apply_cam_to_last(n_before_poll)", ctl)
+        # Task 2: lock origin_bias from the first good EKF+mesh pair
+        # (|h| >= 1.0 m), then race NED is ekf − bias. Pose pane stays;
+        # do not per-tick mesh-overwrite after lock.
+        self.assertIn("ekf_err_h", ctl)
+        self.assertIn("horiz_ned_err_m", ctl)
+        self.assertIn("origin_bias", ctl)
+        self.assertIn("ned_sub", ctl)
+        self.assertIn("ned_sub(ekf_ned", ctl)
+        self.assertTrue(">= 1.0" in ctl or "1.0" in ctl)
+        self.assertIn("len(history.x) > n_before_poll", ctl)
+        poll_at = ctl.index("pos = history.poll(master)")
+        ekf_at = ctl.index("ekf_ned = pos")
+        lock_at = ctl.index("origin_bias = ned_sub")
+        self.assertLess(poll_at, ekf_at)
+        self.assertLess(ekf_at, lock_at)
+        # Raw |EKF−mesh| (~50 m), not |EKF−bias − mesh|.
+        self.assertIn("horiz_ned_err_m(ekf_ned, world_ned)", ctl)
 
     def test_race_gz_pose_bridge_pane(self) -> None:
         """A dedicated pose pane streams Gazebo world pose only in --gz mode."""

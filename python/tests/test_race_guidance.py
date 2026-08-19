@@ -215,6 +215,16 @@ class TestNedPosLine(unittest.TestCase):
             "t=12.0s x=151.3 y=-35.6 z=47.1",
         )
 
+    def test_optional_ekf_err_h_appended(self) -> None:
+        self.assertEqual(
+            format_ned_pos_line(12.04, (151.34, -35.61, 47.12), ekf_err_h=5.0),
+            "t=12.0s x=151.3 y=-35.6 z=47.1 ekf_err_h=5.0m",
+        )
+        self.assertEqual(
+            format_ned_pos_line(1.0, (0.0, 0.0, 0.0), ekf_err_h=float("nan")),
+            "t=1.0s x=0.0 y=0.0 z=0.0 ekf_err_h=nan",
+        )
+
 
 class TestAssistedOverlay(unittest.TestCase):
     def test_overlay_follows_assisted_flag_only(self) -> None:
