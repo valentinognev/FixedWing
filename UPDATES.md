@@ -1,5 +1,10 @@
 # Updates
 
+## 0.28.1 - Race pass-miss helpers; live JSBSim gate
+- `pass_miss_m(pos_ned, tgt_ned)` is 3D hypot; `load_pass_misses(path)` returns `(balloon_idx, miss_m, assisted)` for `event=="pass"` only.
+- First live 60 s headless JSBSim (`/tmp/balloon_race_20260819_145504.csv`): 0 passes (spawned ~N of balloon 0, assisted, flew away). One allowed `jsbsim_rascal` retune: `speed_mps` 18, `bank_kp_heading` 2.0, `bank_max_roll_rad` 0.70. Gz heading comparison now equal at 2.0; tables still differ (`max_roll`).
+- Second live 60 s (`/tmp/balloon_race_20260819_145839.csv`): pass_count=0, miss list empty, max miss n/a. Gate fail (≥2 passes, every miss_m≤14, ≥1 unassisted). Stopped after the one retune.
+
 ## 0.28.0 - JSBSim Rascal race gains
 - `jsbsim_rascal` race/hold cruise is 20 m/s (`fw_airspd` 10/20/40); heading kp 1.9, max roll 0.60, alt kp 0.028 so LOS can close a 7 m gate on the 200 m triangle.
 - Tighter PX4 roll inner: `FW_RR_FF=0.50`, `FW_RR_I=0.18`, `FW_RR_P=0.15`. Pitch/`FW_R_TC`/`FW_THR_TRIM` unchanged. YASim/Gazebo tables untouched.

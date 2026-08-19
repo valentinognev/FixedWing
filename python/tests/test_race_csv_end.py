@@ -238,5 +238,43 @@ class TestRaceCsvLogger(unittest.TestCase):
             self.assertEqual(rows[0]["tgt_d"], "0.000")
 
 
+class TestPassMissHelpers(unittest.TestCase):
+    def test_pass_miss_m_3d(self) -> None:
+        from fw_sitl.race_csv import pass_miss_m
+
+        self.assertAlmostEqual(
+            pass_miss_m((200.0, 0.0, 0.0), (200.0, 3.0, 4.0)), 5.0
+        )
+
+    def test_load_pass_misses(self) -> None:
+        from fw_sitl.race_csv import RaceCsvLogger, load_pass_misses
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "race.csv"
+            with RaceCsvLogger(path) as log:
+                log.log_pass(
+                    t_s=12.5,
+                    balloon_idx=0,
+                    color=(255, 0, 0),
+                    assisted=False,
+                    pos_ned=(200.0, 0.0, 0.0),
+                    tgt_ned=(200.0, 3.0, 0.0),
+                )
+                log.log_sample(
+                    t_s=13.0,
+                    balloon_idx=0,
+                    color=(255, 0, 0),
+                    assisted=True,
+                    pos_ned=(210.0, 10.0, 1.0),
+                    tgt_ned=(200.0, 0.0, 0.0),
+                )
+            rows = load_pass_misses(path)
+            self.assertEqual(len(rows), 1)
+            balloon_idx, miss_m, assisted = rows[0]
+            self.assertEqual(balloon_idx, 0)
+            self.assertAlmostEqual(miss_m, 3.0)
+            self.assertFalse(assisted)
+
+
 if __name__ == "__main__":
     unittest.main()
