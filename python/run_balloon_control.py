@@ -17,10 +17,25 @@ _PYTHON_ROOT = Path(__file__).resolve().parent
 if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
-from fw_sitl.balloon_scene import spawn_balloons_fg, spawn_balloons_gz
+from fw_sitl.balloon_scene import (
+    DEFAULT_ORIGIN_LAT_DEG,
+    DEFAULT_ORIGIN_LON_DEG,
+    FgTelnet,
+    fg_balloons_ned_from_models,
+    geodetic_to_ned,
+    parse_fg_telnet_float,
+    spawn_balloons_gz,
+    spawn_fg_from_setup,
+)
+from fw_sitl.balloon_tracker import track_centroid_near_expected
 from fw_sitl.body_cmd_controllers import make_body_cmd_controller, parse_body_cmd_mode
-from fw_sitl.camera_model import CameraModel, dir_cam_to_ned, offset_on_screen
-from fw_sitl.flight_history import FlightHistory
+from fw_sitl.camera_model import (
+    CameraModel,
+    dir_cam_to_ned,
+    offset_on_screen,
+    project_ned_offset_to_pixel,
+)
+from fw_sitl.flight_history import FlightHistory, extrapolate_ned, slew_toward_rpy
 from fw_sitl.flight_setup import load_flight_setup
 from fw_sitl.gz_pose import gz_enu_to_ned, horiz_ned_err_m, ned_sub
 from fw_sitl.mavlink_io import (
@@ -28,23 +43,25 @@ from fw_sitl.mavlink_io import (
     arm,
     connect,
     local_ned_frame,
-    poll_vehicle_state,
     prepare_sitl_arming,
     reboot_autopilot,
     set_offboard,
 )
-from fw_sitl.path_geometry import ned_velocity_from_course
+from fw_sitl.path_geometry import ned_velocity_from_course, wrap_pi
 from fw_sitl.plant_gains import load_plant_gains, plant_id_from_flags
 from fw_sitl.race_csv import RaceCsvLogger, default_csv_path
 from fw_sitl.race_guidance import (
     RaceGuidance,
+    balloons_with_xy,
     chase_uses_lookat,
     coordinated_turn_radius_m,
     format_ned_pos_line,
     offset_balloons_ned,
     race_end_reason,
     rebase_balloons_to_local_z,
+    translate_balloons_ned,
 )
+from fw_sitl.quat import from_rpy, rpy_from_quat
 from fw_sitl.sim_lifecycle import SCRIPTS_DIR, kill_docker, kill_sim, start_sim
 from fw_sitl.straight_flight_core import (
     EngageError,
@@ -62,8 +79,136 @@ STALE_TRACK_CAMERA_PERIODS = 2.0
 COLOR_REPUBLISH_PERIOD_S = 1.0
 # Periodic CSV path samples + console diagnostics during the race.
 PATH_SAMPLE_PERIOD_S = 1.0
+# --ekf-fix rebase: FG telnet ground-truth pos/att refetch cadence (zero-order
+# hold between fetches). Faster than PATH_SAMPLE_PERIOD_S so staleness stays
+# small (~5 m at cruise speed) without overloading the dedicated telnet socket.
+GT_REBASE_PERIOD_S = 0.2
+# Attitude still slews; heading glitches are absorbed separately.
+GT_ATT_SLEW_RAD_S = math.radians(50.0)
 STATUS_PRINT_PERIOD_S = 5.0
 _PLOT_LOG = Path("/tmp/balloon_race_plot.log")
+
+
+class _GtHolder:
+    """Latest FG telnet pose; filled by `_gt_reader_loop` (not the 20 Hz tick)."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.raw: tuple[
+            float | None, float | None, float | None, float | None, float | None, float | None
+        ] | None = None
+        self.ms = 0.0
+        self.ok = False
+        self.stop = False
+        self.seq = 0
+        self.t_start = 0.0
+        self.fov_deg: float | None = None
+        self.z_off_m: float | None = None
+        self.model0_ned: tuple[float, float, float] | None = None
+        self.models_xy: list[tuple[float, float]] | None = None
+        self.vel_ned: tuple[float, float, float] | None = None
+
+
+def _gt_pose_from_telnet_raw(
+    raw: tuple[
+        float | None, float | None, float | None, float | None, float | None, float | None
+    ],
+    *,
+    ac_ft_at_settle: float | None,
+    z_hold_true: float,
+    ft_to_m: float,
+) -> tuple[tuple[float, float, float] | None, tuple[float, float, float] | None]:
+    """FG telnet lat/lon/alt-ft + Euler deg → settle-frame NED and att rad."""
+    t_lat, t_lon, t_alt_ft, t_roll, t_pitch, t_hdg = raw
+    gt_pos = None
+    gt_att = None
+    if (
+        t_lat is not None
+        and t_lon is not None
+        and t_alt_ft is not None
+        and ac_ft_at_settle is not None
+    ):
+        t_n, t_e, _ = geodetic_to_ned(
+            t_lat,
+            t_lon,
+            0.0,
+            DEFAULT_ORIGIN_LAT_DEG,
+            DEFAULT_ORIGIN_LON_DEG,
+            0.0,
+        )
+        t_z = z_hold_true - (t_alt_ft - ac_ft_at_settle) * ft_to_m
+        gt_pos = (t_n, t_e, t_z)
+    if t_roll is not None and t_pitch is not None and t_hdg is not None:
+        yaw_rad = math.radians(((t_hdg + 180.0) % 360.0) - 180.0)
+        gt_att = (math.radians(t_roll), math.radians(t_pitch), yaw_rad)
+    return gt_pos, gt_att
+
+
+def _gt_reader_loop(tel: FgTelnet, holder: _GtHolder, period_s: float) -> None:
+    """Serial FG `get`s can take ~2.4 s; keep them off the MAVLink chase loop."""
+    while not holder.stop:
+        t_start = time.time()
+        raw = None
+        ok = False
+        vel_ned: tuple[float, float, float] | None = None
+        try:
+            snap = tel.read_pose_snapshot()
+            if snap is not None and snap[0] is not None and snap[1] is not None:
+                raw = (snap[0], snap[1], snap[2], snap[3], snap[4], snap[5])
+                ok = all(v is not None for v in raw)
+                vel_ned = (
+                    float(snap[6]) * 0.3048,
+                    float(snap[7]) * 0.3048,
+                    float(snap[8]) * 0.3048,
+                )
+            else:
+                raw = tel.read_pose_deg()
+                ok = all(v is not None for v in raw)
+        except Exception:
+            pass
+        t_pose = time.time()
+        with holder.lock:
+            if raw is not None:
+                holder.raw = raw
+                holder.seq += 1
+                holder.t_start = t_pose
+                holder.vel_ned = vel_ned
+            holder.ok = ok
+            holder.ms = (t_pose - t_start) * 1000.0
+        # Pose snapshot is one Nasal+get. Do not re-walk static balloon models
+        # or get FOV/z every cycle: that made pickle 143601 jump 15–92 m / 4 s.
+        try:
+            tel.set_prop("/sim/current-view/field-of-view", 90.0)
+            tel.set_prop("/sim/current-view/goal-field-of-view", 90.0)
+            tel.set_prop("/sim/current-view/goal-fov", 90.0)
+            tel.set_prop("/sim/view[0]/config/field-of-view", 90.0)
+            with holder.lock:
+                need_models = holder.models_xy is None
+                need_view = holder.fov_deg is None
+            if need_view:
+                fov = parse_fg_telnet_float(
+                    tel.command("get /sim/current-view/field-of-view")
+                )
+                z_off = parse_fg_telnet_float(
+                    tel.command("get /sim/current-view/z-offset-m")
+                )
+                with holder.lock:
+                    holder.fov_deg = fov
+                    holder.z_off_m = z_off
+            if need_models:
+                models_xy = fg_balloons_ned_from_models(tel)
+                model0 = (
+                    (models_xy[0][0], models_xy[0][1], 0.0) if models_xy else None
+                )
+                with holder.lock:
+                    holder.model0_ned = model0
+                    holder.models_xy = models_xy
+        except Exception:
+            pass
+        remain = period_s - (time.time() - t_start)
+        deadline = time.time() + max(0.0, remain)
+        while time.time() < deadline and not holder.stop:
+            time.sleep(min(0.05, deadline - time.time()))
 
 
 def _race_target_color(
@@ -146,12 +291,44 @@ def main() -> int:
         default=None,
         help="Race CSV path (default: /tmp/balloon_race_<timestamp>.csv)",
     )
+    parser.add_argument(
+        "--ekf-fix",
+        default="rebase",
+        help=(
+            "--viz/--yasim: always override guidance pos/att from FG telnet "
+            "ground truth (PX4 EKF dead-reckons and is unused). Only 'rebase' "
+            "is accepted. 'gps' was tried and disabled: mag+GPS crashed; "
+            "GPS-only never armed. See UPDATES.md 0.35.1."
+        ),
+    )
     args = parser.parse_args()
+    if args.ekf_fix == "gps":
+        print(
+            "Error: --ekf-fix gps is disabled. Mag+GPS crashed the aircraft; "
+            "GPS-only never armed (in-air spawn + PX4 EKF health). Use rebase "
+            "(the only remaining mode) or see UPDATES.md 0.35.1.",
+            file=sys.stderr,
+        )
+        return 2
+    if args.ekf_fix != "rebase":
+        print(
+            f"Error: --ekf-fix must be rebase (got {args.ekf_fix!r}). "
+            "gps is disabled; see UPDATES.md 0.35.1.",
+            file=sys.stderr,
+        )
+        return 2
 
     plant_flags = int(bool(args.viz)) + int(bool(args.gz)) + int(bool(args.yasim))
     if plant_flags > 1:
         print("Error: --viz, --gz, and --yasim are mutually exclusive", file=sys.stderr)
         return 2
+
+    # --viz/--yasim: PX4 EKF dead-reckons (SYS_HAS_MAG=0, EKF2_GPS_MODE=1).
+    # Guidance always rebases onto FG telnet ground truth. --ekf-fix gps is
+    # disabled: mag+GPS crashed, GPS-only never armed (UPDATES.md 0.35.1).
+    non_gz_fg = bool(args.viz or args.yasim)
+    if non_gz_fg:
+        print("EKF drift fix: rebase (gps aiding disabled; see UPDATES.md 0.35.1)")
     if args.gz and args.sim == DEFAULT_SIM:
         args.sim = SCRIPTS_DIR / "runSimGzPlane.sh"
     elif args.yasim and args.sim == DEFAULT_SIM:
@@ -204,9 +381,33 @@ def main() -> int:
     elif args.stop_sim_on_exit:
         atexit.register(_stop_sim)
 
-    # Never block engage on FG telnet: early spawn waits ~tens of seconds while the
-    # unarmed plane freefalls (deep unhealthy lock / 0 passes). Spawn after arm.
+    # Race launcher places models before HEARTBEAT (--no-sim skips telnet here).
+    # Standalone control that owns the sim still spawns before MAVLink connect.
     want_fg_balloons = bool(args.spawn_fg_balloons or args.viz or args.yasim)
+    want_gz_balloons = bool(args.spawn_gz_balloons or args.gz)
+    if want_fg_balloons and not args.no_sim:
+        try:
+            print(
+                f"FG balloon spawn → {args.telnet_host}:{args.telnet_port}..."
+            )
+            spawn_fg_from_setup(
+                setup,
+                timeout_s=90.0,
+                host=args.telnet_host,
+                port=args.telnet_port,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"FG balloon spawn warning: {exc}")
+    if want_gz_balloons and not args.no_sim:
+        try:
+            print(f"GZ balloon spawn → {args.gz_container}...")
+            spawn_balloons_gz(
+                rebase_balloons_to_local_z(setup.balloons, local_z=0.0),
+                container=args.gz_container,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"GZ balloon spawn warning: {exc}")
+            print("world balloons are missing")
 
     stop_flag = [False]
 
@@ -298,71 +499,144 @@ def main() -> int:
     )
     z_hold = z_box[0]
 
+    # FG places balloons using live altitude-ft read *before* engage (spawn time);
+    # PX4's local-Z origin is whatever GPS/EKF settle on *after* arm, which can be
+    # tens of metres higher/lower if the plant kept climbing/sinking in between.
+    # Rebasing the race/CSV target onto raw z_hold silently adopted that drifted
+    # origin as "the balloon's altitude", so ΔD stayed ~0 while the real gap (FG
+    # aircraft alt vs FG balloon-0 elevation, both ground truth) did not.
+    # Cross-check both altitudes live (ft, MSL) here and correct z_hold onto the
+    # same physical reference the balloon was actually placed at.
+    FT_TO_M = 0.3048
+    diag_tel: FgTelnet | None = None
+    z_hold_true = z_hold
+    ac_ft_at_settle: float | None = None
+    ac_lat_at_settle: float | None = None
+    ac_lon_at_settle: float | None = None
+    placed_origin: tuple[float, float, float] | None = None
+    if non_gz_fg:
+        try:
+            diag_tel = FgTelnet(host=args.telnet_host, port=args.telnet_port, timeout=1.0)
+            diag_tel.connect(retries=3, delay_s=0.2)
+            diag_balloon0_elev_ft = parse_fg_telnet_float(
+                diag_tel.command("get /models/model/elevation-ft")
+            )
+            ac_ft_at_settle = parse_fg_telnet_float(
+                diag_tel.command("get /position/altitude-ft")
+            )
+            ac_lat_at_settle = parse_fg_telnet_float(
+                diag_tel.command("get /position/latitude-deg")
+            )
+            ac_lon_at_settle = parse_fg_telnet_float(
+                diag_tel.command("get /position/longitude-deg")
+            )
+            if ac_ft_at_settle is not None and diag_balloon0_elev_ft is not None:
+                z_hold_true = z_hold + (ac_ft_at_settle - diag_balloon0_elev_ft) * FT_TO_M
+            # Models were placed before HEARTBEAT at then-live origin; the
+            # aircraft keeps drifting through arm/settle. Re-place around the
+            # settled pose so balloon 0 sits ~200 m north of the visual AC.
+            try:
+                placed_origin = spawn_fg_from_setup(
+                    setup,
+                    timeout_s=20.0,
+                    host=args.telnet_host,
+                    port=args.telnet_port,
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(f"FG balloon re-place warning: {exc}")
+            try:
+                diag_tel.close()
+            except Exception:
+                pass
+            diag_tel = FgTelnet(host=args.telnet_host, port=args.telnet_port, timeout=0.5)
+            diag_tel.connect(retries=3, delay_s=0.2)
+            ac_ft_at_settle = parse_fg_telnet_float(
+                diag_tel.command("get /position/altitude-ft")
+            )
+            ac_lat_at_settle = parse_fg_telnet_float(
+                diag_tel.command("get /position/latitude-deg")
+            )
+            ac_lon_at_settle = parse_fg_telnet_float(
+                diag_tel.command("get /position/longitude-deg")
+            )
+            diag_balloon0_elev_ft = parse_fg_telnet_float(
+                diag_tel.command("get /models/model/elevation-ft")
+            )
+            if ac_ft_at_settle is not None and diag_balloon0_elev_ft is not None:
+                z_hold_true = (
+                    z_hold + (ac_ft_at_settle - diag_balloon0_elev_ft) * FT_TO_M
+                )
+        except Exception:
+            diag_tel = None
+            z_hold_true = z_hold
+
     # Config balloon Z is home/aircraft-relative; also rebase onto settled local Z so
     # residual EKF offset does not recreate a huge climb setpoint.
     # JSBSim/YASim PX4 home ≈ spawn GPS, so chase NED is balloon − spawn.
-    # Gazebo chase/plots use the mesh/world frame (origin_bias); keep setup NED.
-    world_balloons = rebase_balloons_to_local_z(setup.balloons, z_hold)
+    # Gazebo models are spawn_gz_from_setup(local_z=0) → ENU z=500. Chase/plot
+    # must use that frame (origin_bias pos), not EKF z_hold after the unarmed
+    # fall — that made CSV ΔD≈0 while the mesh passed ~60 m under the spheres.
+    # --viz/--yasim: z_hold_true rebases onto the balloon's real placed altitude;
+    # XY is translated by live FG NED so chase matches models at the visual AC.
+    live_xy = (0.0, 0.0)
     if args.gz:
+        world_balloons = rebase_balloons_to_local_z(setup.balloons, local_z=0.0)
         race_balloons = world_balloons
-    else:
-        race_balloons = rebase_balloons_to_local_z(
-            offset_balloons_ned(setup.balloons, setup.spawn.ned), z_hold
+        z_hold_true = (
+            float(world_balloons[0].ned[2]) if world_balloons else 0.0
         )
+    else:
+        world_balloons = rebase_balloons_to_local_z(setup.balloons, z_hold_true)
+        if non_gz_fg and placed_origin is not None:
+            ln, le, _ = geodetic_to_ned(
+                placed_origin[0],
+                placed_origin[1],
+                0.0,
+                DEFAULT_ORIGIN_LAT_DEG,
+                DEFAULT_ORIGIN_LON_DEG,
+                0.0,
+            )
+            live_xy = (ln, le)
+        elif (
+            non_gz_fg
+            and ac_lat_at_settle is not None
+            and ac_lon_at_settle is not None
+        ):
+            ln, le, _ = geodetic_to_ned(
+                ac_lat_at_settle,
+                ac_lon_at_settle,
+                0.0,
+                DEFAULT_ORIGIN_LAT_DEG,
+                DEFAULT_ORIGIN_LON_DEG,
+                0.0,
+            )
+            live_xy = (ln, le)
+        race_balloons = rebase_balloons_to_local_z(
+            translate_balloons_ned(
+                offset_balloons_ned(setup.balloons, setup.spawn.ned),
+                (live_xy[0], live_xy[1], 0.0),
+            ),
+            z_hold_true,
+        )
+        if non_gz_fg:
+            world_balloons = race_balloons
     print(
         f"spawn NED={tuple(round(c, 1) for c in setup.spawn.ned)} "
         f"heading={setup.spawn.heading_deg:g}°"
+        + (
+            f" live_xy=({live_xy[0]:.1f},{live_xy[1]:.1f})"
+            if live_xy != (0.0, 0.0)
+            else ""
+        )
     )
     print(
-        f"Balloon NED rebased to local z={z_hold:.1f}: "
+        f"Balloon NED rebased to local z={z_hold_true:.1f} "
+        f"(raw EKF z_hold={z_hold:.1f}): "
         + ", ".join(
             f"{i}:{tuple(round(c, 1) for c in b.ned)}"
             for i, b in enumerate(race_balloons)
         )
     )
-
-    if want_fg_balloons:
-        def _spawn_fg_background() -> None:
-            try:
-                print(
-                    f"FG balloon spawn (background) → "
-                    f"{args.telnet_host}:{args.telnet_port}..."
-                )
-                # World-frame XY (setup NED) + rebased Z. Chase may be spawn-relative.
-                spawn_balloons_fg(
-                    world_balloons,
-                    telnet_host=args.telnet_host,
-                    telnet_port=args.telnet_port,
-                    connect_retries=90,
-                    connect_delay_s=1.0,
-                )
-            except Exception as exc:  # noqa: BLE001
-                print(f"FG balloon spawn warning: {exc}")
-
-        threading.Thread(
-            target=_spawn_fg_background,
-            name="fg-balloon-spawn",
-            daemon=True,
-        ).start()
-
-    want_gz_balloons = bool(args.spawn_gz_balloons or args.gz)
-    if want_gz_balloons:
-        def _spawn_gz_background() -> None:
-            try:
-                print(f"GZ balloon spawn (background) → {args.gz_container}...")
-                spawn_balloons_gz(
-                    race_balloons,
-                    container=args.gz_container,
-                )
-            except Exception as exc:  # noqa: BLE001
-                print(f"GZ balloon spawn warning: {exc}")
-                print("world balloons are missing")
-
-        threading.Thread(
-            target=_spawn_gz_background,
-            name="gz-balloon-spawn",
-            daemon=True,
-        ).start()
 
     camera = CameraModel.from_spec(setup.camera)
     race = RaceGuidance(race_balloons, setup.guidance)
@@ -381,7 +655,9 @@ def main() -> int:
         plant=plant,
     )
     if hasattr(controller, "_bridge"):
-        controller._bridge._alt_hold_z = float(z_hold)
+        controller._bridge._alt_hold_z = float(
+            z_hold_true if args.gz else z_hold
+        )
     color_pub = ColorPublisher(setup.zmq.color)
     track_sub = TrackSubscriber(setup.zmq.track)
     stale_age_s = STALE_TRACK_CAMERA_PERIODS / setup.camera.rate_hz
@@ -401,6 +677,10 @@ def main() -> int:
 
     history = FlightHistory()
     history.set_balloon_markers([(b.ned, b.color) for b in race_balloons])
+    history.cam_hfov_deg = float(setup.camera.hfov_deg)
+    history.cam_vfov_deg = float(setup.camera.vfov_deg)
+    history.cam_mount_azimuth_deg = float(setup.camera.azimuth_deg)
+    history.cam_mount_elevation_deg = float(setup.camera.elevation_deg)
     history.request_streams(master, hz=rate)
     history.t0 = time.time()
     t0 = history.t0
@@ -427,6 +707,70 @@ def main() -> int:
     pose_sub = PoseSubscriber(setup.zmq.pose) if args.gz else None
     origin_bias: tuple[float, float, float] | None = None
 
+    # Continuously overwrite guidance pos+att from FG/JSBSim ground truth
+    # (telnet) instead of PX4's dead-reckoning EKF. Zero-order-hold between
+    # throttled telnet fetches (GT_REBASE_PERIOD_S) keeps per-tick cost low.
+    gt_rebase_active = bool(non_gz_fg and diag_tel is not None)
+    gt_pos: tuple[float, float, float] | None = None
+    gt_att: tuple[float, float, float] | None = None
+    last_rebase_ms = 0.0
+    last_rebase_ok = False
+    last_gt_seq = -1
+    gt_ned_off: tuple[float, float, float] | None = None
+    gt_att_off: tuple[float, float, float] | None = None
+    gt_ned_off_tgt: tuple[float, float, float] | None = None
+    gt_att_off_tgt: tuple[float, float, float] | None = None
+    gt_samples: list[tuple[float, tuple[float, float, float]]] = []
+    fg_tgt_locked = False
+    gt_holder = _GtHolder()
+    gt_thread: threading.Thread | None = None
+    if gt_rebase_active:
+        gt_thread = threading.Thread(
+            target=_gt_reader_loop,
+            args=(diag_tel, gt_holder, GT_REBASE_PERIOD_S),
+            daemon=True,
+            name="fg-gt-rebase",
+        )
+        gt_thread.start()
+        lock_deadline = time.time() + 8.0
+        while time.time() < lock_deadline:
+            history.poll(master)
+            with gt_holder.lock:
+                raw0 = gt_holder.raw
+                seq0 = gt_holder.seq
+                t_start0 = gt_holder.t_start
+            if raw0 is not None and history.last_ekf_pos is not None:
+                gpos, gatt = _gt_pose_from_telnet_raw(
+                    raw0,
+                    ac_ft_at_settle=ac_ft_at_settle,
+                    z_hold_true=z_hold_true,
+                    ft_to_m=FT_TO_M,
+                )
+                if gpos is not None:
+                    gt_ned_off = ned_sub(gpos, history.last_ekf_pos)
+                    gt_ned_off_tgt = gt_ned_off
+                    gt_pos = gpos
+                    gt_samples.append((t_start0 or time.time(), gpos))
+                    last_gt_seq = seq0
+                if gatt is not None and history.last_att_rad is not None:
+                    ea = history.last_att_rad
+                    gt_att_off = (
+                        gatt[0] - ea[0],
+                        gatt[1] - ea[1],
+                        wrap_pi(gatt[2] - ea[2]),
+                    )
+                    gt_att_off_tgt = gt_att_off
+                    gt_att = gatt
+                break
+            time.sleep(0.05)
+        history.clear_series()
+        t0 = history.t0
+        print(
+            "FG offset locked before race "
+            f"ned={tuple(round(v, 1) for v in gt_ned_off) if gt_ned_off else None}",
+            flush=True,
+        )
+
     print(
         f"Racing balloon {race.target_idx} color=RGB{race.active_color}; "
         f"laps={laps_target or '∞'} duration_s={'∞' if duration_s <= 0 else f'{duration_s:.0f}'}; "
@@ -438,6 +782,11 @@ def main() -> int:
     try:
         while True:
             now_s = time.time() - t0
+            gt_fov: float | None = None
+            gt_z_off: float | None = None
+            gt_model0: tuple[float, float, float] | None = None
+            gt_models_xy: list[tuple[float, float]] | None = None
+            gt_vel: tuple[float, float, float] | None = None
             end_reason = race_end_reason(
                 laps_completed=race.laps_completed,
                 laps_target=laps_target,
@@ -458,6 +807,7 @@ def main() -> int:
             # sample appended in *this* poll, not just the last.
             n_before_poll = len(history.x)
             pos = history.poll(master)
+            ekf_q = history.last_q
             # Fresh LOCAL_POSITION_NED only. Stale last_pos is often last tick's
             # mesh/spawn-frame sample — locking that vs mesh yields |h|≈0.
             ekf_ned = pos if len(history.x) > n_before_poll else None
@@ -490,14 +840,115 @@ def main() -> int:
                     pos = ned_sub(ekf_ned, origin_bias)
                     history.last_pos = pos
                     history.overwrite_positions_from(n_before_poll, pos)
+                    if world_ned is not None:
+                        history.set_sim_ned_from(n_before_poll, world_ned)
                 elif origin_bias is None and world_ned is not None:
                     history.overwrite_positions_from(n_before_poll, world_ned)
+                    history.set_sim_ned_from(n_before_poll, world_ned)
                     history.last_pos = world_ned
                     pos = world_ned
+
+            if gt_rebase_active:
+                with gt_holder.lock:
+                    raw = gt_holder.raw
+                    last_rebase_ms = gt_holder.ms
+                    last_rebase_ok = gt_holder.ok
+                    gt_seq = gt_holder.seq
+                    gt_t_start = gt_holder.t_start
+                    gt_fov = gt_holder.fov_deg
+                    gt_z_off = gt_holder.z_off_m
+                    gt_model0 = gt_holder.model0_ned
+                    gt_models_xy = gt_holder.models_xy
+                    gt_vel = gt_holder.vel_ned
+                ekf_pos = history.last_ekf_pos
+                ekf_att = history.last_att_rad
+                if raw is not None:
+                    gt_pos, gt_att = _gt_pose_from_telnet_raw(
+                        raw,
+                        ac_ft_at_settle=ac_ft_at_settle,
+                        z_hold_true=z_hold_true,
+                        ft_to_m=FT_TO_M,
+                    )
+                if (
+                    gt_seq != last_gt_seq
+                    and gt_pos is not None
+                ):
+                    gt_samples.append((gt_t_start, gt_pos))
+                    if len(gt_samples) > 6:
+                        gt_samples = gt_samples[-6:]
+                    last_gt_seq = gt_seq
+                    if (
+                        gt_att is not None
+                        and ekf_att is not None
+                    ):
+                        gt_att_off_tgt = (
+                            gt_att[0] - ekf_att[0],
+                            gt_att[1] - ekf_att[1],
+                            wrap_pi(gt_att[2] - ekf_att[2]),
+                        )
+                if (
+                    not fg_tgt_locked
+                    and gt_models_xy
+                    and len(gt_models_xy) >= len(race.balloons)
+                ):
+                    old = race.balloon_ned()
+                    race.balloons = balloons_with_xy(race.balloons, gt_models_xy)
+                    history.set_balloon_markers(
+                        [(b.ned, b.color) for b in race.balloons]
+                    )
+                    fg_tgt_locked = True
+                    b0 = race.balloon_ned(0)
+                    dxy = math.hypot(b0[0] - old[0], b0[1] - old[1])
+                    print(
+                        f"FG model NED locked b0=({b0[0]:.1f},{b0[1]:.1f}) "
+                        f"was=({old[0]:.1f},{old[1]:.1f}) dxy={dxy:.1f}m",
+                        flush=True,
+                    )
+                gt_extrap = extrapolate_ned(
+                    gt_samples, time.time(), vel_ned=gt_vel
+                )
+                if gt_extrap is not None:
+                    pos = gt_extrap
+                    history.last_pos = pos
+                    history.overwrite_positions_from(n_before_poll, pos)
+                    history.set_sim_ned_from(n_before_poll, pos)
+                    if ekf_pos is not None:
+                        gt_ned_off = ned_sub(gt_extrap, ekf_pos)
+                        gt_ned_off_tgt = gt_ned_off
+                    history.absorb_vel_jumps_from(n_before_poll)
+                if gt_att_off_tgt is not None:
+                    if gt_att_off is None:
+                        gt_att_off = gt_att_off_tgt
+                    else:
+                        gt_att_off = slew_toward_rpy(
+                            gt_att_off, gt_att_off_tgt, GT_ATT_SLEW_RAD_S * period
+                        )
+                if gt_att_off is not None and ekf_att is not None:
+                    history.add_rpy_offset_from(n_before_poll, gt_att_off)
+                    d_yaw_off = history.absorb_yaw_jumps_from(n_before_poll)
+                    if d_yaw_off != 0.0:
+                        gt_att_off = (
+                            gt_att_off[0],
+                            gt_att_off[1],
+                            wrap_pi(gt_att_off[2] + d_yaw_off),
+                        )
+                        if gt_att_off_tgt is not None:
+                            gt_att_off_tgt = (
+                                gt_att_off_tgt[0],
+                                gt_att_off_tgt[1],
+                                wrap_pi(gt_att_off_tgt[2] + d_yaw_off),
+                            )
+                    att = (
+                        ekf_att[0] + gt_att_off[0],
+                        ekf_att[1] + gt_att_off[1],
+                        wrap_pi(ekf_att[2] + gt_att_off[2]),
+                    )
+
             if pos is None:
                 pos = (xy[0], xy[1], z_hold)
             xy[0], xy[1] = pos[0], pos[1]
             last_pos = pos
+            plane_ned = history.last_plane_ned() or pos
 
             track_updated = track_sub.poll_and_update()
             track = track_sub.latest()
@@ -520,24 +971,58 @@ def main() -> int:
             # the blob is on the right of balloon_camera). Geometric LOS is
             # the fallback when the balloon still projects but HSV missed.
             balloon = race.balloon_ned()
+            rel_ned = (
+                balloon[0] - pos[0],
+                balloon[1] - pos[1],
+                balloon[2] - pos[2],
+            )
             on_screen = offset_on_screen(
-                (balloon[0] - pos[0], balloon[1] - pos[1], balloon[2] - pos[2]),
+                rel_ned,
                 camera,
                 att[0],
                 att[1],
                 att[2],
             )
-            tracker_in_view = bool(last_track_in_view and last_dir_cam is not None)
+            expected_uv = project_ned_offset_to_pixel(
+                rel_ned, camera, att[0], att[1], att[2]
+            )
+            hsv_seen = bool(last_track_in_view and last_dir_cam is not None)
+            tracker_in_view = hsv_seen
+            centroid_uv = track.centroid_uv if track is not None else None
+            geom_ok = track_centroid_near_expected(
+                centroid_uv,
+                expected_uv,
+                width_px=camera.width_px,
+                height_px=camera.height_px,
+            )
+            geom_dist_px = None
+            if centroid_uv is not None and expected_uv is not None:
+                geom_dist_px = math.hypot(
+                    float(centroid_uv[0]) - float(expected_uv[0]),
+                    float(centroid_uv[1]) - float(expected_uv[1]),
+                )
+            if tracker_in_view and not geom_ok and not (
+                args.viz or args.gz or args.yasim
+            ):
+                # Headless synth only: largest HSV blob can be scenery.
+                # --viz/--yasim FG and --gz race_cam vs EKF pinhole sit
+                # 150–300 px off the blob, so this gate never armed look-at
+                # (live --gz 153119: assisted=1 until t=60.6, cam 24°/10°).
+                tracker_in_view = False
+                last_track_in_view = False
+                last_dir_cam = None
             use_lookat = chase_uses_lookat(
                 tracker_in_view=tracker_in_view, on_screen=on_screen
             )
             if tracker_in_view:
                 dir_ned = dir_cam_to_ned(last_dir_cam, camera, att[0], att[1], att[2])
-                race.update_track(True, dir_ned)
+                race.update_track(True, dir_ned, now_s=now_s)
             elif on_screen:
-                race.update_track(True, race.geometric_los(pos))
+                # Geometric-only projection is dead-reckoning (no real HSV lock):
+                # in_view=False so race.assisted correctly reports "not tracking".
+                race.update_track(False, race.geometric_los(pos), now_s=now_s)
             elif track is not None:
-                race.update_track(False, race.last_dir_ned)
+                race.update_track(False, race.last_dir_ned, now_s=now_s)
 
             race.tick_stale(now_s, stale_age_s)
             approach_xy: tuple[float, float] | None = None
@@ -553,7 +1038,7 @@ def main() -> int:
             approach = chase
             if approach_xy is not None:
                 approach = (approach_xy[0], approach_xy[1], 0.0)
-            if race.check_pass(pos, approach_dir_ned=approach):
+            if race.check_pass(plane_ned, approach_dir_ned=approach):
                 last_track_in_view = False
                 last_dir_cam = None
                 ignore_next_track = True
@@ -568,7 +1053,7 @@ def main() -> int:
                     balloon_idx=passed_idx,
                     color=passed_color,
                     assisted=race.assisted,
-                    pos_ned=pos,
+                    pos_ned=plane_ned,
                     tgt_ned=race.balloon_ned(passed_idx),
                 )
                 balloon = race.balloon_ned()
@@ -584,10 +1069,14 @@ def main() -> int:
                 use_lookat = chase_uses_lookat(
                     tracker_in_view=False, on_screen=on_screen
                 )
+                # New target just acquired via pass: no real HSV lock on it yet.
+                tracker_in_view = False
+                # Geometric-only projection is dead-reckoning (no real HSV lock):
+                # in_view=False either way so race.assisted stays accurate.
                 if on_screen:
-                    race.update_track(True, race.geometric_los(pos))
+                    race.update_track(False, race.geometric_los(pos), now_s=now_s)
                 else:
-                    race.update_track(False, race.last_dir_ned)
+                    race.update_track(False, race.last_dir_ned, now_s=now_s)
                 chase = race.chase_dir_ned(
                     pos, sim_time_s=now_s, approach_xy=approach_xy
                 )
@@ -598,7 +1087,7 @@ def main() -> int:
                         stamp=now_wall,
                         assisted=not use_lookat,
                         t_s=now_s,
-                        pos_ned=pos,
+                        pos_ned=plane_ned,
                         balloons_ned=tuple(b.ned for b in race.balloons),
                     )
                 )
@@ -623,7 +1112,7 @@ def main() -> int:
                         stamp=now_wall,
                         assisted=race.assisted,
                         t_s=now_s,
-                        pos_ned=pos,
+                        pos_ned=plane_ned,
                         balloons_ned=tuple(b.ned for b in race.balloons),
                     )
                 )
@@ -640,7 +1129,7 @@ def main() -> int:
                 chase,
                 frame,
                 yaw_rad=yaw_for_sp,
-                q_act=history.last_q,
+                q_act=from_rpy(*att) if gt_rebase_active else history.last_q,
                 dt=period,
                 groundspeed=history.last_groundspeed,
                 in_view=use_lookat,
@@ -648,7 +1137,18 @@ def main() -> int:
                 vx=history.last_vx,
                 vy=history.last_vy,
                 path_lock_token=race.target_idx,
+                visual_lock=tracker_in_view,
+                q_exec=ekf_q if gt_rebase_active and ekf_q is not None else None,
             )
+            q_plot = getattr(controller, "last_q_des", None)
+            if q_plot is None:
+                q_plot = getattr(controller, "last_q_cmd", None)
+            if q_plot is not None:
+                cr, cp, cy = rpy_from_quat(q_plot)
+                history.apply_attitude_cmd_from(
+                    n_before_poll,
+                    (math.degrees(cr), math.degrees(cp), math.degrees(cy)),
+                )
             if getattr(controller, "last_z_hold", None) is not None:
                 last_aim_z = float(controller.last_z_hold)
             elif hasattr(controller, "_bridge") and controller._bridge._alt_hold_z is not None:
@@ -660,12 +1160,8 @@ def main() -> int:
             else:
                 last_aim_z = controller.aim_point_ned(pos, chase)[2]
 
-            armed, mode = poll_vehicle_state(master)
-            # history.poll already drains HEARTBEATs — fall back to last known.
-            if armed is None:
-                armed = history.last_armed
-            if mode is None:
-                mode = history.last_main_mode
+            armed = history.last_armed
+            mode = history.last_main_mode
             if mode is not None and mode != PX4_CUSTOM_MAIN_MODE_OFFBOARD:
                 set_offboard(master)
             if mode is not None and mode != last_mode:
@@ -681,7 +1177,7 @@ def main() -> int:
                     balloon_idx=race.target_idx,
                     color=race.active_color,
                     assisted=race.assisted,
-                    pos_ned=pos,
+                    pos_ned=plane_ned,
                     tgt_ned=race.balloon_ned(),
                 )
                 if args.gz:
@@ -690,11 +1186,11 @@ def main() -> int:
                     else:
                         ekf_err_h = float("nan")
                     print(
-                        format_ned_pos_line(now_s, pos, ekf_err_h=ekf_err_h),
+                        format_ned_pos_line(now_s, plane_ned, ekf_err_h=ekf_err_h),
                         flush=True,
                     )
                 else:
-                    print(format_ned_pos_line(now_s, pos), flush=True)
+                    print(format_ned_pos_line(now_s, plane_ned), flush=True)
                 last_path_sample_t = now_s
             if now_s - last_status_print_t >= STATUS_PRINT_PERIOD_S:
                 mode_s = (
@@ -741,10 +1237,13 @@ def main() -> int:
             balloon_idx=race.target_idx,
             color=race.active_color,
             assisted=race.assisted,
-            pos_ned=last_pos,
+            pos_ned=history.last_plane_ned() or last_pos,
             tgt_ned=race.balloon_ned(),
         )
         csv_log.close()
+        gt_holder.stop = True
+        if diag_tel is not None:
+            diag_tel.close()
         print(f"Race end reason={reason} t={t_end:.1f}s csv={csv_path}")
 
     print("Done.")
@@ -753,24 +1252,25 @@ def main() -> int:
         print(summary)
     # Docker teardown (kill.sh --all) can SIGHUP this tmux pane. Save PNGs first.
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
-    if not args.no_plot:
-        if args.gz:
-            title = f"Balloon race (Gazebo {args.model})"
-        elif args.yasim:
-            title = "Balloon race (YASim)"
-        elif args.viz:
-            title = "Balloon race (JSBSim + FG viz)"
-        else:
-            title = "Balloon race (JSBSim)"
-        try:
-            to_plot = history
-            if not to_plot.t:
-                _plot_log(f"history empty; loading {csv_path}")
-                to_plot = FlightHistory.from_race_csv(csv_path)
+    try:
+        to_plot = history
+        if not to_plot.t:
+            _plot_log(f"history empty; loading {csv_path}")
+            to_plot = FlightHistory.from_race_csv(csv_path)
+        pkl = to_plot.to_pickle(csv_path.with_suffix(".pkl"))
+        _plot_log(f"pickle n={len(to_plot.t)} {pkl}")
+        if not args.no_plot:
+            if args.gz:
+                title = f"Balloon race (Gazebo {args.model})"
+            elif args.yasim:
+                title = "Balloon race (YASim)"
+            elif args.viz:
+                title = "Balloon race (JSBSim + FG viz)"
+            else:
+                title = "Balloon race (JSBSim)"
             _plot_log(
                 f"savefig n={len(to_plot.t)} exe={sys.executable} csv={csv_path}"
             )
-            pkl = to_plot.to_pickle(csv_path.with_suffix(".pkl"))
             written = to_plot.plot(
                 title=title,
                 save_prefix=csv_path.with_suffix(""),
@@ -779,9 +1279,9 @@ def main() -> int:
             _plot_log("saved " + " ".join(str(p) for p in written) + f" pickle={pkl}")
             if not written:
                 _plot_log("savefig produced no files")
-        except Exception as exc:  # noqa: BLE001
-            _plot_log(f"savefig failed: {exc}")
-            traceback.print_exc()
+    except Exception as exc:  # noqa: BLE001
+        _plot_log(f"savefig failed: {exc}")
+        traceback.print_exc()
     _stop_sim()
 
     color_pub.close()

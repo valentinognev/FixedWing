@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from fw_sitl.flight_setup import BalloonSpec, GuidanceSpec
@@ -14,6 +15,9 @@ ASSISTED_OVERLAY_TEXT = "assisted guidance"
 # After a lock, range rising by this much within 4× pass_radius counts as a fly-by.
 PASS_CLOSEST_HYST_M = 10.0
 PASS_MISS_MULT = 4.0
+# Hold last HSV LOS briefly when the blob flickers off (pickle 122330: ~100 ms
+# cam_az nan↔finite flipped roll ±max).
+VISUAL_HOLD_S = 0.35
 
 
 def format_ned_pos_line(
@@ -97,6 +101,43 @@ def offset_balloons_ned(
         )
         for b in balloons
     )
+
+
+def translate_balloons_ned(
+    balloons: tuple[BalloonSpec, ...] | list[BalloonSpec],
+    delta_ned: tuple[float, float, float],
+) -> tuple[BalloonSpec, ...]:
+    """Add a NED offset to every balloon (live aircraft origin → chase frame)."""
+    dn, de, dd = (float(delta_ned[0]), float(delta_ned[1]), float(delta_ned[2]))
+    return tuple(
+        BalloonSpec(
+            ned=(float(b.ned[0]) + dn, float(b.ned[1]) + de, float(b.ned[2]) + dd),
+            color=b.color,
+            diameter_m=float(b.diameter_m),
+        )
+        for b in balloons
+    )
+
+
+def balloons_with_xy(
+    balloons: tuple[BalloonSpec, ...] | list[BalloonSpec],
+    xy: Sequence[tuple[float, float] | None],
+) -> tuple[BalloonSpec, ...]:
+    """Replace balloon north/east from FG model geodetic; keep existing Z."""
+    out: list[BalloonSpec] = []
+    for i, b in enumerate(balloons):
+        pair = xy[i] if i < len(xy) else None
+        if pair is None:
+            out.append(b)
+            continue
+        out.append(
+            BalloonSpec(
+                ned=(float(pair[0]), float(pair[1]), float(b.ned[2])),
+                color=b.color,
+                diameter_m=float(b.diameter_m),
+            )
+        )
+    return tuple(out)
 
 
 def _normalize3(v: tuple[float, float, float]) -> tuple[float, float, float]:
@@ -214,6 +255,7 @@ class RaceGuidance:
     _prev_gate_dot: float | None = None
     _min_dist: float | None = None
     _saw_in_view: bool = False
+    _visual_hold_until_s: float = 0.0
 
     @property
     def active_balloon(self) -> BalloonSpec:
@@ -273,14 +315,23 @@ class RaceGuidance:
         self,
         in_view: bool,
         dir_ned: tuple[float, float, float],
+        *,
+        now_s: float | None = None,
     ) -> None:
+        now = float(now_s) if now_s is not None else time.time()
         self._seen_track = True
-        self.last_in_view = in_view
+        if in_view:
+            self.last_in_view = True
+            self.last_dir_ned = _normalize3(dir_ned)
+            self._visual_hold_until_s = now + VISUAL_HOLD_S
+            self.assisted = bool(self.stale_locked)
+            return
+        if now < self._visual_hold_until_s and self.last_in_view:
+            # Brief HSV miss: keep camera LOS; do not snap to geometric.
+            return
+        self.last_in_view = False
         self.last_dir_ned = _normalize3(dir_ned)
-        if self.stale_locked:
-            self.assisted = True
-        else:
-            self.assisted = not in_view
+        self.assisted = True
 
     def chase_dir_ned(
         self,
@@ -411,6 +462,7 @@ class RaceGuidance:
         self._min_dist = None
         self._saw_in_view = False
         self.last_in_view = False
+        self._visual_hold_until_s = 0.0
         print(
             f"Passed balloon {old} ({reason}) → targeting balloon {self.target_idx} "
             f"color=RGB{self.active_color} "

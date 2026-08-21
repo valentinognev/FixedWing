@@ -6,9 +6,9 @@
     "pose": "tcp://127.0.0.1:5558"
   },
   "balloons": [
-    {"ned": [200, 0, 30], "color": [255, 0, 0], "diameter_m": 10},
-    {"ned": [200, 200, -30], "color": [0, 255, 0], "diameter_m": 10},
-    {"ned": [0, 200, 0], "color": [0, 0, 255], "diameter_m": 10}
+    {"ned": [500,   0, -10], "color": [255, 0, 0], "diameter_m": 10},
+    {"ned": [500, 200, -10], "color": [0, 255, 0], "diameter_m": 10},
+    {"ned": [300, 200, -10], "color": [0, 0, 255], "diameter_m": 10}
   ],
   "spawn": {
     "ned": [0, 0, 0],
@@ -25,7 +25,7 @@
     "guidance": {
     "control_rate_hz": 20,
     "speed_mps": 30,
-    "pass_radius_m": 7,
+    "pass_radius_m": 10,
     "lookahead_m": 500,
     "assisted_print_period_s": 5,
     "stale_track_warn_s": 10,

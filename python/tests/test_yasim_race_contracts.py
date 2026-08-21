@@ -20,9 +20,21 @@ class TestYasimControlContracts(unittest.TestCase):
         self.assertIn('add_argument("--yasim"', ctl)
         self.assertIn("runSimYasimRascal.sh", ctl)
         self.assertIn('kill_target = "--gz" if args.gz else ("--fg" if args.yasim else KILL_TARGET)', ctl)
-        self.assertIn("skip_reboot = bool(args.no_sim or args.viz or args.gz or args.yasim)", ctl)
+        self.assertIn(
+            "skip_reboot = bool(args.no_sim or args.viz or args.gz or args.yasim)", ctl
+        )
         self.assertIn("args.spawn_fg_balloons or args.viz or args.yasim", ctl)
         self.assertIn("--viz, --gz, and --yasim are mutually exclusive", ctl)
+
+    def test_ekf_fix_gps_is_rejected(self) -> None:
+        r = subprocess.run(
+            [sys.executable, str(_CTL), "--ekf-fix", "gps"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("disabled", r.stderr)
+        self.assertIn("0.35.1", r.stderr)
 
     def test_control_help_lists_yasim(self) -> None:
         r = subprocess.run(
@@ -64,6 +76,24 @@ class TestYasimSimFanoutAndBalloons(unittest.TestCase):
         self.assertIn("--allow-nasal-from-sockets", patch)
         self.assertIn("--telnet=5501", patch)
 
+    def test_fg_patch_disables_clouds(self) -> None:
+        patch = (
+            _PYTHON_ROOT.parent / "Dockerfiles" / "patch_px4_flightgear_sitl.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("--disable-clouds", patch)
+        self.assertIn("--disable-clouds3d", patch)
+        self.assertIn("--disable-real-weather-fetch", patch)
+
+    def test_jsbsim_viz_patch_disables_clouds(self) -> None:
+        patch = (
+            _PYTHON_ROOT.parent / "Dockerfiles" / "patch_px4_jsbsim_fg_viz.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("FIXEDWING_JSBSIM_FG_VIZ_V7", patch)
+        self.assertIn("--disable-clouds", patch)
+        self.assertIn("--disable-clouds3d", patch)
+        self.assertIn("--disable-real-weather-fetch", patch)
+        self.assertIn("draw-mask/clouds=false", patch)
+
     def test_kill_fg_removes_mavlink_sidecar(self) -> None:
         text = _KILL.read_text(encoding="utf-8")
         self.assertIn("kill_fg_stack", text)
@@ -104,6 +134,15 @@ class TestYasimRaceLauncher(unittest.TestCase):
             text=True,
         )
         self.assertEqual(r.returncode, 2)
+
+    def test_ekf_fix_gps_exit_2(self) -> None:
+        r = subprocess.run(
+            ["bash", str(_RACE), "--ekf-fix", "gps"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("disabled", r.stderr)
 
 
 class TestRascalRaceDocs(unittest.TestCase):

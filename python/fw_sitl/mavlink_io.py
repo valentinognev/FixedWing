@@ -227,7 +227,9 @@ def reboot_autopilot(master: mavutil.mavfile) -> mavutil.mavfile:
     return connect(port, timeout=120.0)
 
 
-def prepare_sitl_arming(master: mavutil.mavfile, plant: PlantGains) -> None:
+def prepare_sitl_arming(
+    master: mavutil.mavfile, plant: PlantGains, *, force_gps_aiding: bool = False
+) -> None:
     # In-air JSBSim reports ~30–40 m/s CAS; default FW_AIRSPD_MAX (~20) blocks arm
     # with "Airspeed too high". Force-arm still refuses until that check passes.
     # Rascal airframe defaults NAV_DLL_ACT=2 (datalink-loss → leave OFFBOARD).
@@ -258,11 +260,33 @@ def prepare_sitl_arming(master: mavutil.mavfile, plant: PlantGains) -> None:
         ("COM_ARM_EKF_POS", -1.0),
         ("COM_ARM_EKF_YAW", -1.0),
         ("COM_ARM_EKF_VEL", -1.0),
+        # Force-arm 21196 does not skip commander health. FG viz CPU + gyro
+        # bias held arm denied ~60s while the unarmed plane fell (z_ned≈680).
+        ("COM_CPU_MAX", -1.0),
+        ("COM_ARM_IMU_GYR", 0.0),
+        ("COM_ARM_IMU_ACC", 0.0),
     )
     # Gz: omit SYS_HAS_MAG (airframe default; --gz skips reboot so 0/1 over
     # MAVLink would not apply anyway) and EKF2_GPS_MODE=0 (Automatic).
     # JSBSim/YASim keep mag off + GPS dead-reckon. COM_ARM_MAG_STR=0 on all.
+    #
+    # force_gps_aiding is a library hook only — CLI --ekf-fix gps is disabled
+    # (UPDATES.md 0.35.1). It flips EKF2_GPS_MODE to Automatic and MUST NOT
+    # enable SYS_HAS_MAG. Two live --viz experiments failed:
+    #   1) SYS_HAS_MAG=1 + EKF2_GPS_MODE=0 + forced reboot → mag_fault crash.
+    #      Mag-based yaw aligned while JSBSim was unarmed/non-level (in-air
+    #      spawn, ~40 s fall). ~100° yaw error → Ekf::isYawFailure() 25° gate
+    #      (gps_control.cpp) within 1 s of takeoff → tryYawEmergencyReset()
+    #      sets mag_fault permanently ("Compass needs calibration - Land now!",
+    #      estimatorCheck.cpp) → attitude controller flew inverted/diving.
+    #   2) SYS_HAS_MAG=0 + EKF2_GPS_MODE=0, no reboot → never armed. 60 s of
+    #      "Arming denied: Resolve system health failures first". Same-session
+    #      --ekf-fix rebase armed instantly. GPS fusion during the free-fall
+    #      pre-arm window trips PX4 health even without mag.
+    # Re-enabling GPS aiding needs a different pre-arm sequence (no free-fall
+    # while EKF is fusing GPS), not just this flag.
     gz_plant = plant.plant_id.startswith("gz_")
+    gps_aiding = gz_plant or force_gps_aiding
     int_params: list[tuple[str, int]] = [
         ("COM_ARM_WO_GPS", 1),
         ("COM_ARM_CHK_ESCS", 0),
@@ -284,7 +308,7 @@ def prepare_sitl_arming(master: mavutil.mavfile, plant: PlantGains) -> None:
         ("SYS_HAS_NUM_ASPD", 0),
     ]
     if not gz_plant:
-        int_params.append(("SYS_HAS_MAG", 0))
+        int_params.append(("SYS_HAS_MAG", 0))  # stays off even with force_gps_aiding — see above
     int_params.extend(
         [
             ("ASPD_PRIMARY", 0),  # groundspeed−wind; avoids sensor-failure failsafe
@@ -294,7 +318,7 @@ def prepare_sitl_arming(master: mavutil.mavfile, plant: PlantGains) -> None:
             ("FD_FAIL_P", 0),
             ("FD_FAIL_R", 0),
             ("EKF2_GPS_CHECK", 0),  # SITL: avoid GPS-check trips that invalidate local pos
-            ("EKF2_GPS_MODE", 0 if gz_plant else 1),  # gz Automatic; else dead-reckon
+            ("EKF2_GPS_MODE", 0 if gps_aiding else 1),  # Automatic; else dead-reckon
             # Lon/lat + 3D vel only (no GPS altitude bit) — GPS alt vs baro snaps caused ~50 m Z jumps.
             ("EKF2_GPS_CTRL", 5),
             ("EKF2_HGT_REF", 0),  # baro height reference (reboot-applied)

@@ -1,5 +1,156 @@
 # Updates
 
+## 0.35.19 - GZ look-at uses HSV blob; skip synth-only geom-gate
+- Live `--gz` `/tmp/balloon_race_20260821_153119.csv`: climbed to tgt_d=0 but `assisted=1` until t=60.6. Pickle cam LOS NaN until then; first sample was az=24° el=10°. Plane flew geometric NED, not the camera error.
+- Cause: 80 px `track_centroid_near_expected` gate (synth roofs) also ran on `--gz`. EKF pinhole vs `race_cam` is far off the blob — same reason `--viz` already skipped it.
+- Skip that gate for `--viz`/`--yasim`/`--gz`; headless synth still requires centroid near the geometric projection.
+
+## 0.35.18 - GZ chase Z is spawned-model altitude, not EKF z_hold
+- Live `--gz` 90 s `/tmp/balloon_race_20260821_151653.csv`: plot/CSV passes at balloon 0 `(490.5, 0.3, 64.8)` vs tgt `(500, 0, 66.2)` (ΔD≈1 m) while Gazebo spheres stay at ENU z=500 (NED d=0). Mesh ~65 m under the balloon.
+- Cause: `spawn_gz_from_setup(local_z=0)` then chase `rebase(..., z_hold)` after the unarmed fall (EKF z≈66). Same phantom-zero ΔD FG already corrected with balloon elevation.
+- GZ race balloons stay at `local_z=0`; altitude hold uses that Z so the plane climbs back to the spheres.
+
+## 0.35.17 - GZ race: PYTHONPATH for spawn_ic (false fan-out abort)
+- `--gz` died with `mavlink-server fan-out failed` because `runSimGzPlane.sh` set `PYTHONPATH` as a shell variable and did not export it. tmux cwd is the repo root, so `python3 -m fw_sitl.spawn_ic` raised `ModuleNotFoundError` and exited before fan-out. `--viz` already prefixes `PYTHONPATH=` on the `python3` line.
+- Race launcher dumps the sim pane on that abort so the real error is on stderr.
+
+## 0.35.16 - Drop leftover debug NDJSON and session-id footnotes
+- Removed leftover Cursor agent-log regions and `.cursor/debug-*.log`. Race CSV/pickle and `/tmp/balloon_race_plot.log` stay.
+- History entries no longer cite Cursor session IDs or temporary probe names.
+
+## 0.35.15 - Stop 4 s NED snaps: Nasal pose+velocity, no per-cycle model walk
+- Post-0.35.14 pickle `143601`: red-balloon hit matched the error plot (model NED dxy=0, horiz 11 m at pass) but sim XY jumped 15–92 m every 4.0 s (21 snaps; 1641/2741 samples frozen). GT thread did 6 telnet gets + FOV/z gets + balloon-model Nasal every cycle.
+- Pose is one Nasal dump (lat/lon/alt/att + speed-north/east/down-fps). Models/FOV/z are read once. Coast uses FG NED velocity, not a 4 s finite difference.
+- Verified pickle `144653` (60 s `--viz`): 0 snaps >8 m vs 21 / 4.0 s max 92 m; red pass t=22.25 horiz ~10 m; 73 GT samples in 60 s with FG NED velocity always set. GT still ~800 ms/cycle (Nasal+`get /tmp/fw_pose`); leftover ~4 m kinks at that period, not 4 s plateaus.
+
+## 0.35.14 - Chase/plot NED from FG aircraft + FG mesh, not EKF coast / settle offset
+- Pickle `134011` overlay at the visual “hit” (`t=25.3` x=1060 y=306) was 154 m from chase tgt; telnet relock (true FG lat/lon) still 139 m. Overlay between locks was `gt + Δekf` (EKF 300–670 m from sim). Config tgt is settle+offset, never `/models/model` lat/lon.
+- GT sample time is the end of the telnet burst (not the start — that projected ~60 m ahead). Chase XY locks once from FG balloon mesh geodetic (same `geodetic_to_ned` as the aircraft). `live_xy` uses the re-place origin, not a later aircraft lat.
+
+## 0.35.13 - GT-only NED (no EKF coast sawtooth); hold 90° FOV
+- Pickle `134011`: overlay `t=26.3 x=1076.7 y=337.5` looked like a balloon hit; error min 118 m at t=38. At t=26.2 plot Y=335 then t=26.4 Y=296 (40 m / 0.2 s) — each ~2.2 s telnet relock. EKF Y itself was smooth; `sim = gt + Δekf` injected the EKF−FG residual.
+- Visual fill at 166 m for a 10 m sphere implies ~8–10° FOV, not 90°. GT telnet holds the socket ~2 s so `fg_camera.sync_camera_view` often cannot keep FOV; mouse-zoom/`goal-fov` also fights the set.
+- History/chase/overlay NED = timestamped FG GT extrapolated with FG velocity (no EKF position coast). GT thread re-asserts `field-of-view` + `goal-field-of-view` 90. Error plot uses that sim pose.
+
+## 0.35.12 - Plot sim pose + wall-clock time; error from FlightGear/Gazebo
+- Live `--viz` 90 s: overlay/CSV wall 90 s vs plot `hist_t` 69 s (ratio 1.30); chase vs history XY split 20–190 m on a ~2 s period (slew vs snap) — the 3D sawtooth.
+- Cause: `history.t` used PX4 `time_boot_ms` (JSBSim+FG slower than realtime); plots used slewed `gt−ekf` while chase snapped stale telnet GT.
+- History time is wall (`time.time()-t0`). FG offset is `gt − EKF(at telnet start)` with no NED slew. `sim_*` is last FG/GZ pose plus EKF Δ; 3D/NED show dotted EKF and solid sim; ΔN/ΔE/ΔD and CSV miss use sim.
+
+## 0.35.11 - FG clouds off
+- `--disable-clouds` (already V6) still left 3D clouds / METAR overcast filling balloon_camera.
+- JSBSim viz patch **V7**: `--disable-clouds3d` `--disable-real-weather-fetch` + `draw-mask/clouds` / `clouds3d-enable=false`. YASim `FG_run.py` extras get the same flags. `fg_camera.sync_camera_view` reasserts clouds off over telnet.
+
+## 0.35.10 - Visual "hit" at 160 m was stock FG balloon scale
+- Live `--viz` t≈17 s: camera filled with red + HSV lock, error plot Δhoriz≈160–250 m. GT aircraft→tgt matched the plot (~250 m); overlay NED matched GT.
+- Cause: `assets/balloons/balloon_*.xml` referenced FG stock hot-air mesh (fills 90° FOV from >150 m), not the co-located ~10 m spheres — chase targets the model origin.
+- XML paths → `balloon_R_G_B.ac` / `balloon_sphere.ac` (`object-name` balloon). Screen fill now ≈ close pass (~12 m for half of 90° FOV).
+
+## 0.35.9 - Smooth FG NED plots; damp LOS roll oscillation
+- Pickle `122330`: snapping `gt−ekf` every ~2 s jumped NED 10–97 m (EKF drift residual); HSV flicker flipped roll cmd ±46° in 50 ms; jsbsim `kp_heading=2` / `max_roll=0.8` saturated bank on straight homing.
+- History NED offset slews at 80 m/s; chase still uses snapped `gt_ned_off_tgt`. `absorb_vel_jumps_from` on each poll burst.
+- LOS: 3° heading deadband, 60°/s roll slew, jsbsim `bank_kp_heading=1.0` / `max_roll=0.50`. `RaceGuidance` holds last HSV LOS 0.35 s across brief blob drops.
+
+## 0.35.8 - Error plot ~250 m while visually a few metres from the balloon
+- Pickle/CSV `20260821_120853` t=32.95: overlay `x=1058 y=727` vs balloon `676,658` → horiz 389 m; HSV on red, geometric `on_screen=False`. GT offset N 375 m vs chase-target offset 21 m (354 m lag).
+- Cause: NED `gt−ekf` slew at 12 m/s while the target offset jumped 50–90 m each ~2.4 s telnet. Chase/plot pos lagged FG; camera still tracked the visual balloon.
+- Snap NED offset to latest `gt−ekf` (keep att slew + yaw absorb). Expect plot error ≈ visual miss at each GT sample.
+
+## 0.35.7 - Plot velocity / yaw / LOS jumps (EKF glitches + mixed LOS frames)
+- Pickle `20260821_090533`: NED was smooth (max Δxy 2.35 m) but vx/vy jumped 30–70 m/s and yaw 30–107° in one 50 ms sample (roll unchanged) — PX4 dead-reckoning EKF, not FG offset. LOS az jumped 85–140° when `los_deg_series` swapped camera-frame blob vs body +X on HSV flicker.
+- Stamp LOCAL_POSITION with `time_boot_ms`; plot vx/vy/vz = ΔNED/Δt. `absorb_yaw_jumps_from` holds plotted yaw and shifts the locked att offset (and its slew target) so the glitch does not ramp back in.
+- LOS panel is geometric body +X only; yaw/LOS az unwrapped on the figure.
+- Live pickle stamp after the verification run.
+
+## 0.35.6 - FG plot sawtooth / attitude jitter
+- Pickle `20260821_083609`: NED jumps 12–725 m every 2.4 s (telnet `gt−ekf` relock) and yaw flipping ±125° (`add_rpy_offset_from` wrote FG Euler into `_last_att_deg`, so the next poll added the offset twice).
+- Lock offset once from the first telnet pose **before** `t0` (`clear_series`); later updates **slew** (`slew_toward_ned` 12 m/s, `slew_toward_rpy` 50 °/s). Apply `last_ekf_pos + offset` every tick (do not relock from already-offset `last_pos`).
+- `add_rpy_offset_from` leaves the poll att cache on EKF. Chase `q_act` is FG-frame; dashed cmds use `last_q_des` (same frame). Pickle is always written (`--no-plot` only skips PNGs).
+- Live `20260821_090533`: pickle n=1898, unique XY 1897, max sample Δxy 2.35 m (was 725 m); sample Δxy max 1.32 m / Δyaw max 3.5° (no >8 m or >15° steps); yaw cmd−meas p95 1.5° (was 77°/162°). Plots: `/tmp/balloon_race_20260821_090533_{history,trajectory}.png`.
+
+## 0.35.5 - Dense FG history (EKF+offset) and attitude commands on the angle plot
+- Pickle `20260821_082257` had 1814 samples but only ~100 unique XY: every point was the same 2.4 s FG pose. Lock `gt − ekf` on each telnet publish; `add_ned_offset_from` / `add_rpy_offset_from` keep MAVLink-rate increments.
+- Attitude panel overlays dashed `roll/pitch/yaw cmd` from `SET_ATTITUDE_TARGET`.
+- Live `20260821_083609`: `n_xy_01m=1873` / 60 s (~1880 unique/min); pickle 1883 samples all with cmds; `savefig n=1883`.
+
+## 0.35.4 - FG telnet `/>` was stalling history; plots still empty after 0.35.3
+- Post-fix 0.35.3 run (`20260821_080848`): chase **did** reach balloon 0 (pass at 56.8 s, closest 22.5 m). Plots still `savefig n=16`. GT rebase stuck at ~796 ms/cycle; history appends 14 then 0.
+- Cause: FG telnet answers slowly (often ~0.4 s/get with no newline). Synchronous `read_pose_deg` in the 20 Hz loop plus `poll_vehicle_state(HEARTBEAT)` discarding `LOCAL_POSITION_NED` left `savefig n=16`.
+- Fix: reconnect after re-place; six gets on that socket; `command()` returns on `/>` or `\r`; race loop uses `history.last_armed`/`last_main_mode`; **telnet pose runs in `_gt_reader_loop`** so the chase tick is not blocked. Do not treat `=` as end-of-reply (truncated lat/lon → x≈−3.7e6 m). Live `20260821_081402` (sync): `savefig n=393`, passed balloons 0 and 1. Live `20260821_082257` (thread): `savefig n=1814`, yaw finite 1813/1814, closest 22 m.
+
+## 0.35.3 - Unblock FG rebase so plots fill; send chase in PX4's EKF frame
+- After 0.35.x ground-truth rebase, `_history.png` / pickle had ~13 samples over 60 s (CSV ~2.4 s/tick, not 20 Hz). Balloon re-place opened a second FG telnet and left `diag_tel` stale; six serial `get`s each waited the socket timeout. Reconnect after re-place; `FgTelnet.read_pose_deg` snapshots lat/lon/alt/att in one Nasal+get. Patch `overwrite_attitudes_from` so plots keep FG yaw, not NaN/EKF.
+- Chase used FG NED LOS with EKF `q_act` and sent that Euler to PX4. With ~80–110° EKF yaw error the plane never turned toward the balloon. Guidance now runs on FG att; `q_exec` maps the body error onto the live EKF quaternion before `SET_ATTITUDE_TARGET`.
+
+## 0.35.2 - FG balloons follow the live aircraft XY, not the LSZH IC origin
+- Live `--viz --duration 60` (20260821_074003): 3/3 models placed, camera frames were real scenery (`frame_mean` 93–128), HSV locked at 1300–2500 px when the disk was in view. The aircraft was already 179 m from balloon 0 at spawn (NED 326 N, 127 E vs models at DEFAULT_ORIGIN) and 411 m away at race t=0 with heading error 134° — balloons sat outside the 90° FOV for 21/25 samples. Not a missing-mesh bug.
+- `spawn_balloons_fg` now uses live `/position/latitude-deg` and `longitude-deg` as the NED XY origin (same pattern as live altitude-ft). Control re-places after altitude settle and `translate_balloons_ned` so chase NED matches the visual models (balloon 0 stays 200 m north of the settled aircraft).
+- Post-fix run (20260821_074718): settle `horiz_live_to_b0=200`; race t=0 range 196 m (was 411 m); closest 82 m; camera `area_px>200` on 22 grabs.
+
+## 0.35.1 - Disable --ekf-fix gps; record live evidence for a later retry
+- `--viz`/`--yasim` keep ground-truth rebase only. `--ekf-fix gps` now exits 2 (`run_balloon_control.py`, `run_balloon_race.sh`). `ask` prompt removed. `prepare_sitl_arming(..., force_gps_aiding=True)` remains as a library hook (mag still forced off); do not wire it back to CLI without a new pre-arm sequence.
+- FG bridge already sends usable aiding (`px4-noble-sim-ros` `flightgear_bridge/.../vehicle_state.cpp`): `HIL_GPS` `fix_type=3`, 10 sats, true lat/lon/alt/vel; `HIL_SENSOR` mag from the geomagnetic model. JSBSim/YASim ignore both via `SYS_HAS_MAG=0`, `EKF2_GPS_MODE=1` (dead-reckon). That is why EKF N/E/yaw drift from FG truth (up to ~1.5 km/min, ~110° yaw) — rebase overlays telnet lat/lon/alt/roll/pitch/heading onto guidance every 0.2 s.
+- **Experiment A** (`--ekf-fix gps`, `SYS_HAS_MAG=1` + `EKF2_GPS_MODE=0` + forced reboot): live `--viz --duration 60`. PX4: `Compass needs calibration - Land now!` / `Preflight Fail: Compass 0 fault`. Armed unhealthy at 38 s (`z_ned=569`). Then a real dive: EKF pitch +25..+50° (thinks climbing) vs FG true pitch −35..−68°; at t=8.4 s EKF roll −29° vs true 137°; at t=16.8 s EKF roll 1° vs true −160° (inverted). Guidance `pitch_cmd` stayed +20° (`los` law). EKF z 595→1904 m in 55 s. FG telnet att went `None` after t=33.6 s. PX4: mag yaw aligned while unarmed/non-level (in-air spawn, ~40 s fall) → ~100° yaw error → `Ekf::isYawFailure()` 25° gate (`src/modules/ekf2/EKF/aid_sources/gnss/gps_control.cpp`) within 1 s of takeoff → `tryYawEmergencyReset()` sets `mag_fault` permanently → `estimatorCheck.cpp` land-now. Do not enable `SYS_HAS_MAG` on this in-air spawn.
+- **Experiment B** (same gps path, mag left off, no reboot — `EKF2_GPS_MODE=0` only): never armed. 60 s of `Arming denied: Resolve system health failures first` → `Engage failed`. Same-session `--ekf-fix rebase` armed at t=0. GPS fusion during the free-fall pre-arm window trips commander health even without mag.
+- Future retry needs the aircraft level/GPS-healthy *before* EKF fuses GPS or mag (no unarmed JSBSim fall), not just flipping `EKF2_GPS_MODE`. Rebase is the working fix for chase/plots.
+
+## 0.35.0 - User-selectable EKF drift fix for --viz/--yasim: GPS aiding vs ground-truth rebase
+- Root cause behind the FOV-frustum mismatch (0.34.0) and earlier Z/homing bugs: with no GPS aiding, PX4's EKF dead-reckons on JSBSim/YASim and drifts hard from FG ground truth (observed up to ~1.5 km/min position, 110° yaw) — live MAVLink `ATTITUDE`/`LOCAL_POSITION_NED` vs FG telnet heading confirmed this.
+- Investigated whether real GPS/mag simulation is even possible: inspected the FlightGear bridge (`Tools/simulation/flightgear/flightgear_bridge/src/vehicle_state.cpp` inside the `px4-noble-sim-ros` image). It already sends a valid `HIL_GPS` (`fix_type=3`, 10 sats, true lat/lon/alt/vel) and a geomagnetic-model `HIL_SENSOR` mag reading every frame — PX4 is just configured (`SYS_HAS_MAG=0`, `EKF2_GPS_MODE=1`) to ignore both on JSBSim/YASim.
+- New `--ekf-fix {ask,gps,rebase}` (`run_balloon_control.py`, `--viz`/`--yasim` only):
+  - `gps` — `prepare_sitl_arming(..., force_gps_aiding=True)` flips only `EKF2_GPS_MODE=0` (Automatic; not `reboot_required` per PX4's `params_gnss.yaml`, so no reboot needed). **`SYS_HAS_MAG` stays explicitly off.** First attempt also enabled `SYS_HAS_MAG` (gz-style) and forced a reboot to apply it — live-tested (`./scripts/run_balloon_race.sh --viz --duration 60 --ekf-fix gps`) and it crashed the aircraft. Root-caused from live EKF vs FG attitude plus PX4 source: mag-based yaw alignment happens while JSBSim is unarmed/non-level (falling ~40s through the forced reboot + arm-health-check delay) → ~100° initial yaw error → PX4's `Ekf::isYawFailure()` (hardcoded 25° gate, `gps_control.cpp`) trips within 1s of takeoff → `tryYawEmergencyReset()` resets yaw from GPS velocity and permanently sets `mag_fault=true` ("Compass needs calibration - Land now!", `estimatorCheck.cpp`) → attitude controller flies on a doubly-corrupted EKF attitude → real, unrecoverable dive. GPS position/velocity aiding alone was then tried (0.35.1): that path never armed.
+  - `rebase` (default/safe) — every `GT_REBASE_PERIOD_S` (0.2 s), fetch FG telnet ground truth (lat/lon/alt-ft/roll/pitch/heading) on the existing diagnostic `FgTelnet` and overwrite the guidance `pos`/`att` (zero-order-held between fetches) instead of PX4's own drifting EKF state; `FlightHistory` is overwritten the same way so the 3D plot matches what was actually flown.
+  - `ask` (default): interactive prompt at startup if stdin is a TTY, else falls back to `rebase` with a printed note (avoids blocking a non-interactive run). **Superseded in 0.35.1: gps/ask removed from CLI.**
+- `z_hold_true`/diagnostic `FgTelnet` setup now applies to `--yasim` too (previously `--viz`-only), since YASim shares the same FG bridge/telnet.
+- `run_balloon_race.sh`: `--ekf-fix gps|rebase` passthrough for `--viz`/`--yasim`; launcher always passes an explicit value (defaults to `rebase`) so the control tmux pane never blocks on the interactive prompt before the session is attached.
+- Tests: `test_plant_gains.py::test_jsbsim_yasim_force_gps_aiding_keeps_mag_off`; updated `prepare_sitl_arming(...)`/`skip_reboot` substring contracts in `test_plant_gains.py`, `test_gz_race_contracts.py`, `test_yasim_race_contracts.py`.
+
+## 0.34.0 - 3D history plot draws the camera FOV frustum
+- User report: "3D history balloon positions don't match what I saw on screen" — saw the blue balloon (and others) on screen through the second half of a race, but the static 3D plot (path line + balloon dots, no FOV) made that look implausible by eye.
+- Verified with the actual `offset_on_screen()`/`CameraModel` math against the recorded run (`run_balloon_control.py:path_sample`/pickle roll-pitch-yaw + positions): all 3 balloons were geometrically inside the 90°x70° FOV simultaneously from t≈39.5–57s of a 60s race — not a bug, just unverifiable by eye in a plain 3D scatter.
+- `FlightHistory` now records `cam_hfov_deg`/`cam_vfov_deg`/`cam_mount_azimuth_deg`/`cam_mount_elevation_deg` (set from `flightSetup.json` camera block in `run_balloon_control.py`); the 3D trajectory figure draws translucent pyramid faces (`Poly3DCollection`) at ~5 sampled poses along the path, each reaching to the current target's range (capped to the scene span), colored by time. Old pickles load fine (dataclass class-level defaults back-fill missing fields).
+- `fw_sitl/flight_history.py`: `frustum_corner_dirs_ned()`, `FlightHistory._plot_fov_frustums()`.
+
+## 0.33.3 - Z-anchor fix, visual-lock pitch guard, correct assisted flag
+- User reports: viz balloon looked much lower/higher than the plane while plot ΔZ≈0 (broken homing); plane later stalled and crashed climbing to a balloon; `assisted` stayed true while the balloon was off-screen (geometric-only, no real HSV lock).
+- `run_balloon_control.py`: `z_hold_true` corrects PX4's settled EKF `z_hold` to the true FG balloon elevation at engage time (one-off `FgTelnet` diagnostic read of `/position/altitude-ft` and the balloon's `elevation-ft`); `race_balloons`/`world_balloons` rebase onto `z_hold_true` instead of the raw `z_hold` — fixes the phantom-zero ΔZ.
+- `race.update_track(False, ...)` (not `True`) when a balloon is only geometrically on-screen (no real HSV blob) — `assisted` now correctly reflects "not visually tracking".
+- `body_cmd_controllers.py` `AttitudeChaseController`: new `visual_lock` param on `send_chase_setpoint`. Real HSV lock → `kp_alt=0` (trust the camera-derived LOS elevation, don't let bookkeeping-Z fight it). No visual lock (geometric-only LOS) → cap pitch to `att_max_pitch_rad` (flyable sustained-climb ceiling) instead of the aggressive `att_los_max_pitch_rad`, which was demanding ~40° sustained climb and stalling the plane.
+- `fg_camera.py`: removed a shared-socket FG telnet altitude probe that raced with the dedicated diagnostic connection (`ConnectionResetError`/`BrokenPipeError`).
+- Tests: `test_body_cmd_controllers.py::test_visual_lock_ignores_alt_loop_uses_pure_los`, `::test_no_visual_lock_caps_steep_los_to_flyable_climb`; `test_gz_race_contracts.py` updated for the `update_track(False, ...)` geometric-only path.
+
+## 0.33.2 - FG balloon origin follows live aircraft MSL
+- `--viz` 60s: HSV yellow ring on camera, but control `tracker_in_view` stayed false all 60s (`geom_ok` never true, centroid 120–400 px from EKF UV). 0 passes; closest ~43 m. Plot ΔD≈0 (EKF rebase). Spawn-time FG `/position/altitude-ft`=3977 ft (1212 m) vs balloons at 3015.7 ft (919.2 m) → models ~293 m below the visual plane, so the blob sat low and the 80 px geom-gate rejected it.
+- Spawn NED origin is live `/position/altitude-ft` (fallback 919.2 m); Nasal also writes `elevation-ft` on the placed node.
+- After that origin match, `--viz` geom distance was still ≥165 px (lateral + chrome). Geom-gate now applies only to headless synth; `--viz` follows the HSV blob so look-at can start.
+
+## 0.33.1 - FG balloons at sea level; camera still on the FG window
+- FG `geo.put_model` writes `elevation-m`. `FGModelMgr::add_model` only reads `elevation-ft` (default 0). Live spawn logged `alt=919.2` m but models sat at 0 ft MSL (~500 m under the Rascal). Plot `z(D)` still matched EKF chase, so the plane never dove to the visible balloons.
+- Spawn uses `fgcommand("add-model")` with `elevation-ft` from MSL metres (`919.2 m → 3015.7 ft`).
+- `fit_window_outside_rect` shrinks `balloon_camera` into the leftover screen strip when FG is nearly fullscreen (640×480 could not sit beside it). Re-parks every 2 s.
+- Tests: `test_fg_model_mgr_uses_elevation_ft_not_meters`; `test_nearly_fullscreen_fg_shrinks_camera_to_clear`.
+
+## 0.33.0 - Balloons spawn before the airplane is used
+- Race `--viz`/`--yasim`/`--gz`: `python -m fw_sitl.balloon_scene --setup … --fg|--gz` after sim/fan-out, **before** PX4 HEARTBEAT and control. Headless synth has no FG/GZ models.
+- `spawn_fg_from_setup` places the cruise-MSL cluster (`local_z=0`), not EKF `pos_d`. GZ create retries until the world is up.
+- Control `--no-sim` skips telnet/gz create (launcher already placed). Standalone control that owns the sim still spawns before MAVLink connect.
+- Tests: `test_spawn_fg_from_setup_uses_cruise_msl`; launcher/control spawn-order contracts.
+
+## 0.32.3 - balloon_camera sat on the FG window
+- `--viz` `mss` grabs the FlightGear rectangle as composited on screen. OpenCV `balloon_camera` defaulted to (0,0) on top of FG → recursive window-in-window in the camera view.
+- `place_outside_rect` puts the HighGUI window to the right (else below/left/above) of FG; parks top-right until FG geometry is known; retries every 2 s.
+- Tests: `test_fg_camera.TestPlaceOutsideRect`; camera contract requires `moveWindow`.
+
+## 0.32.2 - FG balloons used EKF local Z as MSL down
+- `--viz` plot `z(D)` matched `tgt z` (same rebased PX4 local frame). FG `geo.put_model` took those z values as metres below cruise MSL 919.2. Live CSV `pos_d≈155` while JSBSim stayed ~919 m MSL → every balloon ~155 m under the plane.
+- FG spawn is `rebase_balloons_to_local_z(..., local_z=0)`: plot-relative heights at cruise MSL. Chase/CSV still rebase onto settled EKF z.
+- Tests: `test_fg_spawn_uses_config_ned_not_ekf_rebased_z`; `test_fg_cluster_at_cruise_msl_matches_plot_relative_z`.
+
+## 0.32.1 - Smooth --viz balloon_camera
+- Cause: FG image source called `sync_camera_view` (~26 telnet `set`s) and a full X11 window hunt every 20 Hz tick. `FgTelnet.set_prop` waited for a reply that `set` often never sends (2 s socket timeout) and FG handles props on the render thread — `balloon_camera` froze, then jumped several seconds of motion.
+- `set_prop` is send-only. View sync + window geometry refresh every 2 s; reuse mss and cached geometry. xwininfo skips tiny class=fgfs children; first successful locate backend returns.
+- Tests: `test_fg_camera` (nowait set, cached grab, xwininfo skip, publisher period contract).
+
 ## 0.32.0 - Aircraft spawn in flightSetup.json (all plants)
 - `spawn.ned` / `heading_deg` (0=north, 90=east) in the same home NED frame as balloons. Default `[0,0,0]` heading 0 (200 m south of balloon 0, nose north).
 - Race `--setup` writes JSBSim IC / FG `FG_ARGS_EX` / `PX4_GZ_MODEL_POSE` + GZ spawn velocity. JSBSim/YASim chase is balloon−spawn (PX4 home≈spawn); Gazebo keeps world NED. FG models stay on world XY.
@@ -56,6 +207,7 @@
 - `--gz` locks a constant NED `origin_bias` from the first good EKF+mesh pair (`|h| >= 1 m`), then race/CSV/pass/plots use `pos = ekf − bias` (spawn/balloon frame). Stops per-tick mesh overwrite after lock. Pose tmux pane stays for the lock sample.
 - 1 Hz `ekf_err_h` is still raw horizontal |EKF−mesh| (~50 m SITL origin offset). Do not treat raw EKF as balloon-frame NED.
 - Verified live `--gz` 60 s: lock `|h|=48.6 m` (N=5.9,E=48.2); raw `ekf_err_h` stayed ~49–52 m; CSV passes at balloon 0 `(293.5,-1.7)` vs `(300,0)` and balloon 1 `(593.2,79.2)` vs `(600,80)` (within `pass_radius_m=7`).
+- Verified live `--gz` 60 s: lock `|h|=48.6 m` (N=5.9,E=48.2); raw `ekf_err_h` stayed ~49–52 m; CSV passes at balloon 0 `(293.5,-1.7)` vs `(300,0)` and balloon 1 `(593.2,79.2)` vs `(600,80)` (within `pass_radius_m=7`).
 
 ## 0.25.0 - Gz mag default, GPS automatic, log |EKF−mesh|
 - `prepare_sitl_arming` omits `SYS_HAS_MAG` on gz plants (leave airframe default; `--gz` still skips reboot) and sets `EKF2_GPS_MODE=0` (Automatic). JSBSim/YASim keep `SYS_HAS_MAG=0` and `EKF2_GPS_MODE=1`. `COM_ARM_MAG_STR=0` on all plants.
@@ -74,6 +226,7 @@
 
 ## 0.24.1 - Gazebo race NED from world pose, not drifted EKF
 - On `--gz`, CSV / 1 Hz print / pass detection / history plots use the plane's Gazebo ENU pose converted with the same origin as balloon spawn. PX4 `LOCAL_POSITION_NED` can be 150 m east of the mesh while `race_cam` is already inside the sphere (`SYS_HAS_MAG=0`, loose GPS).
+- Real `gz model -m <name> --pose` output is `[x y z]`/`[roll pitch yaw]` (space-separated, brackets) — the first cut guessed `--pose --name` flags and a comma/pipe parser, which is not the real CLI; `fetch_gz_model_enu` silently returned `None` and every sample kept falling back to the EKF pos. Fixed CLI to `gz model -m <name> --pose` and the parser to a bracket-number regex; verified live against `docker exec px4-noble-gz-plane gz model -m rc_cessna_0 --pose` and a full race where `pass` events log `pos_ned` within the balloon radius.
 - Real `gz model -m <name> --pose` output is `[x y z]`/`[roll pitch yaw]` (space-separated, brackets) — the first cut guessed `--pose --name` flags and a comma/pipe parser, which is not the real CLI; `fetch_gz_model_enu` silently returned `None` and every sample kept falling back to the EKF pos. Fixed CLI to `gz model -m <name> --pose` and the parser to a bracket-number regex; verified live against `docker exec px4-noble-gz-plane gz model -m rc_cessna_0 --pose` and a full race where `pass` events log `pos_ned` within the balloon radius.
 
 ## 0.24.0 - Interactive race plots; shared time axis
@@ -101,6 +254,9 @@
 ## 0.23.6 - Race plots block in eog until closed
 - Tk/matplotlib windows from detached tmux never appeared, and `xdg-open` returned immediately so the process exited before anything showed. Figures are drawn with Agg, saved as PNGs, then `eog --new-instance` opens them on `$DISPLAY` and the control process waits until that window is closed.
 
+## 0.23.6 - Race plots block in eog until closed
+- Tk/matplotlib windows from detached tmux never appeared, and `xdg-open` returned immediately so the process exited before anything showed. Figures are drawn with Agg, saved as PNGs, then `eog --new-instance` opens them on `$DISPLAY` and the control process waits until that window is closed.
+
 ## 0.23.5 - Race plots open on the desktop after tmux teardown
 - Control runs in a detached tmux pane, so matplotlib `plt.show()` never appeared on the host display. After a race, PNGs are written next to the CSV (`/tmp/balloon_race_<stamp>_history.png` and `_trajectory.png`) and opened with `xdg-open`. `--no-plot` still skips both.
 
@@ -110,6 +266,12 @@
 
 ## 0.23.3 - Gazebo timed end no longer restarts
 - `runSimGzPlane.sh` GPU→CPU fallback only on an immediate launch failure. `docker rm -f` after a live race (exit 137/143 or ≥30 s) stops the script instead of starting a second Gazebo.
+
+## 0.23.3 - Gazebo timed end no longer restarts
+- `runSimGzPlane.sh` GPU→CPU fallback only on an immediate launch failure. `docker rm -f` after a live race (exit 137/143 or ≥30 s) stops the script instead of starting a second Gazebo.
+
+## 0.23.2 - NED plot dashed current target
+- Figure 1 NED position overlays dashed tgt x/y/z (current balloon at each time, same colors as the plane).
 
 ## 0.23.2 - NED plot dashed current target
 - Figure 1 NED position overlays dashed tgt x/y/z (current balloon at each time, same colors as the plane).
@@ -121,7 +283,7 @@
 - `./run_balloon_race.sh` runs `kill.sh --all` before starting a new plant (not with `--no-sim`).
 - Default `guidance.duration_s` is 60 s; `0` / `--duration 0` has no time limit. `--duration SEC` on the launcher (else `BALLOON_RACE_DURATION`).
 - Race-owned runs pass `--stop-sim-on-exit`: after duration/laps/Ctrl+C, remove SITL docker stacks, then plot vs time (`--no-plot` to skip).
-- Race CSV adds `tgt_n/e/d` beside plane `pos_n/e/d`. History plots geometric LOS az/el to the current balloon and plane−target ΔN/ΔE/ΔD (JSBSim / `--viz` / YASim / Gazebo).
+- Race CSV adds `tgt_n/e/d` beside plane `pos_n/e/d`. History plots geometric LOS az/el to the current balloon and plane−target ΔN/ΔE/ΔD (JSBSim / `--viz` / YASim / Gazebo). 3D trajectory marks each balloon in its RGB.
 
 ## 0.22.0 - Per plant+airframe controller constants
 - Host outer loop (PID, bank, thrust, speed, lookahead, `FW_AIRSPD_*`) and PX4 inner `FW_*` overlays live in `fw_sitl/plant_gains.py` keyed by `jsbsim_rascal` / `yasim_rascal` / `gz_rc_cessna` / `gz_advanced_plane`.
@@ -162,6 +324,7 @@
 - Assisted (out-of-view) attitude chase froze origin at the aircraft every tick, so intercept xt was always 0 and the plane crabbed off the line to the balloon.
 - Lock origin+course on target change (same intercept + coordinated heading as straight hold). In-view LOS look-at is unchanged.
 - After a pass, recompute chase LOS before locking: using the pre-pass dir froze a line along the old heading (wrap to balloon 0 flew 23° instead of ~200° back).
+- After a pass, recompute chase LOS before locking: using the pre-pass dir froze a line along the old heading (wrap to balloon 0 flew 23° instead of ~200° back).
 
 ## 0.21.2 - Attitude hold ignores uncoordinated ground track
 - Bank used `atan2(vy, vx)` whenever gs ≥ 5 m/s. After late in-air arm, track was ~160° from yaw; heading error ~116° saturated +26° roll and the path S-curved (xt rms ~570 m).
@@ -200,9 +363,20 @@
 ## 0.19.3 - Race chase uses ground-track bank (same as straight hold)
 - Attitude chase banks from ground track vs balloon course, not yaw-only.
 
+## 0.19.3 - Race chase uses ground-track bank (same as straight hold)
+- Attitude chase banks from ground track vs balloon course, not yaw-only.
+
 ## 0.19.2 - Attitude hold crabbed ~80 m off the line
 - Yaw P cancelled xt P at ~0° roll (peak xt −83 m, then slow return). Bank now uses ground track vs course+lookahead intercept.
 - Missing ATTITUDE used identity (north) vs a west lock → 90° fake yaw error; hold until real attitude.
+
+## 0.19.2 - Attitude hold crabbed ~80 m off the line
+- Yaw P cancelled xt P at ~0° roll (peak xt −83 m, then slow return). Bank now uses ground track vs course+lookahead intercept.
+- Missing ATTITUDE used identity (north) vs a west lock → 90° fake yaw error; hold until real attitude.
+
+## 0.19.1 - Attitude hold was banking the wrong way on cross-track
+- Right-of-line commanded more right bank (`+kp*xt`) → spiral (GZ run: xt −866 m rms 410 m; height held).
+- Sign is now toward the line; thrust scales by `1/cos(roll)` so banked flight keeps altitude.
 
 ## 0.19.1 - Attitude hold was banking the wrong way on cross-track
 - Right-of-line commanded more right bank (`+kp*xt`) → spiral (GZ run: xt −866 m rms 410 m; height held).
@@ -216,6 +390,10 @@
 ## 0.18.13 - In-air TECS dove; chase Z followed the sink
 - `z_cmd` was `pos_z−40` every tick. Clamp vs last command; do not raise `z_hold` toward a descending `pos_z`.
 - Growing Z error still did not climb until t≈60 s (`gs≈32`). Spawn TAS ~14 vs trim 30 → TECS underspeed pitch-down. GZ race sets `FW_AIRSPD_TRIM`+airspeed SP to 16 m/s until level, then cruise 30. `FW_USE_AIRSPD=0` idled throttle — not used.
+
+## 0.18.12 - In-view chase was ratcheting a sink
+- Alt-preserve used current `pos_z` every tick during a turn, so an in-air descent became the altitude command and the balloon left the top of the image.
+- Freeze last commanded Z on large heading error; when `in_view`, command 3D LOS altitude (skip alt-preserve) so the plane can climb to the blob.
 
 ## 0.18.12 - In-view chase was ratcheting a sink
 - Alt-preserve used current `pos_z` every tick during a turn, so an in-air descent became the altitude command and the balloon left the top of the image.
@@ -238,6 +416,11 @@
 ## 0.18.8 - Gazebo GUI follow uses rc_cessna_0
 - Race GUI stayed at spawn/origin: follow locked `rc_cessna` because that string is a substring of listed `rc_cessna_0`, then CameraTracking `NodeByName` failed.
 - Exact `gz model --list` names (prefer `model_0`); bake `<follow_target>rc_cessna_0</follow_target>` + 10 m / 3 m offset into `GZ_GUI_CONFIG`.
+
+## 0.18.7 - Gazebo race panes: keep conda libs, unbuffered logs
+- Camera pane aborted `Assertion failed: !_more (src/fq.cpp:80)`: ZMQ CONFLATE is incompatible with multipart image/color/track. Default `conflate=False`; `poll_and_update` already keeps the latest. Also keep conda `LD_LIBRARY_PATH` (0.18.5 unset mixed libzmq). tmux libtinfo lines are cosmetic.
+- Image pane looked stuck on `Starting gz camera bridge` because `docker exec -i` block-buffers Python stdout. `PYTHONUNBUFFERED=1` / `python -u` on race panes + gz docker exec.
+- Race launcher uses `${PYTHON:-python3}` so `(pigeon)` wins when that env is active.
 
 ## 0.18.7 - Gazebo race panes: keep conda libs, unbuffered logs
 - Camera pane aborted `Assertion failed: !_more (src/fq.cpp:80)`: ZMQ CONFLATE is incompatible with multipart image/color/track. Default `conflate=False`; `poll_and_update` already keeps the latest. Also keep conda `LD_LIBRARY_PATH` (0.18.5 unset mixed libzmq). tmux libtinfo lines are cosmetic.

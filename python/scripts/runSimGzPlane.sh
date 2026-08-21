@@ -75,8 +75,7 @@ if [[ ! -f "${SETUP}" ]]; then
 	exit 1
 fi
 if [[ -z "${POSE}" ]]; then
-	PYTHONPATH="${PYTHON_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
-	POSE="$(python3 -m fw_sitl.spawn_ic --setup "${SETUP}" --gz-pose)"
+	POSE="$(PYTHONPATH="${PYTHON_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" python3 -m fw_sitl.spawn_ic --setup "${SETUP}" --gz-pose)"
 fi
 if [[ -z "${POSE}" ]]; then
 	POSE="0,0,500,0,0,1.570796"

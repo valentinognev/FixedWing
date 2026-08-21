@@ -74,6 +74,10 @@ def q_des_from_path(
     return from_rpy(roll, pitch, yaw_rad)
 
 
+# Ignore sub-deadband bearing noise so straight homing does not bang roll.
+LOS_HEADING_DEADBAND_RAD = math.radians(3.0)
+
+
 def q_des_from_los(
     dir_ned: tuple[float, float, float],
     *,
@@ -86,6 +90,7 @@ def q_des_from_los(
     z_ned: float | None = None,
     z_hold: float | None = None,
     kp_alt: float = 0.0,
+    deadband_rad: float = LOS_HEADING_DEADBAND_RAD,
 ) -> Quat:
     """Gazebo FW look-at: bank onto LOS azimuth vs body +X, pitch to elevation.
 
@@ -97,6 +102,9 @@ def q_des_from_los(
     ``kp_alt`` mixes the path altitude loop into pitch: geometric ``los_el``
     alone is only a few degrees when still hundreds of metres out, so a
     high plane would never descend onto the balloon.
+
+    ``deadband_rad`` zeros (then softens) small heading error so HSV/geom
+    jitter of a few degrees does not command saturated bank on a straight run.
     """
     dx, dy, dz = (float(dir_ned[0]), float(dir_ned[1]), float(dir_ned[2]))
     horiz = math.hypot(dx, dy)
@@ -108,6 +116,11 @@ def q_des_from_los(
     los_el = math.atan2(-dz, horiz) if horiz > 1e-9 else 0.0
     heading_ref = float(heading_rad) if heading_rad is not None else yaw_act
     heading_err = wrap_pi(los_az - heading_ref)
+    db = max(0.0, float(deadband_rad))
+    if abs(heading_err) <= db:
+        heading_err = 0.0
+    else:
+        heading_err = math.copysign(abs(heading_err) - db, heading_err)
     roll = max(-max_roll, min(max_roll, kp_heading * heading_err))
     pitch = los_el
     if z_ned is not None and z_hold is not None:

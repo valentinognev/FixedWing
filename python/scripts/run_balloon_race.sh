@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tmux launcher for balloon-race: sim → heartbeat → image + camera + control.
+# tmux launcher for balloon-race: sim → balloons → heartbeat → image + camera + control.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -15,6 +15,11 @@ NO_SIM=0
 NO_PLOT=0
 DETACH=0
 DURATION=""
+# --viz/--yasim: PX4's EKF dead-reckons (no GPS aiding) and drifts from
+# FG/JSBSim ground truth. Guidance always rebases pos/att from FG telnet.
+# --ekf-fix gps is disabled (crashed / never armed); see UPDATES.md 0.35.1.
+# Kept as a reject-only flag so old command lines fail loudly.
+EKF_FIX="rebase"
 CONTAINER_NAME="${PX4_JSBSIM_DOCKER_NAME:-px4-noble-jsbsim-rascal}"
 # Balloon race needs distinct UDP feeds for control + image-source.
 MAVLINK_FANOUT="${MAVLINK_FANOUT:-1}"
@@ -33,9 +38,10 @@ usage() {
   echo "  --duration  race length seconds (0 = no time limit; default: flightSetup.json)"
   echo "  --no-plot   skip post-race plots (PNG + desktop viewer; default: show)"
   echo "  --detach    leave tmux in the background (default: attach, control pane)"
+  echo "  --ekf-fix   rebase only (--viz/--yasim). gps is disabled (see UPDATES.md 0.35.1)"
   echo "  Enables mavlink-server fan-out by default (MAVLINK_FANOUT=1);"
   echo "  aborts image/control if fan-out is not running."
-  echo "  After sim/fan-out: wait for HEARTBEAT on UDP ${MAVLINK_CONTROL_PORT}"
+  echo "  After sim/fan-out: place FG/GZ balloons, then wait for HEARTBEAT on UDP ${MAVLINK_CONTROL_PORT}"
   echo "  (timeout HEARTBEAT_TIMEOUT_S=${HEARTBEAT_TIMEOUT_S}s, fail if none)."
   echo "  Timed end: host matplotlib window (zoom/pan, shared time axis)."
   exit 0
@@ -126,6 +132,7 @@ while [[ $# -gt 0 ]]; do
     --no-plot) NO_PLOT=1 ;;
     --detach) DETACH=1 ;;
     --duration) DURATION="$2"; shift ;;
+    --ekf-fix) EKF_FIX="$2"; shift ;;
     --setup) SETUP="$2"; shift ;;
     --session) SESSION="$2"; shift ;;
     -h|--help) usage ;;
@@ -148,6 +155,15 @@ if [[ "${GZ}" -eq 1 && "${YASIM}" -eq 1 ]]; then
 fi
 if [[ "${MODEL_SET}" -eq 1 && "${GZ}" -eq 0 ]]; then
   echo "Error: --model requires --gz" >&2
+  exit 2
+fi
+if [[ "${EKF_FIX}" == "gps" ]]; then
+  echo "Error: --ekf-fix gps is disabled. Mag+GPS crashed; GPS-only never armed." >&2
+  echo "Use rebase (default) or see UPDATES.md 0.35.1." >&2
+  exit 2
+fi
+if [[ "${EKF_FIX}" != "rebase" ]]; then
+  echo "Error: --ekf-fix must be rebase (got '${EKF_FIX}'). gps is disabled." >&2
   exit 2
 fi
 
@@ -245,7 +261,7 @@ if [[ "${NO_SIM}" -eq 0 ]]; then
   CTL_CMD+=" --stop-sim-on-exit"
 fi
 if [[ "${VIZ}" -eq 1 ]]; then
-  CTL_CMD+=" --viz --spawn-fg-balloons"
+  CTL_CMD+=" --viz --spawn-fg-balloons --ekf-fix ${EKF_FIX}"
 fi
 if [[ "${GZ}" -eq 1 ]]; then
   IMG_CMD+=" --container ${CONTAINER_NAME}"
@@ -255,7 +271,7 @@ if [[ "${GZ}" -eq 1 ]]; then
   POSE_CMD+=" --container ${CONTAINER_NAME} --model ${GZ_MODEL}"
 fi
 if [[ "${YASIM}" -eq 1 ]]; then
-  CTL_CMD+=" --yasim --spawn-fg-balloons"
+  CTL_CMD+=" --yasim --spawn-fg-balloons --ekf-fix ${EKF_FIX}"
 fi
 
 # One window; peers are split panes (tiled) after heartbeat.
@@ -284,7 +300,29 @@ if [[ "${MAVLINK_FANOUT}" == "1" ]] && ! mavlink_fanout_up; then
   echo "  Fix: python/scripts/fetch_mavlink_server.sh" >&2
   echo "  Or rebuild Noble image / set MAVLINK_FANOUT=0 (not recommended for race)." >&2
   echo "  Attach to see sim pane: tmux attach -t ${SESSION}" >&2
+  echo "  Sim pane:" >&2
+  tmux capture-pane -t "${SESSION}:0.0" -p -S -40 2>/dev/null | sed 's/^/    /' >&2 || true
   exit 1
+fi
+
+# Visual balloons before PX4 HEARTBEAT (aircraft in use). Headless synth has no models.
+if [[ "${VIZ}" -eq 1 || "${YASIM}" -eq 1 ]]; then
+  echo "Placing FG balloons from ${SETUP} before PX4 heartbeat..."
+  if ! PYTHONPATH="${PYTHON_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" \
+      "${PYTHON}" -m fw_sitl.balloon_scene --setup "${SETUP}" --fg --timeout 90; then
+    echo "Error: FG balloon spawn failed; not launching image/camera/control" >&2
+    tmux kill-session -t "${SESSION}" 2>/dev/null || true
+    exit 1
+  fi
+elif [[ "${GZ}" -eq 1 ]]; then
+  echo "Placing GZ balloons from ${SETUP} before PX4 heartbeat..."
+  if ! PYTHONPATH="${PYTHON_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" \
+      "${PYTHON}" -m fw_sitl.balloon_scene --setup "${SETUP}" --gz --timeout 90 \
+      --container "${CONTAINER_NAME}"; then
+    echo "Error: GZ balloon spawn failed; not launching image/camera/control" >&2
+    tmux kill-session -t "${SESSION}" 2>/dev/null || true
+    exit 1
+  fi
 fi
 
 if ! wait_control_heartbeat "${MAVLINK_CONTROL_PORT}" "${HEARTBEAT_TIMEOUT_S}"; then

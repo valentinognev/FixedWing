@@ -109,6 +109,7 @@ class TrackMessage:
     dir_cam: tuple[float, float, float] | None
     stamp: float = 0.0
     centroid_uv: tuple[float, float] | None = None
+    area_px: float = 0.0
 
 
 def _ctx(context: zmq.Context | None) -> zmq.Context:
@@ -241,6 +242,8 @@ def send_track(sock: zmq.Socket, result: TrackMessage) -> None:
     }
     if result.centroid_uv is not None:
         payload["centroid_uv"] = [float(result.centroid_uv[0]), float(result.centroid_uv[1])]
+    if float(result.area_px) > 0.0:
+        payload["area_px"] = float(result.area_px)
     sock.send_multipart([TOPIC_TRACK, json.dumps(payload, separators=(",", ":")).encode("utf-8")])
 
 
@@ -272,6 +275,7 @@ def recv_track(sock: zmq.Socket, flags: int = 0) -> TrackMessage | None:
         dir_cam=dir_cam,
         stamp=float(data.get("stamp", 0.0)),
         centroid_uv=centroid_uv,
+        area_px=float(data.get("area_px", 0.0) or 0.0),
     )
 
 
@@ -396,6 +400,7 @@ class TrackPublisher:
         centroid_uv: tuple[float, float] | None = None,
         *,
         stamp: float | None = None,
+        area_px: float = 0.0,
     ) -> None:
         send_track(
             self._sock,
@@ -404,6 +409,7 @@ class TrackPublisher:
                 dir_cam=dir_cam,
                 stamp=float(time.time() if stamp is None else stamp),
                 centroid_uv=centroid_uv,
+                area_px=float(area_px),
             ),
         )
 

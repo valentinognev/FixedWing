@@ -17,6 +17,13 @@ import numpy as np
 
 from fw_sitl.balloon_tracker import track_balloon
 from fw_sitl.camera_model import CameraModel
+from fw_sitl.fg_camera import (
+    FG_GEO_REFRESH_PERIOD_S,
+    due_for_refresh,
+    find_fg_window_geometry,
+    fit_window_outside_rect,
+    virtual_screen_rect,
+)
 from fw_sitl.flight_setup import load_flight_setup
 from fw_sitl.race_guidance import ASSISTED_OVERLAY_TEXT, format_ned_pos_line, show_assisted_overlay
 from fw_sitl.zmq_bus import ColorSubscriber, ImageSubscriber, TrackPublisher
@@ -47,11 +54,26 @@ def main() -> int:
     period = 1.0 / setup.camera.rate_hz
     show_ui = not args.no_display
     win = "balloon_camera"
+    last_place_s = 0.0
     if show_ui:
         # WINDOW_NORMAL is 0, same bit as WINDOW_GUI_EXPANDED. That Qt chrome
         # plus conda OpenCV 5 (no bundled fonts) paints balloon_camera black.
         cv2.namedWindow(win, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
         cv2.resizeWindow(win, camera.width_px, camera.height_px)
+        # Do not leave the HighGUI default at (0,0): mss captures whatever
+        # overlaps the FG rectangle, including this window (window-in-window).
+
+        def _park_camera(fg_geo: dict[str, int] | None) -> None:
+            px, py, pw, ph = fit_window_outside_rect(
+                fg_geo,
+                camera.width_px,
+                camera.height_px,
+                screen=virtual_screen_rect(),
+            )
+            cv2.resizeWindow(win, pw, ph)
+            cv2.moveWindow(win, px, py)
+
+        _park_camera(None)
         placeholder = np.zeros((camera.height_px, camera.width_px, 3), dtype=np.uint8)
         cv2.putText(
             placeholder,
@@ -64,6 +86,11 @@ def main() -> int:
         )
         cv2.imshow(win, placeholder)
         cv2.waitKey(1)
+        geo = find_fg_window_geometry(setup.camera.fg_window_pattern)
+        if geo is not None:
+            _park_camera(geo)
+            cv2.waitKey(1)
+            last_place_s = time.time()
     print(
         f"Camera @ {setup.camera.rate_hz} Hz; image={setup.zmq.image} "
         f"track→{setup.zmq.track}; display={'on' if show_ui else 'off'}"
@@ -79,6 +106,12 @@ def main() -> int:
 
         img_sub.poll_and_update()
         latest = img_sub.latest()
+        if show_ui and due_for_refresh(
+            time.time(), last_place_s, FG_GEO_REFRESH_PERIOD_S
+        ):
+            geo = find_fg_window_geometry(setup.camera.fg_window_pattern)
+            last_place_s = time.time()
+            _park_camera(geo)
         if latest is not None:
             frame_rgb = latest.as_numpy()
             result = track_balloon(frame_rgb, target_rgb, camera)
@@ -86,6 +119,7 @@ def main() -> int:
                 result.in_view,
                 result.dir_cam,
                 result.centroid_uv,
+                area_px=float(result.area_px),
             )
             if show_ui:
                 display = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)

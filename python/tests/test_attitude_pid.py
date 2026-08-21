@@ -80,6 +80,16 @@ class TestQDesFromLos(unittest.TestCase):
         self.assertGreater(roll, 0.0)
         self.assertAlmostEqual(pitch, 0.0, places=2)
 
+    def test_los_heading_deadband_zeros_small_bank(self) -> None:
+        # Straight homing: ~2° bearing noise must not bang roll ±max.
+        az = math.radians(2.0)
+        dir_ned = (math.cos(az), math.sin(az), 0.0)
+        q_des = q_des_from_los(
+            dir_ned, yaw_rad=0.0, kp_heading=2.0, deadband_rad=math.radians(3.0)
+        )
+        roll, _p, _y = rpy_from_quat(q_des)
+        self.assertAlmostEqual(roll, 0.0, places=5)
+
     def test_los_above_pitches_up(self) -> None:
         el = math.radians(15.0)
         dir_ned = (math.cos(el), 0.0, -math.sin(el))

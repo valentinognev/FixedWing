@@ -23,7 +23,9 @@ from fw_sitl.race_guidance import (
     format_ned_pos_line,
     offset_balloons_ned,
     rebase_balloons_to_local_z,
+    balloons_with_xy,
     show_assisted_overlay,
+    translate_balloons_ned,
 )
 
 
@@ -204,6 +206,24 @@ class TestRaceGuidance3DLos(unittest.TestCase):
         got = race.chase_dir_ned((0.0, 0.0, 0.0), sim_time_s=0.0)
         for a, b in zip(got, held):
             self.assertAlmostEqual(a, b, places=6)
+
+    def test_visual_hold_keeps_camera_dir_across_brief_hsv_drop(self) -> None:
+        # Pickle 122330: cam_az nan↔finite in ~100 ms flipped roll ±46°.
+        race = _race_3d()
+        held = _normalize3((0.5, 0.2, -0.3))
+        race.update_track(True, held, now_s=1.0)
+        race.update_track(False, (1.0, 0.0, 0.0), now_s=1.1)
+        got = race.chase_dir_ned((0.0, 0.0, 0.0), sim_time_s=1.1)
+        for a, b in zip(got, held):
+            self.assertAlmostEqual(a, b, places=6)
+        self.assertTrue(race.last_in_view)
+        self.assertFalse(race.assisted)
+        # After hold expires, geometric update clears the visual hold flag.
+        race.update_track(False, (0.0, 1.0, 0.0), now_s=2.0)
+        self.assertFalse(race.last_in_view)
+        self.assertTrue(race.assisted)
+        self.assertAlmostEqual(race.last_dir_ned[0], 0.0, places=5)
+        self.assertAlmostEqual(race.last_dir_ned[1], 1.0, places=5)
 
     def test_no_soft_blend_z_hold_api(self) -> None:
         self.assertFalse(
@@ -429,6 +449,30 @@ class TestOffsetBalloonsNed(unittest.TestCase):
         )
         out = offset_balloons_ned(balloons, (0.0, 0.0, 0.0))
         self.assertEqual(out[0].ned, balloons[0].ned)
+
+
+class TestTranslateBalloonsNed(unittest.TestCase):
+    def test_adds_live_aircraft_ned(self) -> None:
+        balloons = (
+            BalloonSpec(ned=(200.0, 0.0, 30.0), color=(255, 0, 0), diameter_m=10.0),
+        )
+        out = translate_balloons_ned(balloons, (512.9, 266.1, 0.0))
+        self.assertAlmostEqual(out[0].ned[0], 712.9)
+        self.assertAlmostEqual(out[0].ned[1], 266.1)
+        self.assertEqual(out[0].ned[2], 30.0)
+        self.assertEqual(out[0].color, (255, 0, 0))
+
+
+class TestBalloonsWithXy(unittest.TestCase):
+    def test_replaces_north_east_keeps_z(self) -> None:
+        balloons = (
+            BalloonSpec(ned=(200.0, 0.0, 30.0), color=(255, 0, 0), diameter_m=10.0),
+            BalloonSpec(ned=(200.0, 200.0, -5.0), color=(0, 255, 0), diameter_m=10.0),
+        )
+        out = balloons_with_xy(balloons, [(900.0, 50.0), None])
+        self.assertEqual(out[0].ned, (900.0, 50.0, 30.0))
+        self.assertEqual(out[1].ned, (200.0, 200.0, -5.0))
+        self.assertEqual(out[0].color, (255, 0, 0))
 
 
 if __name__ == "__main__":

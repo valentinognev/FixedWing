@@ -47,6 +47,17 @@ class TestGzPose(unittest.TestCase):
         self.assertAlmostEqual(back[1], ned[1], places=6)
         self.assertAlmostEqual(back[2], ned[2], places=6)
 
+    def test_ekf_hold_rebase_drops_gz_visual_below_origin(self) -> None:
+        """Rebasing onto EKF z_hold≈66 m puts the sphere 66 m under ENU 500."""
+        from fw_sitl.flight_setup import BalloonSpec
+        from fw_sitl.race_guidance import rebase_balloons_to_local_z
+
+        spec = BalloonSpec(ned=(500.0, 0.0, -10.0), color=(255, 0, 0), diameter_m=10.0)
+        visual = rebase_balloons_to_local_z((spec,), local_z=0.0)
+        drifted = rebase_balloons_to_local_z((spec,), local_z=66.194)
+        self.assertAlmostEqual(ned_to_gz_enu(visual[0].ned)[2], 500.0, places=3)
+        self.assertAlmostEqual(ned_to_gz_enu(drifted[0].ned)[2], 433.806, places=3)
+
     def test_plane_on_spawned_balloon_has_matching_ned_y(self) -> None:
         """Gazebo hit at the red balloon must log y=0 in the spawn NED frame."""
         balloon_ned = (300.0, 0.0, 50.1)

@@ -3,10 +3,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import math
+
 import cv2
 import numpy as np
 
 from fw_sitl.camera_model import CameraModel
+
+# FG Zurich roofs are often the largest red HSV blob. Headless synth disks sit
+# on the geometric projection; only trust a centroid within this many pixels.
+TRACK_GEOM_MAX_PX = 80.0
 
 
 @dataclass(frozen=True)
@@ -83,6 +89,31 @@ def largest_blob_centroid(
     if best is None:
         return None
     return best, best_area
+
+
+def track_centroid_near_expected(
+    centroid_uv: tuple[float, float] | None,
+    expected_uv: tuple[float, float] | None,
+    max_px: float = TRACK_GEOM_MAX_PX,
+    *,
+    width_px: float | int | None = None,
+    height_px: float | int | None = None,
+) -> bool:
+    """True when HSV centroid matches the geometric balloon projection.
+
+    Missing centroid/projection, or a projection outside the image, means
+    the blob is scenery (or the balloon is behind the camera) — reject.
+    """
+    if centroid_uv is None or expected_uv is None:
+        return False
+    u, v = float(expected_uv[0]), float(expected_uv[1])
+    if width_px is not None and not (0.0 <= u < float(width_px)):
+        return False
+    if height_px is not None and not (0.0 <= v < float(height_px)):
+        return False
+    du = float(centroid_uv[0]) - u
+    dv = float(centroid_uv[1]) - v
+    return math.hypot(du, dv) <= float(max_px)
 
 
 def track_balloon(
