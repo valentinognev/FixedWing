@@ -658,6 +658,8 @@ def spawn_balloons_fg(
         status_prop = f"/tmp/fw_balloon_{i}"
         elev_ft = fg_elevation_ft_from_msl_m(alt)
         # elevation-ft: FGModelMgr ignores elevation-m (geo.put_model's field).
+        # enable-hot: 0 at load time clears SG_NODEMASK_TERRAIN_BIT (YASim
+        # collision). Setting the prop after add-model is too late.
         code = (
             f'setprop("{status_prop}", "pending");\n'
             f'fgcommand("add-model", var req = props.Node.new({{\n'
@@ -665,12 +667,15 @@ def spawn_balloons_fg(
             f'  "latitude-deg": {lat:.8f},\n'
             f'  "longitude-deg": {lon:.8f},\n'
             f'  "elevation-ft": {elev_ft:.3f},\n'
-            f'  "heading-deg": 0\n'
+            f'  "heading-deg": 0,\n'
+            f'  "enable-hot": 0\n'
             f'}}));\n'
             f'var n = (req.getNode("property") == nil) ? nil '
             f': props.globals.getNode(req.getNode("property").getValue());\n'
             f'if (n != nil) {{\n'
             f'  n.getNode("elevation-ft", 1).setDoubleValue({elev_ft:.3f});\n'
+            f'  n.getNode("solid", 1).setBoolValue(0);\n'
+            f'  n.getNode("enable-hot", 1).setBoolValue(0);\n'
             f'}}\n'
             f'setprop("{status_prop}", (n == nil) ? "nil" : n.getPath());\n'
         )

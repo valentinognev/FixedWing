@@ -9,4 +9,9 @@
     <ambient><red>1</red><green>0.02</green><blue>0.02</blue></ambient>
     <emission><red>0.65</red><green>0.013</green><blue>0.013</blue></emission>
   </animation>
+  <!-- Last: wiki enable-hot animation. Root <enable-hot> does not clear BVH. -->
+  <animation>
+    <object-name>balloon</object-name>
+    <enable-hot type="bool">false</enable-hot>
+  </animation>
 </PropertyList>

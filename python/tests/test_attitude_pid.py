@@ -14,6 +14,7 @@ if str(_PYTHON_ROOT) not in sys.path:
 
 from fw_sitl.attitude_pid import (
     AttitudePid,
+    chase_speed_mps,
     q_des_from_los,
     q_des_from_path,
     thrust_for_hold,
@@ -78,7 +79,8 @@ class TestQDesFromLos(unittest.TestCase):
         q_des = q_des_from_los(dir_ned, yaw_rad=0.0)
         roll, pitch, _y = rpy_from_quat(q_des)
         self.assertGreater(roll, 0.0)
-        self.assertAlmostEqual(pitch, 0.0, places=2)
+        self.assertGreater(pitch, -0.01)
+        self.assertLess(pitch, math.radians(5.0))
 
     def test_los_heading_deadband_zeros_small_bank(self) -> None:
         # Straight homing: ~2° bearing noise must not bang roll ±max.
@@ -87,6 +89,13 @@ class TestQDesFromLos(unittest.TestCase):
         q_des = q_des_from_los(
             dir_ned, yaw_rad=0.0, kp_heading=2.0, deadband_rad=math.radians(3.0)
         )
+        roll, _p, _y = rpy_from_quat(q_des)
+        self.assertAlmostEqual(roll, 0.0, places=5)
+
+    def test_los_default_deadband_ignores_four_deg_bearing_noise(self) -> None:
+        az = math.radians(4.0)
+        dir_ned = (math.cos(az), math.sin(az), 0.0)
+        q_des = q_des_from_los(dir_ned, yaw_rad=0.0, kp_heading=2.0)
         roll, _p, _y = rpy_from_quat(q_des)
         self.assertAlmostEqual(roll, 0.0, places=5)
 
@@ -137,6 +146,30 @@ class TestQDesFromLos(unittest.TestCase):
         _r1, p_high, _y1 = rpy_from_quat(q_high)
         self.assertAlmostEqual(p_level, 0.0, places=2)
         self.assertLess(p_high, p_level - math.radians(8.0))
+
+    def test_los_bank_adds_nose_up_against_load_factor(self) -> None:
+        """23° intercept bank drops lift; without extra pitch they sag ~10 m."""
+        az = 0.40
+        dir_ned = (math.cos(az), math.sin(az), 0.0)
+        q_level = q_des_from_los(dir_ned, yaw_rad=0.0, kp_heading=0.0)
+        q_bank = q_des_from_los(dir_ned, yaw_rad=0.0, kp_heading=1.5)
+        _r0, p_level, _ = rpy_from_quat(q_level)
+        _r1, p_bank, _ = rpy_from_quat(q_bank)
+        self.assertGreater(abs(_r1), math.radians(15.0))
+        self.assertGreater(p_bank, p_level + math.radians(1.5))
+
+    def test_close_range_shrinks_bookkeeping_alt_mix(self) -> None:
+        """Near the balloon los_el already is the vertical error; adding full
+        kp_alt double-counted and stalled (YASim 195358 ±20° pitch)."""
+        dir_ned = (1.0, 0.0, 0.0)
+        kwargs = dict(yaw_rad=0.0, z_ned=10.0, z_hold=0.0, kp_alt=0.028)
+        _r0, p_far, _ = rpy_from_quat(
+            q_des_from_los(dir_ned, range_m=200.0, **kwargs)
+        )
+        _r1, p_near, _ = rpy_from_quat(
+            q_des_from_los(dir_ned, range_m=15.0, **kwargs)
+        )
+        self.assertGreater(p_far, p_near + math.radians(5.0))
 
     def test_los_on_body_x_zero_roll(self) -> None:
         """Balloon along body +X: no bank, even if a track kwarg is omitted."""
@@ -203,6 +236,84 @@ class TestThrustForHold(unittest.TestCase):
             roll_rad=math.radians(30.0),
         )
         self.assertGreater(banked, level)
+
+    def test_thrust_cuts_when_faster_than_command(self) -> None:
+        """Live JSBSim 180642: GS~27 vs trim 18, no overspeed brake, miss 11–18 m."""
+        matched = thrust_for_hold(
+            z_ned=-100.0, z_hold=-100.0, groundspeed=18.0, speed_mps=18.0
+        )
+        fast = thrust_for_hold(
+            z_ned=-100.0, z_hold=-100.0, groundspeed=27.0, speed_mps=18.0
+        )
+        self.assertLess(fast, matched)
+
+    def test_thrust_adds_when_slower_than_command(self) -> None:
+        matched = thrust_for_hold(
+            z_ned=-100.0, z_hold=-100.0, groundspeed=18.0, speed_mps=18.0
+        )
+        slow = thrust_for_hold(
+            z_ned=-100.0, z_hold=-100.0, groundspeed=12.0, speed_mps=18.0
+        )
+        self.assertGreater(slow, matched)
+
+
+class TestChaseSpeedMps(unittest.TestCase):
+    def test_far_aligned_is_cruise(self) -> None:
+        v = chase_speed_mps(
+            400.0,
+            cruise_mps=18.0,
+            approach_mps=12.0,
+            slow_range_m=180.0,
+            heading_err_rad=0.0,
+        )
+        self.assertAlmostEqual(v, 18.0, places=2)
+
+    def test_at_balloon_is_approach(self) -> None:
+        v = chase_speed_mps(
+            0.0,
+            cruise_mps=18.0,
+            approach_mps=12.0,
+            slow_range_m=180.0,
+        )
+        self.assertAlmostEqual(v, 12.0, places=2)
+
+    def test_mid_range_aligned_is_between(self) -> None:
+        v = chase_speed_mps(
+            90.0,
+            cruise_mps=18.0,
+            approach_mps=12.0,
+            slow_range_m=180.0,
+            heading_err_rad=0.0,
+        )
+        self.assertGreater(v, 12.0)
+        self.assertLess(v, 18.0)
+
+    def test_heading_error_slows_mid_range(self) -> None:
+        aligned = chase_speed_mps(
+            90.0,
+            cruise_mps=18.0,
+            approach_mps=12.0,
+            slow_range_m=180.0,
+            heading_err_rad=0.0,
+        )
+        turning = chase_speed_mps(
+            90.0,
+            cruise_mps=18.0,
+            approach_mps=12.0,
+            slow_range_m=180.0,
+            heading_err_rad=math.pi / 2,
+        )
+        self.assertLess(turning, aligned)
+
+    def test_missing_range_stays_cruise(self) -> None:
+        v = chase_speed_mps(
+            None,
+            cruise_mps=18.0,
+            approach_mps=12.0,
+            slow_range_m=180.0,
+            heading_err_rad=math.pi / 2,
+        )
+        self.assertAlmostEqual(v, 18.0, places=2)
 
 
 if __name__ == "__main__":

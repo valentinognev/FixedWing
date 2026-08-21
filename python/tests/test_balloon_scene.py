@@ -128,9 +128,39 @@ class TestNedGeodetic(unittest.TestCase):
                 self.assertAlmostEqual(channel, val, places=2)
             diffs.append((got[0], got[1], got[2]))
         self.assertEqual(len(set(diffs)), 3, msg=f"diffuse not distinct: {diffs}")
+        for stem, _rgb in colored:
+            text = (ASSETS_BALLOONS / f"{stem}.xml").read_text()
+            self.assertRegex(
+                text,
+                r"<animation>\s*"
+                r"<object-name>balloon</object-name>\s*"
+                r'<enable-hot type="bool">false</enable-hot>\s*'
+                r"</animation>",
+            )
         sphere = (ASSETS_BALLOONS / "balloon_sphere.xml").read_text()
         self.assertIn("<path>balloon_sphere.ac</path>", sphere)
         self.assertNotIn("balloon4.ac", sphere)
+        self.assertRegex(
+            sphere,
+            r"<animation>\s*"
+            r"<object-name>balloon</object-name>\s*"
+            r'<enable-hot type="bool">false</enable-hot>\s*'
+            r"</animation>",
+        )
+
+    def test_fg_spawn_disables_solid_and_hot(self) -> None:
+        """Live 201819: roll 218° / GS 166 after a balloon hit. Root XML
+        enable-hot is ignored; FGModelMgr::add_model reads the request flag
+        (SG_NODEMASK_TERRAIN_BIT) and the object-name animation."""
+        src = Path(spawn_balloons_fg.__code__.co_filename).read_text()
+        start = src.index("def spawn_balloons_fg")
+        snippet = src[start : src.index("def spawn_fg_from_setup")]
+        self.assertIn('"enable-hot": 0', snippet)
+        self.assertLess(
+            snippet.index("props.Node.new"), snippet.index('"enable-hot": 0')
+        )
+        self.assertIn('getNode("enable-hot"', snippet)
+        self.assertIn("setBoolValue(0)", snippet)
 
     def test_color_model_paths_are_distinct_per_rgb(self) -> None:
         paths = {

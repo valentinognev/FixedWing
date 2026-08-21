@@ -160,6 +160,22 @@ def coordinated_turn_radius_m(speed_mps: float, max_roll_rad: float) -> float:
     return float(speed_mps) ** 2 / (_G_MPS2 * math.tan(phi))
 
 
+def flyby_radius_from_speed(
+    trim_mps: float,
+    max_roll_rad: float,
+    groundspeed_mps: float | None = None,
+) -> float:
+    """Fly-by R from the faster of trim and measured GS (R ∝ v²).
+
+    JSBSim attitude-mode Rascal holds ~27 m/s while plant trim is 18; a
+    trim-only radius starts the cut too close and misses tens of metres.
+    """
+    v = float(trim_mps)
+    if groundspeed_mps is not None and math.isfinite(groundspeed_mps):
+        v = max(v, float(groundspeed_mps))
+    return coordinated_turn_radius_m(v, max_roll_rad)
+
+
 def flyby_closing_ahead(
     pos_xy: tuple[float, float],
     balloon_xy: tuple[float, float],

@@ -75,7 +75,12 @@ def q_des_from_path(
 
 
 # Ignore sub-deadband bearing noise so straight homing does not bang roll.
-LOS_HEADING_DEADBAND_RAD = math.radians(3.0)
+LOS_HEADING_DEADBAND_RAD = math.radians(5.0)
+# Far-field bookkeeping-Z fills in tiny los_el; close-in los_el *is* the
+# vertical homing error (double-counting stalled YASim). Extra nose-up in
+# a bank offsets the lift lost to load factor (live sag ~10 m under).
+LOS_ALT_BLEND_RANGE_M = 100.0
+LOS_LOAD_PITCH_RAD = 0.35
 
 
 def q_des_from_los(
@@ -91,6 +96,7 @@ def q_des_from_los(
     z_hold: float | None = None,
     kp_alt: float = 0.0,
     deadband_rad: float = LOS_HEADING_DEADBAND_RAD,
+    range_m: float | None = None,
 ) -> Quat:
     """Gazebo FW look-at: bank onto LOS azimuth vs body +X, pitch to elevation.
 
@@ -99,12 +105,14 @@ def q_des_from_los(
     otherwise actual yaw, vs LOS azimuth so the balloon sits in front of the
     nose (body +X). Used only while on screen.
 
-    ``kp_alt`` mixes the path altitude loop into pitch: geometric ``los_el``
-    alone is only a few degrees when still hundreds of metres out, so a
-    high plane would never descend onto the balloon.
+    ``kp_alt`` mixes the path altitude loop into pitch when still far
+    (geometric ``los_el`` is only a few degrees hundreds of metres out).
+    ``range_m`` fades that mix out on final so LOS elevation is not
+    double-counted. Banked flight adds ``LOS_LOAD_PITCH_RAD`` nose-up so
+    the plane does not sag ~10 m under the balloon in the intercept turn.
 
     ``deadband_rad`` zeros (then softens) small heading error so HSV/geom
-    jitter of a few degrees does not command saturated bank on a straight run.
+    jitter under ~5° does not command saturated bank on a straight run.
     """
     dx, dy, dz = (float(dir_ned[0]), float(dir_ned[1]), float(dir_ned[2]))
     horiz = math.hypot(dx, dy)
@@ -124,7 +132,13 @@ def q_des_from_los(
     roll = max(-max_roll, min(max_roll, kp_heading * heading_err))
     pitch = los_el
     if z_ned is not None and z_hold is not None:
-        pitch += float(kp_alt) * (float(z_ned) - float(z_hold))
+        alt_err = float(z_ned) - float(z_hold)
+        far = 1.0
+        if range_m is not None and math.isfinite(float(range_m)):
+            far = min(1.0, max(0.0, float(range_m) / LOS_ALT_BLEND_RANGE_M))
+        pitch += float(kp_alt) * far * alt_err
+    cphi = math.cos(max(-1.2, min(1.2, roll)))
+    pitch += LOS_LOAD_PITCH_RAD * (1.0 / max(0.35, abs(cphi)) - 1.0)
     pitch = max(-max_pitch, min(max_pitch, pitch))
     return from_rpy(roll, pitch, yaw_act)
 
@@ -140,21 +154,48 @@ def thrust_for_hold(
     min_t: float = MIN_THRUST,
     max_t: float = MAX_THRUST,
     roll_rad: float = 0.0,
+    speed_gain: float = 0.04,
 ) -> float:
-    """More thrust when below hold, slow, or banked (load factor 1/cos φ)."""
+    """Thrust for altitude, load factor, and speed error (slow on final)."""
     alt_err = float(z_ned) - float(z_hold)
     thrust = float(cruise) + float(climb_gain) * alt_err
+    cphi = math.cos(max(-1.2, min(1.2, float(roll_rad))))
+    load = 1.0 / max(0.35, abs(cphi))
+    thrust *= load
     if (
         groundspeed is not None
         and math.isfinite(groundspeed)
         and speed_mps > 0.0
-        and float(groundspeed) < 0.85 * float(speed_mps)
+        and math.isfinite(speed_gain)
     ):
-        thrust += 0.12
-    cphi = math.cos(max(-1.2, min(1.2, float(roll_rad))))
-    load = 1.0 / max(0.35, abs(cphi))
-    thrust *= load
+        thrust += float(speed_gain) * (float(speed_mps) - float(groundspeed))
     return max(float(min_t), min(float(max_t), thrust))
+
+
+def chase_speed_mps(
+    range_m: float | None,
+    *,
+    cruise_mps: float,
+    approach_mps: float,
+    slow_range_m: float,
+    heading_err_rad: float = 0.0,
+) -> float:
+    """Cruise far; blend down to approach speed near the balloon.
+
+    ``R = v²/(g tan φ)``: lower v on final cuts intercept miss. Large heading
+    error trims the blend further so a 90° corner is not taken at cruise.
+    Missing range keeps cruise (straight-flight / tests).
+    """
+    cruise = float(cruise_mps)
+    approach = min(float(approach_mps), cruise)
+    if range_m is None or not math.isfinite(range_m):
+        return cruise
+    slow_r = max(1.0, float(slow_range_m))
+    w = min(1.0, max(0.0, float(range_m)) / slow_r)
+    herr = abs(wrap_pi(float(heading_err_rad)))
+    turn_frac = min(1.0, herr / (math.pi / 2))
+    w *= 1.0 - 0.35 * turn_frac
+    return approach + w * (cruise - approach)
 
 
 def _as_vec3(gain: float | Vec3) -> Vec3:

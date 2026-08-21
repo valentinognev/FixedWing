@@ -19,6 +19,7 @@ from fw_sitl.race_guidance import (
     chase_uses_lookat,
     coordinated_turn_radius_m,
     flyby_closing_ahead,
+    flyby_radius_from_speed,
     flyby_turn_distance_m,
     format_ned_pos_line,
     offset_balloons_ned,
@@ -322,6 +323,16 @@ class TestFlybyTurn(unittest.TestCase):
         self.assertLessEqual(r, 34.0)
         expected = (18.0 ** 2) / (9.81 * math.tan(0.80))
         self.assertAlmostEqual(r, expected, places=1)
+
+    def test_flyby_radius_uses_faster_groundspeed(self) -> None:
+        """Live JSBSim 175115: GS~27 m/s, trim 18 → trim-only R starts the cut too late."""
+        trim_r = flyby_radius_from_speed(18.0, 0.50, None)
+        gs_r = flyby_radius_from_speed(18.0, 0.50, 27.0)
+        self.assertAlmostEqual(trim_r, coordinated_turn_radius_m(18.0, 0.50), places=5)
+        self.assertAlmostEqual(gs_r, coordinated_turn_radius_m(27.0, 0.50), places=5)
+        self.assertGreater(gs_r / trim_r, 2.0)
+        slow_r = flyby_radius_from_speed(18.0, 0.50, 12.0)
+        self.assertAlmostEqual(slow_r, trim_r, places=5)
 
     def test_flyby_90deg_distance_equals_radius(self) -> None:
         d_turn = flyby_turn_distance_m(

@@ -54,7 +54,6 @@ from fw_sitl.race_guidance import (
     RaceGuidance,
     balloons_with_xy,
     chase_uses_lookat,
-    coordinated_turn_radius_m,
     format_ned_pos_line,
     offset_balloons_ned,
     race_end_reason,
@@ -335,7 +334,9 @@ def main() -> int:
         args.sim = SCRIPTS_DIR / "runSimYasimRascal.sh"
     kill_target = "--gz" if args.gz else ("--fg" if args.yasim else KILL_TARGET)
     plant = load_plant_gains(
-        plant_id_from_flags(gz=args.gz, yasim=args.yasim, gz_model=args.model)
+        plant_id_from_flags(
+            gz=args.gz, yasim=args.yasim, viz=args.viz, gz_model=args.model
+        )
     )
     speed_mps = plant.speed_mps
     lookahead_m = plant.lookahead_m
@@ -640,10 +641,6 @@ def main() -> int:
 
     camera = CameraModel.from_spec(setup.camera)
     race = RaceGuidance(race_balloons, setup.guidance)
-    if plant.plant_id == "jsbsim_rascal":
-        race.turn_radius_m = coordinated_turn_radius_m(
-            speed_mps, plant.bank_max_roll_rad
-        )
     cmd_mode = parse_body_cmd_mode(setup.guidance.cmd_mode)
     controller = make_body_cmd_controller(
         cmd_mode,
@@ -1123,6 +1120,14 @@ def main() -> int:
             # Always close chase LOS (blob when visible, else geometric).
             # Overlay still follows race.assisted; frozen path is unused.
             yaw_for_sp = None if use_lookat else att[2]
+            tgt = race.balloon_ned()
+            range_m = math.hypot(pos[0] - tgt[0], pos[1] - tgt[1])
+            if gt_rebase_active and gt_vel is not None:
+                chase_gs = math.hypot(gt_vel[0], gt_vel[1])
+                chase_vx, chase_vy = float(gt_vel[0]), float(gt_vel[1])
+            else:
+                chase_gs = history.last_groundspeed
+                chase_vx, chase_vy = history.last_vx, history.last_vy
             controller.send_chase_setpoint(
                 master,
                 pos,
@@ -1131,14 +1136,15 @@ def main() -> int:
                 yaw_rad=yaw_for_sp,
                 q_act=from_rpy(*att) if gt_rebase_active else history.last_q,
                 dt=period,
-                groundspeed=history.last_groundspeed,
+                groundspeed=chase_gs,
                 in_view=use_lookat,
-                z_target=race.balloon_ned()[2],
-                vx=history.last_vx,
-                vy=history.last_vy,
+                z_target=tgt[2],
+                vx=chase_vx,
+                vy=chase_vy,
                 path_lock_token=race.target_idx,
                 visual_lock=tracker_in_view,
                 q_exec=ekf_q if gt_rebase_active and ekf_q is not None else None,
+                range_m=range_m,
             )
             q_plot = getattr(controller, "last_q_des", None)
             if q_plot is None:

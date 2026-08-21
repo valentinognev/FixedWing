@@ -1178,6 +1178,7 @@ class FlightHistory:
                 linewidths=0.6,
                 label=f"balloon {i}",
                 depthshade=True,
+                picker=False,
             )
         mid, half = self.scene_bounds_neu()
         self._plot_fov_frustums(ax3d, max_frustum_len=max(1.3 * half, 50.0))

@@ -1,5 +1,45 @@
 # Updates
 
+## 0.35.27 - FG balloon collision actually off
+- Live YASim `201819`: still crashed on a hit (roll 218°, GS p90 166). Root XML `<enable-hot>` and a post-`add-model` `solid=0` do not clear `SG_NODEMASK_TERRAIN_BIT`.
+- Wiki form at end of each balloon XML: `<animation><object-name>balloon</object-name><enable-hot>false</enable-hot></animation>`. `add-model` request itself now has `enable-hot: 0` (load-time). Restart FG so `FG_ROOT` copy refreshes.
+
+## 0.35.26 - FG balloons are visual-only
+- `--viz`/`--yasim` `add-model` balloons were solid/hot: YASim ground cache rode the 10 m sphere (pass ~10 m under, pitch hunt). XML `enable-hot=false`; spawn sets `solid` and `enable-hot` false. Same fly-through as Gazebo. 3D plot balloon dots are not pickable.
+
+## 0.35.25 - Vertical homing when low
+- Live YASim `195358`: 3 passes 25 m *above* then a 22 m sag (pitch cmd ±20°, 54 zc). Headless `194912` grazed the 10 m sphere from 7 m under — HSV look-at had zeroed `kp_alt`.
+- `q_des_from_los`: fade bookkeeping-Z mix with range (out by 100 m so close-in `los_el` is not double-counted); extra nose-up `LOS_LOAD_PITCH_RAD` in a bank so the intercept turn does not sag ~10 m. Headless `visual_lock_kp_alt` 0→0.020. Pitch LPF 0.20 s / 30°/s (same as bank).
+- Energy on final: JSBSim/viz approach 12→15 m/s, `climb_thrust` 0.012→0.020; `--gz` approach 10→12, climb 0.012→0.018.
+
+## 0.35.24 - Smooth noisy roll commands
+- Live YASim `194313`: roll cmd sat ±23° 76% of the time; cmd–meas corr 0.18 (plane not tracking). `--viz` 148 cmd sign-flips vs 10 in measured roll — HSV LOS was banging the 60°/s slew cap. `--gz` heading kp 2.0 amplified az jitter.
+- Chase bank: 5° heading deadband, 0.2 s LPF, 30°/s slew, state kept across LOS↔path (HSV drop no longer resets and jumps ±max). `gz_rc_cessna.bank_kp_heading` 2.0→1.4. YASim `FW_RR_P` 0.07→0.14, `FW_RR_FF` 0.35→0.48.
+- Verify headless 60 s `/tmp/balloon_race_20260821_194912.csv`: 3 passes, miss 9.9 / 9.3 / 9.9 m. Roll cmd sign-flips 43→1; max cmd rate 60→30 °/s.
+
+## 0.35.23 - Calibrate `--yasim` miss
+- Live baseline 60 s `/tmp/balloon_race_20260821_192354.csv`: 3 passes, XY 5.8 / 6.0 / 0.4 m but 3D miss 27.1 / 31.0 / 29.0 m (ΔD 26–30 m, still climbing on final). Bank sat at 22.9°. GS p50 22 vs trim 28.
+- `yasim_rascal`: `bank_kp_alt`/`visual_lock_kp_alt` 0.022→0.028, `climb_thrust_per_m` 0.012→0.025, `min_thrust` 0.28→0.18, `slow_range_m` 220→280, `speed_thrust_per_mps` 0.04→0.06. Geometric LOS inside 120 m with |ΔZ|>6 m uses `att_los_max_pitch` (HSV dropped on every YASim pass row).
+- Approach 25 m/s lost the course (0 passes, `193520`). Harder altitude thrust (`climb` 0.040) cut to one pass (`193808`).
+- Verify `/tmp/balloon_race_20260821_193224.csv`: 3 passes, miss 26.5 / 26.4 / 25.8 m (XY 5.4 / 6.8 / 0.4 m). Remaining 3D miss is the 28→20 m/s energy flare (~20 m Δh), not heading.
+
+## 0.35.22 - Calibrate `--viz` and `--gz` miss
+- `--viz` table `jsbsim_rascal_viz` (headless stays `jsbsim_rascal`). HSV look-at keeps `visual_lock_kp_alt` (=`bank_kp_alt`) so FG GT ΔD mixes into pitch; headless synth still zeros it. Chase thrust/heading use FG GT velocity, not EKF GS (live pickle p50 was a frozen 37.7 m/s).
+- `--gz` `gz_rc_cessna`: approach 12→10 m/s, `slow_range` 150→180, `max_roll` 0.50→0.55, cruise thrust 0.55→0.62, `speed_thrust_per_mps` 0.04→0.07, `min_thrust` 0.28→0.22; `visual_lock_kp_alt=0.030`.
+- Live `--viz` 60 s `/tmp/balloon_race_20260821_190857.csv`: 2 passes, miss 9.54 / 9.83 m (ΔD 3.5 m; prior `184447` 9.84 / 11.36 with ΔD 8–11 m). Balloon 2 16 m at t=60. GS p50 18.9.
+- Live `--gz` 60 s `/tmp/balloon_race_20260821_190600.csv`: 2 passes, miss 9.43 / 9.45 m (prior `190029` one pass 9.57 m, GS p50 13.4 → 14.6). Balloon 2 started.
+
+## 0.35.21 - Chase speed blend on all plants
+- Shared `chase_speed_mps`: cruise beyond `slow_range_m`, blend to `approach_speed_mps` on final, extra cut when heading error is large. Thrust P (`speed_thrust_per_mps`) tracks the command (overspeed brake). Wired in attitude and velocity chase; race passes horizontal `range_m`.
+- Tables: jsbsim 18→12 m/s @ 180 m (`min_thrust` 0.22, gain 0.05); yasim 28→20 @ 220 m; gz cessna 16→12 @ 150 m; advanced_plane 20→14 @ 160 m.
+- Live JSBSim 60 s `/tmp/balloon_race_20260821_183220.csv`: 3 passes, miss 10.4 / 9.9 / 9.3 m (b1+b2 unassisted). GS p50 22.6 (was 27). Prior no-blend `180642`: 18.5 / 13.0 / 11.5 m.
+
+## 0.35.20 - JSBSim drop fly-by; max_roll 0.62
+- Live headless 90 s `/tmp/balloon_race_20260821_175115.csv`: one pass, miss 38.2 m (balloon 0, assisted); balloon 1 closest 76 m. Bank sat at 28.6°; GS p50 27 m/s vs trim 18. Fly-by used R(18, 0.50)≈60 m vs actual R(27, 0.50)≈136 m.
+- GS-sized fly-by (`180246`, 60 s) was worse: 0 passes, balloon 0 closest 88 m — already east of balloon 0, so an earlier cut toward balloon 1 opened the miss.
+- JSBSim `turn_radius_m` stays 0 (home until pass, same as GZ/YASim). `jsbsim_rascal.bank_max_roll_rad` 0.50 → 0.62. `flyby_radius_from_speed` remains in `race_guidance` for geometry tests.
+- Verify 60 s `/tmp/balloon_race_20260821_180642.csv`: 3 passes, miss 18.5 / 13.0 / 11.5 m (balloons 0–2, all assisted at the pass row). Roll cmd 35.5°. Full lap + start of balloon 0 again.
+
 ## 0.35.19 - GZ look-at uses HSV blob; skip synth-only geom-gate
 - Live `--gz` `/tmp/balloon_race_20260821_153119.csv`: climbed to tgt_d=0 but `assisted=1` until t=60.6. Pickle cam LOS NaN until then; first sample was az=24° el=10°. Plane flew geometric NED, not the camera error.
 - Cause: 80 px `track_centroid_near_expected` gate (synth roofs) also ran on `--gz`. EKF pinhole vs `race_cam` is far off the blob — same reason `--viz` already skipped it.

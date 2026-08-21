@@ -102,7 +102,8 @@ class TestGzRaceContracts(unittest.TestCase):
         use_at = ctl.index("att = history.last_att_rad")
         self.assertGreater(use_at, poll_at)
         self.assertIn("in_view=use_lookat", ctl)
-        self.assertIn("z_target=race.balloon_ned()[2]", ctl)
+        self.assertIn("z_target=tgt[2]", ctl)
+        self.assertIn("range_m=range_m", ctl)
         self.assertIn("if on_screen:", ctl)
         # Geometric-only projection is dead-reckoning, not a real visual track:
         # in_view=False here so race.assisted correctly reports "not tracking".
@@ -166,7 +167,8 @@ class TestGzRaceContracts(unittest.TestCase):
         self.assertIn("extrapolate_ned", hist)
         self.assertIn("self.sim_x", hist)
         self.assertIn("apply_attitude_cmd_from", ctl)
-        self.assertIn("vx=history.last_vx", ctl)
+        self.assertIn("chase_vx, chase_vy = history.last_vx, history.last_vy", ctl)
+        self.assertIn("vx=chase_vx", ctl)
         self.assertGreaterEqual(
             ctl.count("chase = race.chase_dir_ned("),
             2,

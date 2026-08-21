@@ -1,4 +1,8 @@
 <?xml version="1.0"?>
 <PropertyList>
   <path>balloon_sphere.ac</path>
+  <animation>
+    <object-name>balloon</object-name>
+    <enable-hot type="bool">false</enable-hot>
+  </animation>
 </PropertyList>
