@@ -29,6 +29,8 @@ class TestGzRaceContracts(unittest.TestCase):
         self.assertIn("--duration", text)
         self.assertIn("--setup", text)
         self.assertIn("px4-noble-gz-plane", text)
+        self.assertIn('runSimJsbsimRascal.sh --setup ${SETUP}', text)
+        self.assertIn('runSimYasimRascal.sh --setup ${SETUP}', text)
         self.assertIn('IMG_CMD+=" --container ${CONTAINER_NAME}"', text)
         self.assertIn('CTL_CMD+=" --gz-container ${CONTAINER_NAME}"', text)
         self.assertIn("import cv2, numpy, zmq, pymavlink, matplotlib", text)
@@ -102,7 +104,9 @@ class TestGzRaceContracts(unittest.TestCase):
         self.assertIn("in_view=use_lookat", ctl)
         self.assertIn("z_target=race.balloon_ned()[2]", ctl)
         self.assertIn("if on_screen:", ctl)
-        self.assertIn("race.update_track(True, race.geometric_los(pos))", ctl)
+        # Geometric-only projection is dead-reckoning, not a real visual track:
+        # in_view=False here so race.assisted correctly reports "not tracking".
+        self.assertIn("race.update_track(False, race.geometric_los(pos), now_s=now_s)", ctl)
         self.assertIn("dir_cam_to_ned(last_dir_cam", ctl)
         self.assertIn("history.note_cam_los", ctl)
         # Pixel look-at first: geometric on-screen was zeroing PX4 yaw while
@@ -111,11 +115,60 @@ class TestGzRaceContracts(unittest.TestCase):
             ctl.index("if tracker_in_view:"),
             ctl.index("elif on_screen:"),
         )
-        self.assertIn("approach = (history.last_vx, history.last_vy, 0.0)", ctl)
+        # Headless synth: HSV roofs ≠ balloon, so require centroid near the
+        # geometric projection. --viz/--yasim/--gz skip that 80 px gate:
+        # FG window and GZ race_cam vs EKF pinhole are 150–300 px off the blob
+        # (live 153119: assisted=1 for 60 s, first cam_az at t=60.6 was 24°).
+        self.assertIn("track_centroid_near_expected", ctl)
+        gate = ctl[
+            ctl.index("geom_ok = track_centroid_near_expected") : ctl.index(
+                "use_lookat = chase_uses_lookat"
+            )
+        ]
+        self.assertIn("not geom_ok", gate)
+        self.assertIn("args.viz", gate)
+        self.assertIn("args.gz", gate)
+        self.assertIn("args.yasim", gate)
+        self.assertIn("project_ned_offset_to_pixel", ctl)
+        self.assertIn("approach_xy", ctl)
+        self.assertIn("history.last_vx", ctl)
+        self.assertIn("offset_balloons_ned", ctl)
+        self.assertIn("world_balloons", ctl)
+        self.assertIn("sim_extra = [\"--setup\", str(args.setup)]", ctl)
         self.assertIn("path_lock_token=race.target_idx", ctl)
+        self.assertIn("read_pose_deg", ctl)
+        self.assertIn("read_pose_snapshot", ctl)
+        self.assertIn("need_models", ctl)
+        self.assertIn("vel_ned", ctl)
+        self.assertIn("add_rpy_offset_from", ctl)
+        self.assertIn("q_exec=ekf_q", ctl)
+        self.assertIn("diag_tel.close()", ctl)
+        self.assertIn("ekf_q = history.last_q", ctl)
+        self.assertNotIn("poll_vehicle_state(master)", ctl)
+        self.assertIn("def _gt_reader_loop", ctl)
+        self.assertIn("gt_holder.lock", ctl)
+        self.assertIn("slew_toward_rpy", ctl)
+        self.assertIn("gt_ned_off_tgt", ctl)
+        self.assertIn("absorb_vel_jumps_from", ctl)
+        self.assertIn("extrapolate_ned", ctl)
+        self.assertIn("goal-field-of-view", ctl)
+        self.assertIn("holder.t_start", ctl)
+        self.assertIn("fg_balloons_ned_from_models", ctl)
+        self.assertIn("balloons_with_xy", ctl)
+        self.assertIn("placed_origin", ctl)
+        self.assertIn("last_ekf_pos", ctl)
+        self.assertIn("last_q_des", ctl)
+        self.assertIn("clear_series", ctl)
+        self.assertIn("_gt_pose_from_telnet_raw", ctl)
+        self.assertIn("absorb_yaw_jumps_from", ctl)
+        hist = (_PYTHON_ROOT / "fw_sitl" / "flight_history.py").read_text(encoding="utf-8")
+        self.assertIn("time_boot_ms", hist)
+        self.assertIn("extrapolate_ned", hist)
+        self.assertIn("self.sim_x", hist)
+        self.assertIn("apply_attitude_cmd_from", ctl)
         self.assertIn("vx=history.last_vx", ctl)
         self.assertGreaterEqual(
-            ctl.count("chase = race.chase_dir_ned(pos, sim_time_s=now_s)"),
+            ctl.count("chase = race.chase_dir_ned("),
             2,
         )
 
@@ -184,19 +237,39 @@ class TestGzRaceContracts(unittest.TestCase):
     def test_control_gz_after_engage(self) -> None:
         ctl = _CTL.read_text(encoding="utf-8")
         self.assertIn("spawn_balloons_gz(", ctl)
+        self.assertIn("want_gz_balloons and not args.no_sim", ctl)
         self.assertGreater(
+            ctl.index("engage_offboard_with_retries("),
             ctl.index("spawn_balloons_gz("),
-            ctl.index("engage_offboard_with_retries"),
         )
         # Do not gate engage on airspeed: tmux heartbeat wait already stalls the
         # unarmed Cessna (spawn velocity is one-shot). Straight flight engages ASAP.
         self.assertNotIn("wait_min_airspeed(master)", ctl)
         self.assertIn("--spawn-gz-balloons", ctl)
+        self.assertIn("offset_balloons_ned", ctl)
+        self.assertIn("world_balloons", ctl)
         self.assertIn("accept_unhealthy", ctl)
         # Plant table owns FW_AIRSPD_* (Cessna trim 16; no post-engage overlay).
         self.assertIn("prepare_sitl_arming(master, plant)", ctl)
+        self.assertNotIn("force_gps_aiding=force_gps_aiding", ctl)
         self.assertIn("plant_id_from_flags", ctl)
         self.assertNotIn("GZ: airspeed SP", ctl)
+
+    def test_gz_chase_z_matches_spawned_models_not_ekf_hold(self) -> None:
+        """Live 151653: pass ΔD≈1 m vs tgt_d=66 while GZ spheres stay at ENU z=500.
+
+        spawn_gz_from_setup uses local_z=0; rebasing chase onto EKF z_hold after
+        the unarmed fall makes the plot hit and the mesh pass ~60 m under.
+        """
+        ctl = _CTL.read_text(encoding="utf-8")
+        start = ctl.index("# Config balloon Z is home/aircraft-relative")
+        end = ctl.index('f"Balloon NED rebased to local z=')
+        block = ctl[start:end]
+        gz_idx = block.index("if args.gz:")
+        else_idx = block.index("else:", gz_idx)
+        gz = block[gz_idx:else_idx]
+        self.assertIn("local_z=0.0", gz)
+        self.assertNotIn("z_hold_true)", gz)
 
     def test_wait_min_airspeed_exists(self) -> None:
         mav = _MAV.read_text(encoding="utf-8")
@@ -260,11 +333,39 @@ class TestGzRaceContracts(unittest.TestCase):
         ctl = _CTL.read_text(encoding="utf-8")
         self.assertIn("PATH_SAMPLE_PERIOD_S = 1.0", ctl)
         sample = ctl[ctl.index("if now_s - last_path_sample_t"):]
-        self.assertIn("format_ned_pos_line(now_s, pos)", sample)
-        self.assertIn("pos_ned=pos", ctl)
+        self.assertIn("format_ned_pos_line(now_s, plane_ned)", sample)
+        self.assertIn("pos_ned=plane_ned", ctl)
         cam = _CAM.read_text(encoding="utf-8")
         self.assertIn("format_ned_pos_line", cam)
         self.assertIn("latest_color.pos_ned", cam)
+
+    def test_camera_window_is_simple_gui_not_qt_expanded(self) -> None:
+        """WINDOW_NORMAL==0 also means WINDOW_GUI_EXPANDED; that Qt chrome
+        plus Anaconda OpenCV 5 (no bundled fonts) shows a black balloon_camera.
+        """
+        cam = _CAM.read_text(encoding="utf-8")
+        self.assertIn("WINDOW_GUI_NORMAL", cam)
+        self.assertIn("resizeWindow", cam)
+        self.assertIn("waiting for image", cam)
+        # mss captures overlapping OS windows inside the FG rectangle.
+        self.assertIn("fit_window_outside_rect", cam)
+        self.assertIn("moveWindow", cam)
+        self.assertIn("find_fg_window_geometry", cam)
+
+    def test_camera_pane_gets_display(self) -> None:
+        """Control already bakes DISPLAY; camera ran under tmux env only."""
+        text = _RACE.read_text(encoding="utf-8")
+        self.assertIn(
+            'CAM_CMD="DISPLAY=${DISPLAY:-:0}',
+            text,
+        )
+
+    def test_race_falls_back_from_opencv5_to_pigeon(self) -> None:
+        """conda base ships OpenCV 5; balloon_camera needs opencv-python<5."""
+        text = _RACE.read_text(encoding="utf-8")
+        self.assertIn("cv2.__version__", text)
+        self.assertIn("envs/pigeon", text)
+        self.assertIn("need <5", text)
 
 
 if __name__ == "__main__":

@@ -1,11 +1,12 @@
 <?xml version="1.0"?>
 <PropertyList>
-  <path>AI/Aircraft/balloon/Models/balloon4.ac</path>
+  <!-- ~10 m sphere matching flightSetup diameter_m (not FG stock hot-air). -->
+  <path>balloon_255_0_0.ac</path>
   <animation>
     <type>material</type>
-    <object-name>hull</object-name>
+    <object-name>balloon</object-name>
     <diffuse><red>1</red><green>0.02</green><blue>0.02</blue></diffuse>
     <ambient><red>1</red><green>0.02</green><blue>0.02</blue></ambient>
-    <emission><red>0.65</red><green>0.013000000000000001</green><blue>0.013000000000000001</blue></emission>
+    <emission><red>0.65</red><green>0.013</green><blue>0.013</blue></emission>
   </animation>
 </PropertyList>

@@ -373,6 +373,175 @@ class TestAttitudeChaseController(unittest.TestCase):
         aim = ctrl.aim_point_ned((0.0, 0.0, -10.0), (1.0, 0.0, 0.0))
         self.assertEqual(aim, (100.0, 0.0, -10.0))
 
+    def test_visual_lock_ignores_alt_loop_uses_pure_los(self) -> None:
+        """Real HSV track: dir_ned's elevation IS the on-screen error; an
+        absolute-Z alt-loop blend (from possibly-imprecise NED bookkeeping,
+        not the camera) must not override it once the balloon is in view."""
+        plant = load_plant_gains("jsbsim_rascal")
+        bridge = BodyCmdBridge(lookahead_m=500.0, speed_mps=30.0)
+        ctrl = AttitudeChaseController(bridge, speed_mps=30.0, plant=plant)
+        with patch(
+            "fw_sitl.body_cmd_controllers.send_attitude_target", create=True
+        ) as send:
+            ctrl.send_chase_setpoint(
+                MagicMock(),
+                (0.0, 0.0, -20.0),
+                (1.0, 0.0, 0.0),
+                1,
+                yaw_rad=0.0,
+                q_act=from_rpy(0.0, 0.0, 0.0),
+                dt=0.05,
+                in_view=True,
+                z_target=-10.0,
+                visual_lock=True,
+            )
+        _master, _roll, pitch, _yaw, _thrust = send.call_args[0]
+        self.assertAlmostEqual(pitch, 0.0, places=2)
+
+    def test_no_visual_lock_caps_steep_los_to_flyable_climb(self) -> None:
+        """Post-Z-fix, a fresh engage can be ~200 m below the balloon: pure
+        geometric LOS elevation can be 40°+. Without a real HSV track that
+        must not be commanded as a sustained pitch — it stalls the plant
+        (observed: roll ran to ±180°, altitude diverged instead of closing).
+        Cap to the plant's flyable sustained-climb ceiling instead."""
+        plant = load_plant_gains("jsbsim_rascal")
+        bridge = BodyCmdBridge(lookahead_m=500.0, speed_mps=30.0)
+        ctrl = AttitudeChaseController(bridge, speed_mps=30.0, plant=plant)
+        el = math.radians(44.0)
+        dir_ned = (math.cos(el), 0.0, -math.sin(el))
+        with patch(
+            "fw_sitl.body_cmd_controllers.send_attitude_target", create=True
+        ) as send:
+            ctrl.send_chase_setpoint(
+                MagicMock(),
+                (0.0, 0.0, -222.0),
+                dir_ned,
+                1,
+                yaw_rad=0.0,
+                q_act=from_rpy(0.0, 0.0, 0.0),
+                dt=0.05,
+                in_view=True,
+                z_target=-17.6,
+                visual_lock=False,
+            )
+        _master, _roll, pitch, _yaw, _thrust = send.call_args[0]
+        self.assertLessEqual(pitch, plant.att_max_pitch_rad + 1e-6)
+
+    def test_visual_lock_false_keeps_alt_loop_for_dead_reckoning(self) -> None:
+        """Same setup without visual_lock (geometric/assisted LOS): the
+        alt-loop augmentation is still legitimate — it's the only Z signal
+        available before a real track exists."""
+        plant = load_plant_gains("jsbsim_rascal")
+        bridge = BodyCmdBridge(lookahead_m=500.0, speed_mps=30.0)
+        ctrl = AttitudeChaseController(bridge, speed_mps=30.0, plant=plant)
+        with patch(
+            "fw_sitl.body_cmd_controllers.send_attitude_target", create=True
+        ) as send:
+            ctrl.send_chase_setpoint(
+                MagicMock(),
+                (0.0, 0.0, -20.0),
+                (1.0, 0.0, 0.0),
+                1,
+                yaw_rad=0.0,
+                q_act=from_rpy(0.0, 0.0, 0.0),
+                dt=0.05,
+                in_view=True,
+                z_target=-10.0,
+            )
+        _master, _roll, pitch, _yaw, _thrust = send.call_args[0]
+        self.assertLess(pitch, math.radians(-8.0))
+
+
+class TestQExecFrame(unittest.TestCase):
+    def test_q_exec_identity_matches_ungated_send(self) -> None:
+        bridge = BodyCmdBridge(lookahead_m=500.0, speed_mps=30.0)
+        ctrl = AttitudeChaseController(bridge, speed_mps=30.0)
+        q_act = from_rpy(0.0, 0.0, 0.0)
+        kwargs = dict(
+            pos_ned=(0.0, 0.0, 0.0),
+            dir_ned=(100.0, 0.0, 0.0),
+            frame=1,
+            yaw_rad=0.0,
+            q_act=q_act,
+            dt=0.05,
+            groundspeed=30.0,
+            in_view=True,
+            z_target=0.0,
+        )
+        with patch("fw_sitl.body_cmd_controllers.send_attitude_target") as send:
+            ctrl.send_chase_setpoint(MagicMock(), **kwargs)
+            a = send.call_args[0][1:4]
+        with patch("fw_sitl.body_cmd_controllers.send_attitude_target") as send:
+            ctrl.send_chase_setpoint(MagicMock(), **kwargs, q_exec=q_act)
+            b = send.call_args[0][1:4]
+        for x, y in zip(a, b):
+            self.assertAlmostEqual(x, y, places=6)
+
+    def test_q_exec_holds_ekf_yaw_when_true_heading_error_is_zero(self) -> None:
+        """FG north, balloon north, EKF yaw east: do not command PX4 yaw=0."""
+        bridge = BodyCmdBridge(lookahead_m=500.0, speed_mps=30.0)
+        ctrl = AttitudeChaseController(bridge, speed_mps=30.0)
+        q_fg = from_rpy(0.0, 0.0, 0.0)
+        q_ekf = from_rpy(0.0, 0.0, math.pi / 2)
+        with patch("fw_sitl.body_cmd_controllers.send_attitude_target") as send:
+            ctrl.send_chase_setpoint(
+                MagicMock(),
+                (0.0, 0.0, 0.0),
+                (100.0, 0.0, 0.0),
+                1,
+                yaw_rad=0.0,
+                q_act=q_fg,
+                dt=0.05,
+                groundspeed=30.0,
+                in_view=True,
+                z_target=0.0,
+                q_exec=q_ekf,
+            )
+        _m, roll, _pitch, yaw, _th = send.call_args[0]
+        self.assertAlmostEqual(yaw, math.pi / 2, places=5)
+        self.assertLess(abs(roll), 0.05)
+
+
+class TestLosRollSlew(unittest.TestCase):
+    def test_in_view_roll_cmd_is_rate_limited(self) -> None:
+        # Pickle 122330: HSV flicker / LOS flips demanded ±46° in one 50 ms tick.
+        bridge = BodyCmdBridge(lookahead_m=500.0, speed_mps=30.0)
+        plant = load_plant_gains("jsbsim_rascal")
+        ctrl = AttitudeChaseController(bridge, speed_mps=30.0, plant=plant)
+        right = (math.cos(0.5), math.sin(0.5), 0.0)
+        left = (math.cos(-0.5), math.sin(-0.5), 0.0)
+        with patch(
+            "fw_sitl.body_cmd_controllers.send_attitude_target", create=True
+        ) as send:
+            ctrl.send_chase_setpoint(
+                MagicMock(),
+                (0.0, 0.0, -10.0),
+                right,
+                1,
+                yaw_rad=0.0,
+                q_act=from_rpy(0.0, 0.0, 0.0),
+                dt=0.05,
+                in_view=True,
+                z_target=-10.0,
+            )
+            roll0 = send.call_args[0][1]
+            ctrl.send_chase_setpoint(
+                MagicMock(),
+                (0.0, 0.0, -10.0),
+                left,
+                1,
+                yaw_rad=0.0,
+                q_act=from_rpy(0.0, 0.0, 0.0),
+                dt=0.05,
+                in_view=True,
+                z_target=-10.0,
+            )
+            roll1 = send.call_args[0][1]
+        # 60°/s slew over 50 ms ≈ 0.052 rad max step — not a full flip.
+        self.assertLess(abs(roll1 - roll0), 0.12)
+        self.assertGreater(roll0, 0.05)
+        self.assertLess(roll1, roll0)
+
 
 class TestUnimplementedModes(unittest.TestCase):
     def test_rates_raises_clear_error(self) -> None:

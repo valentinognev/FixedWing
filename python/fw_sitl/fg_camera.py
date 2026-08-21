@@ -15,6 +15,161 @@ from fw_sitl.flight_setup import CameraSpec, FlightSetup, DEFAULT_FG_WINDOW_PATT
 from fw_sitl.mavlink_io import connect, poll_mavlink, request_local_position
 from fw_sitl.zmq_bus import ImagePublisher
 
+# View offsets are body-relative (FG follows the aircraft). Re-asserting ~26
+# blocking telnet `set`s every render tick stalls capture for seconds because
+# FG services props on the render thread. Same for re-running the X11 window
+# hunt (xwininfo -id per class=fgfs child) every frame.
+FG_VIEW_SYNC_PERIOD_S = 2.0
+FG_GEO_REFRESH_PERIOD_S = 2.0
+
+_TREE_SIZE_RE = re.compile(r"\s(\d+)x(\d+)[+-]")
+
+
+def due_for_refresh(now_s: float, last_s: float, period_s: float) -> bool:
+    """True on first call (last_s<=0) or once ``period_s`` has elapsed."""
+    return last_s <= 0.0 or (now_s - last_s) >= period_s
+
+
+def rects_overlap(
+    ax: int,
+    ay: int,
+    aw: int,
+    ah: int,
+    bx: int,
+    by: int,
+    bw: int,
+    bh: int,
+) -> bool:
+    """True if axis-aligned rectangles [a] and [b] share any interior pixels."""
+    return not (
+        ax + aw <= bx or bx + bw <= ax or ay + ah <= by or by + bh <= ay
+    )
+
+
+def virtual_screen_rect() -> dict[str, int]:
+    """Virtual desktop bounds (mss monitor 0), else 1920×1080 at origin."""
+    try:
+        import mss
+
+        with mss.mss() as sct:
+            mon = sct.monitors[0]
+            return {
+                "x": int(mon.get("left", 0)),
+                "y": int(mon.get("top", 0)),
+                "width": int(mon["width"]),
+                "height": int(mon["height"]),
+            }
+    except Exception:  # noqa: BLE001
+        return {"x": 0, "y": 0, "width": 1920, "height": 1080}
+
+
+def place_outside_rect(
+    avoid: dict[str, int] | None,
+    width: int,
+    height: int,
+    *,
+    screen: dict[str, int] | None = None,
+    gap: int = 24,
+) -> tuple[int, int]:
+    """Top-left for a WxH window that does not sit on ``avoid`` (FG).
+
+    mss region-grabs the FG rectangle as composited on screen, so an OpenCV
+    window stacked on FlightGear is captured inside balloon_camera.
+    """
+    screen = screen or {"x": 0, "y": 0, "width": 1920, "height": 1080}
+    sx = int(screen["x"])
+    sy = int(screen["y"])
+    sw = int(screen["width"])
+    sh = int(screen["height"])
+    width = int(width)
+    height = int(height)
+    gap = int(gap)
+
+    def clamp(x: int, y: int) -> tuple[int, int]:
+        max_x = sx + max(sw - width, 0)
+        max_y = sy + max(sh - height, 0)
+        return (min(max(x, sx), max_x), min(max(y, sy), max_y))
+
+    if avoid is None:
+        return clamp(sx + sw - width - gap, sy + gap)
+
+    ax = int(avoid["x"])
+    ay = int(avoid["y"])
+    aw = int(avoid["width"])
+    ah = int(avoid["height"])
+    candidates = (
+        (ax + aw + gap, ay),
+        (ax, ay + ah + gap),
+        (ax - width - gap, ay),
+        (ax, ay - height - gap),
+    )
+    for x, y in candidates:
+        cx, cy = clamp(x, y)
+        if not rects_overlap(cx, cy, width, height, ax, ay, aw, ah):
+            return (cx, cy)
+    return clamp(sx + sw - width - gap, sy + gap)
+
+
+def fit_window_outside_rect(
+    avoid: dict[str, int] | None,
+    width: int,
+    height: int,
+    *,
+    screen: dict[str, int] | None = None,
+    gap: int = 24,
+    min_width: int = 280,
+    min_height: int = 200,
+) -> tuple[int, int, int, int]:
+    """Like ``place_outside_rect``, but shrink WxH to fit a leftover screen strip.
+
+    A 640×480 HighGUI window cannot sit beside a nearly-fullscreen FlightGear
+    window; the previous clamp still overlapped, so mss captured balloon_camera
+    inside the FG grab.
+    """
+    width = int(width)
+    height = int(height)
+    x, y = place_outside_rect(avoid, width, height, screen=screen, gap=gap)
+    if avoid is None:
+        return (x, y, width, height)
+    ax = int(avoid["x"])
+    ay = int(avoid["y"])
+    aw = int(avoid["width"])
+    ah = int(avoid["height"])
+    if not rects_overlap(x, y, width, height, ax, ay, aw, ah):
+        return (x, y, width, height)
+
+    screen = screen or {"x": 0, "y": 0, "width": 1920, "height": 1080}
+    sx = int(screen["x"])
+    sy = int(screen["y"])
+    sw = int(screen["width"])
+    sh = int(screen["height"])
+    sr = sx + sw
+    sb = sy + sh
+    strips = (
+        (ax + aw + gap, ay, sr - (ax + aw + gap), min(height, sh)),
+        (ax, ay + ah + gap, min(width, sw), sb - (ay + ah + gap)),
+        (sx, ay, ax - gap - sx, min(height, sh)),
+        (ax, sy, min(width, sw), ay - gap - sy),
+    )
+    best: tuple[int, int, int, int] | None = None
+    best_area = -1
+    for x0, y0, w0, h0 in strips:
+        w0 = min(int(w0), width)
+        h0 = min(int(h0), height)
+        if w0 < min_width or h0 < min_height:
+            continue
+        x1 = min(max(int(x0), sx), max(sr - w0, sx))
+        y1 = min(max(int(y0), sy), max(sb - h0, sy))
+        if rects_overlap(x1, y1, w0, h0, ax, ay, aw, ah):
+            continue
+        area = w0 * h0
+        if area > best_area:
+            best = (x1, y1, w0, h0)
+            best_area = area
+    if best is not None:
+        return best
+    return (x, y, width, height)
+
 
 def window_matches_pattern(title: str, pattern: str) -> bool:
     """True if window title/class matches camera.fg_window_pattern (regex)."""
@@ -128,6 +283,8 @@ def find_fg_window_geometry(pattern: str) -> dict[str, int] | None:
                 title, parsed["width"], parsed["height"]
             ):
                 candidates.append((parsed, title))
+        if candidates:
+            return _prefer_fg_geometry(candidates)
 
     # 2) wmctrl -l -G: id desktop x y w h host title
     if _have("wmctrl"):
@@ -160,6 +317,8 @@ def find_fg_window_geometry(pattern: str) -> dict[str, int] | None:
                     continue
                 if _is_plausible_fg_window(title, geo["width"], geo["height"]):
                     candidates.append((geo, title))
+            if candidates:
+                return _prefer_fg_geometry(candidates)
 
     # 3) xwininfo -tree -root, then -id for *absolute* geometry
     #    (tree lines often show relative +0+0, not screen coords).
@@ -187,6 +346,11 @@ def find_fg_window_geometry(pattern: str) -> dict[str, int] | None:
                     line, pattern
                 ):
                     continue
+                size_m = _TREE_SIZE_RE.search(line)
+                if size_m is not None:
+                    tw, th = int(size_m.group(1)), int(size_m.group(2))
+                    if not _is_plausible_fg_window(title, tw, th, line=line):
+                        continue
                 try:
                     info = subprocess.run(
                         ["xwininfo", "-id", wid],
@@ -278,6 +442,8 @@ def sync_camera_view(
     # Hide airframe FIRST — draw-mask needs numeric 0/1 (string "false" is flaky).
     if camera.fg_hide_aircraft:
         tel.set_prop("/sim/rendering/draw-mask/aircraft", 0)
+    tel.set_prop("/sim/rendering/draw-mask/clouds", 0)
+    tel.set_prop("/sim/rendering/clouds3d-enable", 0)
 
     # Cockpit / pilot lookfrom (aircraft-relative).
     tel.set_prop("/sim/current-view/view-number", 0)
@@ -311,14 +477,32 @@ def sync_camera_view(
     tel.set_prop("/sim/view[0]/pitch-offset-deg", f"{elev:.2f}")
 
     tel.set_prop("/sim/current-view/field-of-view", fov)
+    tel.set_prop("/sim/current-view/goal-field-of-view", fov)
+    tel.set_prop("/sim/current-view/goal-fov", fov)
     tel.set_prop("/sim/view[0]/config/field-of-view", fov)
+    tel.set_prop("/sim/view[0]/config/default-field-of-view", fov)
+    tel.set_prop("/sim/view[0]/config/goal-field-of-view", fov)
 
     # Re-assert hide after view-number (some FG builds refresh draw defaults).
     if camera.fg_hide_aircraft:
         tel.set_prop("/sim/rendering/draw-mask/aircraft", 0)
+    tel.set_prop("/sim/rendering/draw-mask/clouds", 0)
+    tel.set_prop("/sim/rendering/clouds3d-enable", 0)
 
     tel.set_prop("/sim/hud/visibility[0]", 0)
     tel.set_prop("/sim/hud/enable", 0)
+
+
+def _grab_bgr(sct: object, region: dict[str, int] | None) -> np.ndarray:
+    """mss grab → BGR. ``region`` None means the virtual full-desktop monitor."""
+    if region is None:
+        mon = sct.monitors[0]  # type: ignore[attr-defined]
+        shot = np.array(sct.grab(mon))  # type: ignore[attr-defined]
+    else:
+        shot = np.array(sct.grab(region))  # type: ignore[attr-defined]
+    if shot.shape[2] == 4:
+        return cv2.cvtColor(shot, cv2.COLOR_BGRA2BGR)
+    return shot[:, :, :3].copy()
 
 
 def capture_fg_frame(
@@ -326,6 +510,9 @@ def capture_fg_frame(
     *,
     display: str | None = None,  # noqa: ARG001 — reserved for DISPLAY override
     window_pattern: str | None = None,
+    geometry: dict[str, int] | None = None,
+    sct: object | None = None,
+    locate: bool = True,
 ) -> np.ndarray | None:
     """Grab FG *window* content; crop/resize to camera WxH.
 
@@ -333,42 +520,47 @@ def capture_fg_frame(
     default ``FlightGear|fgfs``) via xdotool → wmctrl → xwininfo, then mss
     region grab (or xwd -id).
 
+    Pass ``geometry`` (and a reused ``sct``) from the publisher loop so the
+    X11 hunt and mss connect do not run every tick.
+
     Fallback: full X11 root (mss / xwd -root) if no matching window — last resort
     only; prefer installing xdotool or wmctrl on the host for reliable capture.
     """
     pattern = window_pattern or camera.fg_window_pattern or DEFAULT_FG_WINDOW_PATTERN
-    geo = find_fg_window_geometry(pattern)
+    if geometry is not None:
+        geo = geometry
+    elif locate:
+        geo = find_fg_window_geometry(pattern)
+    else:
+        geo = None
     bgr: np.ndarray | None = None
-
-    if geo is not None:
-        region = {
-            "left": max(geo["x"], 0),
-            "top": max(geo["y"], 0),
-            "width": geo["width"],
-            "height": geo["height"],
-        }
+    owned_sct = False
+    grabber = sct
+    if grabber is None:
         try:
             import mss
 
-            with mss.mss() as sct:
-                shot = np.array(sct.grab(region))
-                bgr = cv2.cvtColor(shot, cv2.COLOR_BGRA2BGR)
+            grabber = mss.mss()
+            owned_sct = True
         except Exception:  # noqa: BLE001
-            if _have("xwd") and _have("convert"):
-                # xwd cannot easily crop by geometry without window id; try root+numpy crop
-                bgr = None
-            else:
+            grabber = None
+
+    try:
+        if geo is not None and grabber is not None:
+            region = {
+                "left": max(geo["x"], 0),
+                "top": max(geo["y"], 0),
+                "width": geo["width"],
+                "height": geo["height"],
+            }
+            try:
+                bgr = _grab_bgr(grabber, region)
+            except Exception:  # noqa: BLE001
                 bgr = None
 
-    if bgr is None:
-        # Fallback: full root, then center-crop (documented last resort)
-        try:
-            import mss
-
-            with mss.mss() as sct:
-                mon = sct.monitors[0]
-                shot = np.array(sct.grab(mon))
-                bgr = cv2.cvtColor(shot, cv2.COLOR_BGRA2BGR)
+        if bgr is None and grabber is not None:
+            try:
+                bgr = _grab_bgr(grabber, None)
                 if geo is not None:
                     x0 = max(geo["x"], 0)
                     y0 = max(geo["y"], 0)
@@ -376,29 +568,37 @@ def capture_fg_frame(
                     y1 = min(y0 + geo["height"], bgr.shape[0])
                     if x1 > x0 and y1 > y0:
                         bgr = bgr[y0:y1, x0:x1]
-        except Exception:  # noqa: BLE001
-            tmp = Path("/tmp/fg_capture.xwd")
-            try:
-                subprocess.run(
-                    ["xwd", "-root", "-out", str(tmp)],
-                    check=True,
-                    timeout=3.0,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-                png = Path("/tmp/fg_capture.png")
-                subprocess.run(
-                    ["convert", str(tmp), str(png)],
-                    check=True,
-                    timeout=3.0,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-                bgr = cv2.imread(str(png))
-                if bgr is None:
-                    return None
             except Exception:  # noqa: BLE001
+                bgr = None
+    finally:
+        if owned_sct and grabber is not None:
+            close = getattr(grabber, "close", None)
+            if callable(close):
+                close()
+
+    if bgr is None:
+        tmp = Path("/tmp/fg_capture.xwd")
+        try:
+            subprocess.run(
+                ["xwd", "-root", "-out", str(tmp)],
+                check=True,
+                timeout=3.0,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            png = Path("/tmp/fg_capture.png")
+            subprocess.run(
+                ["convert", str(tmp), str(png)],
+                check=True,
+                timeout=3.0,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            bgr = cv2.imread(str(png))
+            if bgr is None:
                 return None
+        except Exception:  # noqa: BLE001
+            return None
 
     return _resize_to_camera(bgr, camera)
 
@@ -432,26 +632,53 @@ def run_fg_publisher(
     att = (0.0, 0.0, 0.0)
     pattern = setup.camera.fg_window_pattern
     next_t = time.time()
+    last_sync_s = 0.0
+    last_geo_s = 0.0
+    geo: dict[str, int] | None = None
+    sct: object | None = None
+    try:
+        import mss
+
+        sct = mss.mss()
+    except Exception:  # noqa: BLE001
+        sct = None
     print(
         f"FG capture publishing @ {setup.render_rate_hz} Hz → {setup.zmq.image} "
         f"(window /{pattern}/, mavlink UDP {udp_port})"
     )
 
-    while True:
+    try:
         while True:
-            msg = master.recv_match(type="ATTITUDE", blocking=False)
-            if msg is None:
-                break
-            att = (float(msg.roll), float(msg.pitch), float(msg.yaw))
-        poll_mavlink(master)
-        sync_camera_view(tel, setup.camera, att[0], att[1], att[2])
-        frame = capture_fg_frame(setup.camera, window_pattern=pattern)
-        if frame is not None:
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            pub.publish(rgb)
-        next_t += period
-        sleep = next_t - time.time()
-        if sleep > 0:
-            time.sleep(sleep)
-        else:
-            next_t = time.time()
+            while True:
+                msg = master.recv_match(type="ATTITUDE", blocking=False)
+                if msg is None:
+                    break
+                att = (float(msg.roll), float(msg.pitch), float(msg.yaw))
+            poll_mavlink(master)
+            now = time.time()
+            if due_for_refresh(now, last_sync_s, FG_VIEW_SYNC_PERIOD_S):
+                sync_camera_view(tel, setup.camera, att[0], att[1], att[2])
+                last_sync_s = now
+            if due_for_refresh(now, last_geo_s, FG_GEO_REFRESH_PERIOD_S):
+                geo = find_fg_window_geometry(pattern)
+                last_geo_s = now
+            frame = capture_fg_frame(
+                setup.camera,
+                window_pattern=pattern,
+                geometry=geo,
+                sct=sct,
+                locate=False,
+            )
+            if frame is not None:
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                pub.publish(rgb)
+            next_t += period
+            sleep = next_t - time.time()
+            if sleep > 0:
+                time.sleep(sleep)
+            else:
+                next_t = time.time()
+    finally:
+        close = getattr(sct, "close", None)
+        if callable(close):
+            close()

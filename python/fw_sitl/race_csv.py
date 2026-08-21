@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import math
 import time
 from pathlib import Path
 from typing import TextIO
@@ -22,6 +23,37 @@ CSV_COLUMNS = (
     "tgt_e",
     "tgt_d",
 )
+
+
+def pass_miss_m(
+    pos_ned: tuple[float, float, float],
+    tgt_ned: tuple[float, float, float],
+) -> float:
+    """3D Euclidean miss between plane and target NED."""
+    return math.hypot(
+        pos_ned[0] - tgt_ned[0],
+        pos_ned[1] - tgt_ned[1],
+        pos_ned[2] - tgt_ned[2],
+    )
+
+
+def load_pass_misses(path: Path) -> list[tuple[int, float, bool]]:
+    """``(balloon_idx, miss_m, assisted)`` for each ``event==pass`` row."""
+    out: list[tuple[int, float, bool]] = []
+    with Path(path).open(encoding="utf-8") as fh:
+        for row in csv.DictReader(fh):
+            if (row.get("event") or "").strip() != "pass":
+                continue
+            pos = (float(row["pos_n"]), float(row["pos_e"]), float(row["pos_d"]))
+            tgt = (float(row["tgt_n"]), float(row["tgt_e"]), float(row["tgt_d"]))
+            out.append(
+                (
+                    int(row["balloon_idx"]),
+                    pass_miss_m(pos, tgt),
+                    bool(int(row["assisted"])),
+                )
+            )
+    return out
 
 
 def default_csv_path(*, stamp: float | None = None) -> Path:

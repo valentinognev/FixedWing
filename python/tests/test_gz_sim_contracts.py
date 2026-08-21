@@ -47,6 +47,8 @@ class TestGzSimContracts(unittest.TestCase):
         self.assertIn("PX4_noble_sim_build.sh", text)
         self.assertIn("GZ_SIM_RESOURCE_PATH", text)
         self.assertIn("apply_plane_overlay", text)
+        self.assertIn("fw_sitl.spawn_ic", text)
+        self.assertIn("gz_spawn_velocity_enu", text)
         self.assertRegex(
             text, r"cp -f /tmp/fw_gz_overlay/models/.*/model\.sdf.*\$\{STOCK\}"
         )
@@ -61,6 +63,18 @@ class TestGzSimContracts(unittest.TestCase):
         self.assertIn("GZ_GUI_CONFIG", text)
         self.assertIn("gz_gui_follow", text)
         self.assertIn("/gui/track", (_PYTHON_ROOT / "fw_sitl" / "gz_gui_follow.py").read_text(encoding="utf-8"))
+
+    def test_host_spawn_ic_prefixes_pythonpath(self) -> None:
+        """Host python3 -m fw_sitl.spawn_ic must inherit PYTHONPATH (tmux has none)."""
+        text = _SIM.read_text(encoding="utf-8")
+        self.assertRegex(
+            text,
+            r'PYTHONPATH="\$\{PYTHON_ROOT\}\$\{PYTHONPATH:\+:\$\{PYTHONPATH\}\}" python3 -m fw_sitl\.spawn_ic',
+        )
+        self.assertNotRegex(
+            text,
+            r'(?m)^[ \t]*PYTHONPATH="\$\{PYTHON_ROOT\}\$\{PYTHONPATH:\+:\$\{PYTHONPATH\}\}"[ \t]*$',
+        )
 
     def test_kill_gz(self) -> None:
         text = _KILL.read_text(encoding="utf-8")

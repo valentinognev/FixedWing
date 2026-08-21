@@ -117,6 +117,47 @@ class TestColorAssistedZmq(unittest.TestCase):
         self.assertIsNone(color.pos_ned)
         self.assertIsNone(color.t_s)
 
+    def test_send_color_includes_balloons_ned(self) -> None:
+        sock = MagicMock()
+        neds = ((200.0, 0.0, 61.7), (200.0, 200.0, 1.7), (0.0, 200.0, 31.7))
+        send_color(
+            sock,
+            TargetColor(
+                r=255, g=0, b=0, stamp=1.0, assisted=False,
+                balloons_ned=neds,
+            ),
+        )
+        data = json.loads(sock.send_multipart.call_args[0][0][1].decode("utf-8"))
+        self.assertEqual(data["balloons"], [list(p) for p in neds])
+
+    def test_recv_color_reads_balloons_ned(self) -> None:
+        payload = json.dumps(
+            {
+                "r": 255, "g": 0, "b": 0, "stamp": 1.0, "assisted": False,
+                "balloons": [[200.0, 0.0, 61.7], [200.0, 200.0, 1.7]],
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+        sock = MagicMock()
+        sock.recv_multipart.return_value = [TOPIC_COLOR, payload]
+        color = recv_color(sock)
+        assert color is not None
+        self.assertEqual(
+            color.balloons_ned,
+            ((200.0, 0.0, 61.7), (200.0, 200.0, 1.7)),
+        )
+
+    def test_recv_color_legacy_balloons_ned_none(self) -> None:
+        payload = json.dumps(
+            {"r": 1, "g": 2, "b": 3, "stamp": 0.0, "assisted": False},
+            separators=(",", ":"),
+        ).encode("utf-8")
+        sock = MagicMock()
+        sock.recv_multipart.return_value = [TOPIC_COLOR, payload]
+        color = recv_color(sock)
+        assert color is not None
+        self.assertIsNone(color.balloons_ned)
+
 
 class TestConflateMultipart(unittest.TestCase):
     def test_connect_sub_default_no_conflate(self) -> None:

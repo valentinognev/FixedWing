@@ -111,6 +111,56 @@ class TestSyntheticParity(unittest.TestCase):
         assert t0.centroid_uv is not None and t1.centroid_uv is not None
         self.assertGreater(t1.centroid_uv[1], t0.centroid_uv[1] + 5.0)
 
+    def test_horizon_moves_down_when_pitched_up(self) -> None:
+        """Nose-up must show more sky. A cy-split horizon ignores pitch."""
+        empty: tuple[BalloonSpec, ...] = ()
+        level = render_frame(
+            (0.0, 0.0, -80.0), 0.0, 0.0, 0.0, empty, self.camera_spec
+        )
+        up = render_frame(
+            (0.0, 0.0, -80.0), 0.0, 0.35, 0.0, empty, self.camera_spec
+        )
+        sky_b = 235
+        sky_level = float((level[:, :, 2] == sky_b).mean())
+        sky_up = float((up[:, :, 2] == sky_b).mean())
+        self.assertGreater(sky_up, sky_level + 0.08)
+
+    def test_yaw_south_does_not_show_north_balloon(self) -> None:
+        """Looking south, a balloon to the north is behind the camera."""
+        balloons = (
+            BalloonSpec(ned=(80.0, 0.0, 0.0), color=(255, 0, 0), diameter_m=10.0),
+        )
+        pos = (0.0, 0.0, 0.0)
+        north = render_frame(pos, 0.0, 0.0, 0.0, balloons, self.camera_spec)
+        south = render_frame(pos, 0.0, 0.0, 3.14159, balloons, self.camera_spec)
+        self.assertTrue(track_balloon(north, (255, 0, 0), self.model).in_view)
+        self.assertFalse(track_balloon(south, (255, 0, 0), self.model).in_view)
+
+
+class TestSynthAttitudePoll(unittest.TestCase):
+    def test_publisher_does_not_drop_attitude_via_poll_mavlink(self) -> None:
+        """poll_mavlink recv_match(LOCAL_POSITION) discards ATTITUDE.
+
+        Live: att stayed (0,0,0) so balloon_camera always looked north — after
+        passing balloon 0 southbound the red disk filled the view (rear look).
+        """
+        synth = Path(_PYTHON_ROOT / "fw_sitl" / "synthetic_camera.py").read_text(
+            encoding="utf-8"
+        )
+        loop = synth[synth.index("while True:"):]
+        self.assertNotIn("poll_mavlink(master)", loop)
+        self.assertIn("poll_local_position_and_attitude", loop)
+        mav = Path(_PYTHON_ROOT / "fw_sitl" / "mavlink_io.py").read_text(
+            encoding="utf-8"
+        )
+        fn = mav[
+            mav.index("def poll_local_position_and_attitude") : mav.index(
+                "def poll_mavlink"
+            )
+        ]
+        self.assertIn("ATTITUDE", fn)
+        self.assertIn("LOCAL_POSITION_NED", fn)
+
 
 if __name__ == "__main__":
     unittest.main()

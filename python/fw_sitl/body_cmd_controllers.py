@@ -21,7 +21,7 @@ from fw_sitl.body_cmd_bridge import (
 from fw_sitl.mavlink_io import send_attitude_target
 from fw_sitl.path_geometry import coordinated_heading_rad, ned_velocity_from_course
 from fw_sitl.plant_gains import PlantGains
-from fw_sitl.quat import from_rpy, rpy_from_quat
+from fw_sitl.quat import conjugate, from_rpy, mul, rpy_from_quat
 
 
 class BodyCmdMode(str, Enum):
@@ -53,6 +53,8 @@ class ChaseController(Protocol):
         vx: float | None = None,
         vy: float | None = None,
         path_lock_token: object | None = None,
+        visual_lock: bool = False,
+        q_exec: tuple[float, float, float, float] | None = None,
     ) -> tuple[float, float, float]: ...
 
 
@@ -85,10 +87,16 @@ class VelocityChaseController:
         vx: float | None = None,
         vy: float | None = None,
         path_lock_token: object | None = None,
+        visual_lock: bool = False,
+        q_exec: tuple[float, float, float, float] | None = None,
     ) -> tuple[float, float, float]:
         return self._bridge.send_chase_setpoint(
             master, pos_ned, dir_ned, frame, yaw_rad=yaw_rad
         )
+
+
+# Cap LOS roll step so HSV flicker / bearing flips cannot bang ±max in 50 ms.
+LOS_ROLL_SLEW_RAD_S = math.radians(60.0)
 
 
 class AttitudeChaseController:
@@ -117,6 +125,7 @@ class AttitudeChaseController:
         self.last_z_hold: float | None = None
         self.last_law: str | None = None
         self._path_lock: tuple[object, tuple[float, float], float] | None = None
+        self._last_los_roll: float | None = None
 
     def aim_point_ned(
         self,
@@ -141,6 +150,8 @@ class AttitudeChaseController:
         vx: float | None = None,
         vy: float | None = None,
         path_lock_token: object | None = None,
+        visual_lock: bool = False,
+        q_exec: tuple[float, float, float, float] | None = None,
     ) -> tuple[float, float, float]:
         # On-screen: bank to put the balloon on body +X (yaw), pitch to
         # elevation. Yaw setpoint stays actual (PX4 FW). Off-screen: freeze
@@ -159,7 +170,21 @@ class AttitudeChaseController:
         if in_view:
             self._path_lock = None
             self.last_law = "los"
-            los_kw = self._plant.los_kwargs() if self._plant is not None else {}
+            los_kw = dict(self._plant.los_kwargs()) if self._plant is not None else {}
+            if visual_lock:
+                # dir_ned came from a real HSV pixel, so its elevation angle
+                # already IS the on-screen error to close — bookkeeping-Z
+                # (possibly still imprecise) must not fight/override it.
+                los_kw["kp_alt"] = 0.0
+            elif self._plant is not None:
+                # No real vision: geometric LOS can demand a large sustained
+                # climb (e.g. right after engage, before the plane has closed
+                # any altitude gap). att_los_max_pitch_rad (~40°) is a brief
+                # close-range correction ceiling, not a flyable sustained
+                # climb angle — holding it stalls a light plant and it
+                # tumbles (roll runs to ±180°, altitude runs away instead of
+                # closing). Cap to the same ceiling as the path-hold law.
+                los_kw["max_pitch"] = self._plant.att_max_pitch_rad
             q_des = q_des_from_los(
                 dir_ned,
                 yaw_rad=yaw_act,
@@ -170,9 +195,18 @@ class AttitudeChaseController:
                 **los_kw,
             )
             self._pid.reset()
-            q_cmd = q_des
             roll, pitch, yaw = rpy_from_quat(q_des)
+            # Rate-limit bank only: pitch/yaw stay the instantaneous look-at.
+            if self._last_los_roll is not None:
+                max_step = LOS_ROLL_SLEW_RAD_S * max(float(dt), 1e-3)
+                d_roll = roll - self._last_los_roll
+                if abs(d_roll) > max_step:
+                    roll = self._last_los_roll + math.copysign(max_step, d_roll)
+                    q_des = from_rpy(roll, pitch, yaw)
+            self._last_los_roll = roll
+            q_cmd = q_des
         else:
+            self._last_los_roll = None
             heading_ref = coordinated_heading_rad(yaw_act, vx, vy)
             token = path_lock_token
             if self._path_lock is None or self._path_lock[0] != token:
@@ -206,6 +240,12 @@ class AttitudeChaseController:
             roll_rad=roll_des,
             **thrust_kw,
         )
+        if q_exec is not None:
+            # Guidance ran in q_act's frame (FG truth). PX4 tracks EKF attitude:
+            # apply the same body error onto q_exec so the real aircraft turns
+            # toward the true LOS instead of chasing a drifted EKF yaw.
+            q_cmd = mul(q_exec, mul(conjugate(q_act), q_cmd))
+            roll, pitch, yaw = rpy_from_quat(q_cmd)
         send_attitude_target(master, roll, pitch, yaw, thrust)
         self.last_q_des = q_des
         self.last_q_cmd = q_cmd
@@ -240,6 +280,8 @@ class RateChaseController:
         vx: float | None = None,
         vy: float | None = None,
         path_lock_token: object | None = None,
+        visual_lock: bool = False,
+        q_exec: tuple[float, float, float, float] | None = None,
     ) -> tuple[float, float, float]:
         raise NotImplementedError("rates body-cmd mode is not implemented")
 

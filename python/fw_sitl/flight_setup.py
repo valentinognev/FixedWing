@@ -43,6 +43,9 @@ DEFAULT_PIXEL_RMS_MAX_PX = 15.0
 DEFAULT_PASS_TIME_TOL_S = 5.0
 DEFAULT_PATH_RMS_MAX_M = 30.0
 
+DEFAULT_SPAWN_NED = (0.0, 0.0, 0.0)
+DEFAULT_SPAWN_HEADING_DEG = 0.0
+
 _ALLOWED_CMD_MODES = frozenset({"velocity", "attitude", "rates"})
 
 
@@ -95,6 +98,18 @@ class GuidanceSpec:
 
 
 @dataclass(frozen=True)
+class SpawnSpec:
+    """Aircraft start in the same home-relative NED frame as balloons.
+
+    heading_deg is compass / PX4 yaw: 0=north, 90=east. ned z=0 is the
+    in-air cruise used by jsb_spawn / fg_spawn / GZ 500 m AGL; +z is down.
+    """
+
+    ned: tuple[float, float, float] = DEFAULT_SPAWN_NED
+    heading_deg: float = DEFAULT_SPAWN_HEADING_DEG
+
+
+@dataclass(frozen=True)
 class VerificationSpec:
     pixel_rms_max_px: float = DEFAULT_PIXEL_RMS_MAX_PX
     pass_time_tol_s: float = DEFAULT_PASS_TIME_TOL_S
@@ -108,6 +123,7 @@ class FlightSetup:
     camera: CameraSpec = field(default_factory=CameraSpec)
     render_rate_hz: float = DEFAULT_RENDER_RATE_HZ
     guidance: GuidanceSpec = field(default_factory=GuidanceSpec)
+    spawn: SpawnSpec = field(default_factory=SpawnSpec)
     verification: VerificationSpec = field(default_factory=VerificationSpec)
     source_path: Path | None = None
 
@@ -313,6 +329,19 @@ def _parse_guidance(raw: Any) -> GuidanceSpec:
     )
 
 
+def _parse_spawn(raw: Any) -> SpawnSpec:
+    data = _require_mapping(raw if raw is not None else {}, "spawn")
+    ned = (
+        _as_ned(data["ned"], "spawn.ned")
+        if "ned" in data
+        else DEFAULT_SPAWN_NED
+    )
+    heading = _as_float(
+        data.get("heading_deg", DEFAULT_SPAWN_HEADING_DEG), "spawn.heading_deg"
+    )
+    return SpawnSpec(ned=ned, heading_deg=heading)
+
+
 def _parse_verification(raw: Any) -> VerificationSpec:
     data = _require_mapping(raw if raw is not None else {}, "verification")
     pixel_rms = _as_float(
@@ -364,6 +393,7 @@ def flight_setup_from_dict(
         camera=_parse_camera(raw.get("camera")),
         render_rate_hz=render_rate,
         guidance=_parse_guidance(raw.get("guidance")),
+        spawn=_parse_spawn(raw.get("spawn")),
         verification=_parse_verification(raw.get("verification")),
         source_path=source_path,
     )

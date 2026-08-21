@@ -48,6 +48,8 @@ class TestMavlinkFanoutContracts(unittest.TestCase):
     def test_sim_default_fanout_off(self) -> None:
         text = _SIM_SH.read_text(encoding="utf-8")
         self.assertRegex(text, r'MAVLINK_FANOUT="\$\{MAVLINK_FANOUT:-0\}"')
+        self.assertIn("--setup", text)
+        self.assertIn("fw_sitl.spawn_ic", text)
 
     def test_sim_fanout_fails_loud(self) -> None:
         text = _SIM_SH.read_text(encoding="utf-8")
@@ -126,6 +128,14 @@ class TestMavlinkFanoutContracts(unittest.TestCase):
         )
         self.assertIn('[[ "${GZ}" -eq 1 ]]', fanout_fn[:gz_sidecar_idx])
 
+    def test_race_dumps_sim_pane_when_fanout_missing(self) -> None:
+        """Fan-out abort must print the sim pane; spawn_ic / docker errors hide there."""
+        text = _RACE_SH.read_text(encoding="utf-8")
+        start = text.index('echo "Error: mavlink-server fan-out failed')
+        fail = text[start : start + 900]
+        self.assertIn('tmux capture-pane -t "${SESSION}:0.0"', fail)
+        self.assertIn("Sim pane:", fail)
+
     def test_race_waits_for_control_heartbeat(self) -> None:
         text = _RACE_SH.read_text(encoding="utf-8")
         self.assertRegex(
@@ -174,15 +184,34 @@ class TestMavlinkFanoutContracts(unittest.TestCase):
             text,
         )
 
-    def test_control_defers_fg_balloon_spawn_until_after_engage(self) -> None:
-        """FG telnet spawn must not block arm (plane freefalls during telnet wait)."""
+    def test_control_skips_fg_balloon_spawn_when_no_sim(self) -> None:
+        """Race launcher places balloons before PX4 heartbeat; --no-sim must not wait on telnet."""
         ctl = (_PYTHON_ROOT / "run_balloon_control.py").read_text(encoding="utf-8")
-        engage_idx = ctl.index("engage_offboard_with_retries")
-        # First spawn_balloons_fg call site should be after engage.
-        spawn_idx = ctl.index("spawn_balloons_fg(")
-        self.assertGreater(spawn_idx, engage_idx)
-        self.assertIn("fg-balloon-spawn", ctl)
-        self.assertIn("want_fg_balloons", ctl)
+        self.assertIn("want_fg_balloons and not args.no_sim", ctl)
+        self.assertIn("spawn_fg_from_setup", ctl)
+        engage_idx = ctl.index("engage_offboard_with_retries(")
+        spawn_idx = ctl.index("spawn_fg_from_setup(")
+        self.assertLess(spawn_idx, engage_idx)
+
+    def test_launcher_spawns_balloons_before_px4_heartbeat(self) -> None:
+        """geo.put_model / gz create before wait_control_heartbeat so models exist first."""
+        text = _RACE_SH.read_text(encoding="utf-8")
+        self.assertIn("fw_sitl.balloon_scene", text)
+        self.assertIn("--fg", text)
+        spawn_fg = text.index("fw_sitl.balloon_scene")
+        # Call site, not the function definition.
+        wait_call = text.rindex("wait_control_heartbeat")
+        self.assertLess(spawn_fg, wait_call)
+        ctl_split = text.index('split-window -d -t "${SESSION}:0.0"')
+        self.assertLess(wait_call, ctl_split)
+
+    def test_fg_spawn_uses_config_ned_not_ekf_rebased_z(self) -> None:
+        """geo.put_model MSL = cruise MSL + plot-relative balloon Z, not EKF z."""
+        src = (_PYTHON_ROOT / "fw_sitl" / "balloon_scene.py").read_text(encoding="utf-8")
+        start = src.index("def spawn_fg_from_setup")
+        snippet = src[start : start + 400]
+        self.assertNotIn("world_balloons", snippet)
+        self.assertIn("local_z=0", snippet)
 
     def test_synthetic_default_udp_matches_image_source(self) -> None:
         synth = (_PYTHON_ROOT / "fw_sitl" / "synthetic_camera.py").read_text(

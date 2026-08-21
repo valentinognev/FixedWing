@@ -11,7 +11,7 @@ MAVLINK_SERVER_PID=""
 MAVLINK_FANOUT="${MAVLINK_FANOUT:-0}"
 GZ_MODEL="rc_cessna"
 SETUP="${PYTHON_ROOT}/flightSetup.json"
-POSE="${PX4_GZ_MODEL_POSE:-0,0,500,0,0,1.570796}"
+POSE="${PX4_GZ_MODEL_POSE:-}"
 HOST_GZ_ASSETS="${PYTHON_ROOT}/assets/gz"
 HOST_PYTHON="${PYTHON_ROOT}"
 
@@ -73,6 +73,12 @@ fi
 if [[ ! -f "${SETUP}" ]]; then
 	echo "Error: missing setup ${SETUP}" >&2
 	exit 1
+fi
+if [[ -z "${POSE}" ]]; then
+	POSE="$(PYTHONPATH="${PYTHON_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" python3 -m fw_sitl.spawn_ic --setup "${SETUP}" --gz-pose)"
+fi
+if [[ -z "${POSE}" ]]; then
+	POSE="0,0,500,0,0,1.570796"
 fi
 if [[ -z "${DISPLAY:-}" ]]; then
 	echo "Error: DISPLAY is not set (Gazebo GUI required)" >&2
@@ -242,7 +248,7 @@ import sys
 sys.path.insert(0, '/opt/fixedwing/python')
 from fw_sitl.flight_setup import load_flight_setup
 from fw_sitl.gz_overlay import apply_plane_overlay
-from fw_sitl.gz_pose import world_velocity_enu, DEFAULT_GZ_YAW_RAD
+from fw_sitl.spawn_ic import gz_spawn_velocity_enu
 stock = Path(sys.argv[1])
 setup = load_flight_setup(Path('/opt/fixedwing/flightSetup.json'))
 stock.write_text(apply_plane_overlay(
@@ -253,7 +259,7 @@ stock.write_text(apply_plane_overlay(
     eye_forward_m=setup.camera.fg_eye_forward_m,
     update_rate_hz=setup.camera.rate_hz,
 ))
-vx, vy, vz = world_velocity_enu(setup.guidance.speed_mps, DEFAULT_GZ_YAW_RAD)
+vx, vy, vz = gz_spawn_velocity_enu(setup)
 Path('/tmp/fw_gz_vel.env').write_text(
     f'export FW_GZ_SPAWN_VX={vx}\\nexport FW_GZ_SPAWN_VY={vy}\\nexport FW_GZ_SPAWN_VZ={vz}\\n'
 )

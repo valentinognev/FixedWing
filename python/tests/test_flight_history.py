@@ -16,9 +16,13 @@ if str(_PYTHON_ROOT) not in sys.path:
 
 from fw_sitl.flight_history import (
     FlightHistory,
+    extrapolate_ned,
     first_unpassed_balloon,
     los_az_el_deg,
     ned_delta_m,
+    slew_toward_ned,
+    slew_toward_rpy,
+    unwrap_deg_list,
     wrap_deg,
 )
 
@@ -146,8 +150,9 @@ class TestAbeamStickyTarget(unittest.TestCase):
         assert el is not None
         self.assertAlmostEqual(el[0], -10.0, places=5)
 
-    def test_los_series_uses_camera_blob_when_tracked(self) -> None:
-        """Geometric body-X can be 0 while the blob sits ~28° right of center."""
+    def test_los_series_stays_geometric_when_camera_blob_present(self) -> None:
+        """Camera az/el is stored but not mixed into the LOS plot (HSV flicker
+        used to swap ±40° blob angles with ±180° body-X and jump 85–140°)."""
         h = FlightHistory()
         h.t.append(0.0)
         h.x.append(0.0)
@@ -160,19 +165,13 @@ class TestAbeamStickyTarget(unittest.TestCase):
         h.pitch_deg.append(0.0)
         h.note_cam_los((math.tan(math.radians(28.0)), 0.0, 1.0))
         h.apply_cam_to_last()
+        self.assertAlmostEqual(h.cam_az_deg[0], 28.0, delta=0.2)
         az, el = h.los_deg_series()
         assert az is not None and el is not None
-        self.assertAlmostEqual(az[0], 28.0, delta=0.2)
-        self.assertAlmostEqual(el[0], 0.0, delta=0.2)
+        self.assertAlmostEqual(az[0], 0.0, places=5)
+        self.assertAlmostEqual(el[0], 0.0, places=5)
 
     def test_apply_cam_to_last_with_start_index_fills_whole_burst(self) -> None:
-        """poll() can append >1 sample per call (LOCAL_POSITION_NED streams
-        faster than the control loop). Patching only the last cam-LOS sample
-        left earlier burst members at NaN, which los_deg_series treats as
-        "no camera blob" and falls back to the geometric estimate — every
-        other sample flipping between two genuinely different LOS values
-        once the tracker starts seeing the balloon (a real dense zigzag,
-        not sensor noise)."""
         h = FlightHistory()
         h.t.extend([0.0, 0.0])
         h.x.extend([0.0, 0.0])
@@ -185,11 +184,12 @@ class TestAbeamStickyTarget(unittest.TestCase):
         h.pitch_deg.extend([0.0, 0.0])
         h.note_cam_los((math.tan(math.radians(28.0)), 0.0, 1.0))
         h.apply_cam_to_last(0)
+        for i in (0, 1):
+            self.assertAlmostEqual(h.cam_az_deg[i], 28.0, delta=0.2)
         az, el = h.los_deg_series()
         assert az is not None and el is not None
-        for i in (0, 1):
-            self.assertAlmostEqual(az[i], 28.0, delta=0.2)
-            self.assertAlmostEqual(el[i], 0.0, delta=0.2)
+        self.assertAlmostEqual(az[0], 0.0, places=5)
+        self.assertAlmostEqual(az[1], 0.0, places=5)
 
 
 class TestFlightHistoryTargetSeries(unittest.TestCase):
@@ -221,6 +221,43 @@ class TestFlightHistoryTargetSeries(unittest.TestCase):
         h.z.append(0.0)
         self.assertIsNone(h.los_deg_series())
         self.assertIsNone(h.target_delta_series())
+
+    def test_target_delta_uses_sim_pose_not_ekf(self) -> None:
+        h = FlightHistory()
+        h.t.extend([0.0, 1.0])
+        h.x.extend([0.0, 10.0])
+        h.y.extend([0.0, 0.0])
+        h.z.extend([0.0, 0.0])
+        h.ekf_x.extend([0.0, 10.0])
+        h.ekf_y.extend([0.0, 0.0])
+        h.ekf_z.extend([0.0, 0.0])
+        h.sim_x.extend([100.0, 110.0])
+        h.sim_y.extend([0.0, 0.0])
+        h.sim_z.extend([0.0, 0.0])
+        h.tgt_x.extend([300.0, 300.0])
+        h.tgt_y.extend([0.0, 0.0])
+        h.tgt_z.extend([0.0, 0.0])
+        dn, de, dd = h.target_delta_series()
+        assert dn is not None
+        self.assertAlmostEqual(dn[0], -200.0)
+        self.assertAlmostEqual(dn[1], -190.0)
+
+    def test_apply_sim_coast_from_uses_ekf_delta(self) -> None:
+        h = FlightHistory()
+        h.x.extend([0.0, 5.0])
+        h.y.extend([0.0, 0.0])
+        h.z.extend([0.0, 0.0])
+        h.ekf_x.extend([10.0, 15.0])
+        h.ekf_y.extend([0.0, 0.0])
+        h.ekf_z.extend([0.0, 0.0])
+        h.sim_x.extend([float("nan"), float("nan")])
+        h.sim_y.extend([float("nan"), float("nan")])
+        h.sim_z.extend([float("nan"), float("nan")])
+        h.apply_sim_coast_from(0, (100.0, 20.0, -5.0), (10.0, 0.0, 0.0))
+        self.assertAlmostEqual(h.sim_x[0], 100.0)
+        self.assertAlmostEqual(h.sim_x[1], 105.0)
+        self.assertAlmostEqual(h.sim_y[0], 20.0)
+        self.assertAlmostEqual(h.sim_z[0], -5.0)
 
     def test_note_target_fills_last_sample(self) -> None:
         h = FlightHistory()
@@ -295,6 +332,183 @@ class TestOverwritePositionsFrom(unittest.TestCase):
         self.assertEqual((h.x[0], h.y[0], h.z[0]), (1.0, 2.0, 3.0))
 
 
+class TestOverwriteAttitudesFrom(unittest.TestCase):
+    def test_patches_yaw_burst_and_last_q(self) -> None:
+        h = FlightHistory()
+        h.t.extend([0.0, 1.0, 1.0])
+        h.x.extend([0.0, 1.0, 2.0])
+        h.y.extend([0.0, 0.0, 0.0])
+        h.z.extend([0.0, 0.0, 0.0])
+        h.roll_deg.extend([0.0, float("nan"), float("nan")])
+        h.pitch_deg.extend([0.0, float("nan"), float("nan")])
+        h.yaw_deg.extend([0.0, float("nan"), float("nan")])
+        h.overwrite_attitudes_from(1, (0.1, -0.2, 1.5))
+        self.assertAlmostEqual(h.yaw_deg[0], 0.0)
+        self.assertAlmostEqual(h.yaw_deg[1], math.degrees(1.5))
+        self.assertAlmostEqual(h.yaw_deg[2], math.degrees(1.5))
+        self.assertAlmostEqual(h.last_att_rad[2], 1.5)
+        self.assertIsNotNone(h.last_q)
+
+
+class TestAddNedOffsetFrom(unittest.TestCase):
+    def test_keeps_ekf_increments(self) -> None:
+        h = FlightHistory()
+        h.t.extend([0.0, 0.1, 0.2])
+        h.x.extend([100.0, 102.0, 105.0])
+        h.y.extend([200.0, 201.0, 201.0])
+        h.z.extend([10.0, 10.0, 11.0])
+        h.add_ned_offset_from(0, (-95.0, -200.0, 0.0))
+        self.assertEqual(h.x, [5.0, 7.0, 10.0])
+        self.assertEqual(h.y, [0.0, 1.0, 1.0])
+        self.assertEqual(h.z, [10.0, 10.0, 11.0])
+        self.assertEqual(h.last_pos, (10.0, 1.0, 11.0))
+
+    def test_clear_series_keeps_ekf(self) -> None:
+        h = FlightHistory()
+        h.x.append(1.0)
+        h.t.append(0.0)
+        h.last_ekf_pos = (3.0, 4.0, 5.0)
+        h.clear_series()
+        self.assertEqual(h.x, [])
+        self.assertEqual(h.last_ekf_pos, (3.0, 4.0, 5.0))
+
+
+class TestAddRpyOffsetFrom(unittest.TestCase):
+    def test_does_not_poison_poll_att_cache(self) -> None:
+        h = FlightHistory()
+        h.t.extend([0.0, 0.05])
+        h.roll_deg.extend([10.0, 11.0])
+        h.pitch_deg.extend([0.0, 0.0])
+        h.yaw_deg.extend([20.0, 21.0])
+        h.last_att_rad = (math.radians(11.0), 0.0, math.radians(21.0))
+        h._last_att_deg = (11.0, 0.0, 21.0)
+        cache = h._last_att_deg
+        h.add_rpy_offset_from(1, (0.0, 0.0, math.radians(125.0)))
+        self.assertEqual(h._last_att_deg, cache)
+        self.assertAlmostEqual(h.last_att_rad[2], math.radians(21.0))
+        self.assertAlmostEqual(h.yaw_deg[0], 20.0)
+        self.assertAlmostEqual(h.yaw_deg[1], wrap_deg(21.0 + 125.0), places=5)
+
+
+class TestSlewToward(unittest.TestCase):
+    def test_ned_caps_step(self) -> None:
+        cur = (0.0, 0.0, 0.0)
+        tgt = (30.0, 40.0, 0.0)
+        out = slew_toward_ned(cur, tgt, 10.0)
+        self.assertAlmostEqual(math.hypot(out[0], out[1]), 10.0, places=5)
+
+    def test_ned_reaches_target(self) -> None:
+        self.assertEqual(
+            slew_toward_ned((1.0, 2.0, 3.0), (1.2, 2.1, 3.0), 1.0),
+            (1.2, 2.1, 3.0),
+        )
+
+    def test_yaw_wraps(self) -> None:
+        cur = (0.0, 0.0, math.radians(170.0))
+        tgt = (0.0, 0.0, math.radians(-170.0))
+        out = slew_toward_rpy(cur, tgt, math.radians(5.0))
+        self.assertGreater(out[2], math.radians(170.0) - 0.01)
+
+
+class TestExtrapolateNed(unittest.TestCase):
+    def test_two_samples_coast_at_fg_velocity(self) -> None:
+        samples = [
+            (10.0, (0.0, 0.0, 0.0)),
+            (12.0, (40.0, 0.0, 0.0)),
+        ]
+        p = extrapolate_ned(samples, 14.0)
+        assert p is not None
+        self.assertAlmostEqual(p[0], 80.0)
+        self.assertAlmostEqual(p[1], 0.0)
+
+    def test_single_sample_holds(self) -> None:
+        p = extrapolate_ned([(1.0, (5.0, 6.0, 7.0))], 9.0)
+        self.assertEqual(p, (5.0, 6.0, 7.0))
+
+    def test_empty_is_none(self) -> None:
+        self.assertIsNone(extrapolate_ned([], 0.0))
+
+    def test_fg_velocity_coasts_single_sample(self) -> None:
+        p = extrapolate_ned(
+            [(10.0, (100.0, 200.0, 0.0))],
+            12.0,
+            vel_ned=(20.0, -5.0, 1.0),
+        )
+        assert p is not None
+        self.assertAlmostEqual(p[0], 140.0)
+        self.assertAlmostEqual(p[1], 190.0)
+        self.assertAlmostEqual(p[2], 2.0)
+
+
+class TestPlotVelocityAndYawGlitch(unittest.TestCase):
+    def test_recompute_ned_velocity_from_dt(self) -> None:
+        h = FlightHistory()
+        h.t.extend([0.0, 0.1])
+        h.x.extend([0.0, 2.0])
+        h.y.extend([0.0, 0.0])
+        h.z.extend([0.0, 0.0])
+        h.vx.extend([99.0, 99.0])
+        h.vy.extend([99.0, 99.0])
+        h.vz.extend([99.0, 99.0])
+        h.recompute_ned_velocity_from(1, min_dt=0.1)
+        self.assertAlmostEqual(h.vx[1], 20.0, places=5)
+        self.assertAlmostEqual(h.vy[1], 0.0, places=5)
+        self.assertAlmostEqual(h.vx[0], 99.0)
+
+    def test_absorb_vel_jumps_holds_previous(self) -> None:
+        h = FlightHistory()
+        h.vx.extend([10.0, 11.0, 80.0, 81.0])
+        h.vy.extend([0.0, 0.0, 0.0, 0.0])
+        h.vz.extend([0.0, 0.0, 0.0, 0.0])
+        h.absorb_vel_jumps_from(1, max_step_mps=8.0)
+        self.assertAlmostEqual(h.vx[2], 11.0)
+        self.assertAlmostEqual(h.vx[3], 11.0)
+
+    def test_slew_ned_offset_caps_telnet_snap(self) -> None:
+        # Pickle 122330: snapping gt−ekf every ~2 s jumped NED 10–97 m.
+        cur = (0.0, 0.0, 0.0)
+        tgt = (40.0, 30.0, 0.0)
+        out = slew_toward_ned(cur, tgt, 15.0)
+        self.assertAlmostEqual(math.hypot(out[0], out[1]), 15.0, places=5)
+
+    def test_absorb_yaw_jumps_keeps_trace_continuous(self) -> None:
+        h = FlightHistory()
+        h.yaw_deg.extend([10.0, 11.0, 97.0, 98.0])
+        extra = h.absorb_yaw_jumps_from(1, max_step_deg=10.0)
+        self.assertAlmostEqual(h.yaw_deg[1], 11.0, places=5)
+        self.assertAlmostEqual(h.yaw_deg[2], 11.0, places=5)
+        self.assertAlmostEqual(h.yaw_deg[3], 12.0, places=5)
+        self.assertAlmostEqual(math.degrees(extra), -86.0, places=5)
+
+    def test_unwrap_deg_crosses_180(self) -> None:
+        out = unwrap_deg_list([170.0, 179.0, -170.0])
+        self.assertAlmostEqual(out[2], 190.0, places=5)
+
+
+class TestAttitudeCmdSeries(unittest.TestCase):
+    def test_apply_cmd_fills_burst(self) -> None:
+        h = FlightHistory()
+        h.t.extend([0.0, 0.05, 0.05])
+        h.roll_cmd_deg.extend([float("nan")] * 3)
+        h.pitch_cmd_deg.extend([float("nan")] * 3)
+        h.yaw_cmd_deg.extend([float("nan")] * 3)
+        h.apply_attitude_cmd_from(1, (10.0, -5.0, 90.0))
+        self.assertTrue(math.isnan(h.roll_cmd_deg[0]))
+        self.assertAlmostEqual(h.roll_cmd_deg[1], 10.0)
+        self.assertAlmostEqual(h.yaw_cmd_deg[2], 90.0)
+
+    def test_plot_draws_dashed_attitude_cmd(self) -> None:
+        text = (_PYTHON_ROOT / "fw_sitl" / "flight_history.py").read_text(
+            encoding="utf-8"
+        )
+        plot = text[text.index("def make_figures"):]
+        self.assertIn('label="roll cmd"', plot)
+        self.assertIn('label="pitch cmd"', plot)
+        self.assertIn('label="yaw cmd"', plot)
+        att = plot[plot.index('label="roll"'): plot.index("LOS [deg]")]
+        self.assertIn('linestyle="--"', att)
+
+
 class TestBalloonMarkers(unittest.TestCase):
     def test_balloon_markers_ned_to_neu(self) -> None:
         h = FlightHistory()
@@ -344,6 +558,8 @@ class TestNedPlotTargetOverlay(unittest.TestCase):
         self.assertIn("self.tgt_x", ned)
         self.assertIn("self.tgt_y", ned)
         self.assertIn("self.tgt_z", ned)
+        self.assertIn("self.sim_x", ned)
+        self.assertIn('label="EKF N"', ned)
         self.assertIn('linestyle="--"', ned)
 
 
@@ -354,7 +570,8 @@ class TestLosPlotTitle(unittest.TestCase):
         )
         plot = text[text.index("def make_figures("):]
         self.assertIn("until abeam", plot)
-        self.assertIn("camera blob", plot)
+        self.assertIn("body +X", plot)
+        self.assertNotIn("camera blob", plot)
         self.assertNotIn("az vs track", plot)
         self.assertNotIn("az=0 north", plot)
 
@@ -484,8 +701,8 @@ class TestPlotSave(unittest.TestCase):
         self.assertAlmostEqual(loaded.cam_el_deg[0], -3.0)
         az, el = loaded.los_deg_series()
         assert az is not None and el is not None
-        self.assertAlmostEqual(az[0], 28.0)
-        self.assertAlmostEqual(el[0], -3.0)
+        self.assertAlmostEqual(az[0], wrap_deg(0.0 - 18.0), delta=0.5)
+        self.assertAlmostEqual(el[0], 2.0, places=4)
 
 
 if __name__ == "__main__":

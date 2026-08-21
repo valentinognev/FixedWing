@@ -7,11 +7,33 @@ import cv2
 import numpy as np
 from pymavlink import mavutil
 
-from fw_sitl.camera_model import CameraModel, project_ned_offset_to_pixel
+from fw_sitl.camera_model import CameraModel, project_ned_offset_to_pixel, vec_ned_to_cam
 from fw_sitl.flight_setup import BalloonSpec, CameraSpec, FlightSetup
-from fw_sitl.mavlink_io import connect, poll_mavlink, request_local_position
+from fw_sitl.mavlink_io import connect, poll_local_position_and_attitude, request_local_position
 from fw_sitl.race_guidance import rebase_balloons_to_local_z
-from fw_sitl.zmq_bus import ImagePublisher
+from fw_sitl.zmq_bus import ColorSubscriber, ImagePublisher, TargetColor
+
+
+def _fill_sky_ground(
+    img: np.ndarray,
+    model: CameraModel,
+    roll: float,
+    pitch: float,
+    yaw: float,
+    sky_rgb: tuple[int, int, int],
+    ground_rgb: tuple[int, int, int],
+) -> None:
+    """Paint sky/ground from world-down in the camera frame (roll/pitch/yaw)."""
+    down_cam = vec_ned_to_cam((0.0, 0.0, 1.0), model, roll, pitch, yaw)
+    h, w = int(model.height_px), int(model.width_px)
+    u = np.arange(w, dtype=np.float64)
+    v = np.arange(h, dtype=np.float64)
+    uu, vv = np.meshgrid(u, v)
+    rx = (uu - model.cx) / model.fx
+    ry = (vv - model.cy) / model.fy
+    looking_down = rx * down_cam[0] + ry * down_cam[1] + down_cam[2] > 0.0
+    img[~looking_down] = np.array(sky_rgb, dtype=np.uint8)
+    img[looking_down] = np.array(ground_rgb, dtype=np.uint8)
 
 
 def render_frame(
@@ -28,9 +50,7 @@ def render_frame(
 ) -> np.ndarray:
     model = CameraModel.from_spec(camera)
     img = np.zeros((model.height_px, model.width_px, 3), dtype=np.uint8)
-    horizon_y = int(model.cy)
-    img[:horizon_y, :] = np.array(sky_rgb, dtype=np.uint8)
-    img[horizon_y:, :] = np.array(ground_rgb, dtype=np.uint8)
+    _fill_sky_ground(img, model, roll, pitch, yaw, sky_rgb, ground_rgb)
 
     pos = np.array(pos_ned, dtype=np.float64)
     draw_list: list[tuple[float, float, float, tuple[int, int, int], float]] = []
@@ -66,6 +86,25 @@ def render_frame(
     return img
 
 
+def lock_world_balloons(
+    *,
+    template: tuple[BalloonSpec, ...],
+    color: TargetColor | None,
+    locked: tuple[BalloonSpec, ...] | None,
+) -> tuple[BalloonSpec, ...] | None:
+    """Freeze world balloons from control color NED; keep template color/size."""
+    if locked is not None:
+        return locked
+    if color is None or color.balloons_ned is None:
+        return None
+    if len(color.balloons_ned) != len(template):
+        return None
+    return tuple(
+        BalloonSpec(ned=ned, color=spec.color, diameter_m=spec.diameter_m)
+        for spec, ned in zip(template, color.balloons_ned, strict=True)
+    )
+
+
 def run_synthetic_publisher(
     setup: FlightSetup,
     udp_port: int = 14541,
@@ -87,28 +126,30 @@ def run_synthetic_publisher(
     )
 
     pub = ImagePublisher(setup.zmq.image)
+    color_sub = ColorSubscriber(setup.zmq.color)
     period = 1.0 / setup.render_rate_hz
     pos = (0.0, 0.0, -80.0)
     att = (0.0, 0.0, 0.0)
-    # Gazebo balloons are world-fixed. Freeze NED on first pose so a climb/dive
-    # moves the disks in the image (per-frame rebase glued them to the horizon).
+    # World balloons lock from control color `balloons` (rebased NED), not the
+    # first falling MAVLink pose.
     world_balloons: tuple[BalloonSpec, ...] | None = None
     next_t = time.time()
     print(f"Synthetic camera publishing @ {setup.render_rate_hz} Hz → {setup.zmq.image}")
 
     while True:
-        pos_msg, _, _ = poll_mavlink(master)
-        while True:
-            msg = master.recv_match(type="ATTITUDE", blocking=False)
-            if msg is None:
-                break
-            att = (float(msg.roll), float(msg.pitch), float(msg.yaw))
+        color_sub.poll_and_update()
+        world_balloons = lock_world_balloons(
+            template=setup.balloons,
+            color=color_sub.latest(),
+            locked=world_balloons,
+        )
+        pos_msg, att_msg = poll_local_position_and_attitude(master)
+        if att_msg is not None:
+            att = att_msg
         if pos_msg is not None:
             pos = pos_msg
-            if world_balloons is None:
-                world_balloons = rebase_balloons_to_local_z(setup.balloons, pos[2])
 
-        paint = world_balloons if world_balloons is not None else setup.balloons
+        paint = world_balloons or setup.balloons
         img = render_frame(
             pos, att[0], att[1], att[2], paint, setup.camera, rebase_z_to_aircraft=False
         )

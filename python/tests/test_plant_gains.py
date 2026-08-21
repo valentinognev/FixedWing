@@ -18,23 +18,6 @@ from fw_sitl.plant_gains import (
     load_plant_gains,
     plant_id_from_flags,
 )
-from fw_sitl.path_geometry import (
-    BANK_KP_ALT,
-    BANK_KP_CROSS_TRACK,
-    BANK_KP_HEADING,
-    BANK_MAX_PITCH_RAD,
-    BANK_MAX_ROLL_RAD,
-    BANK_XT_LOOKAHEAD_M,
-    DEFAULT_SPEED_MPS,
-)
-from fw_sitl.attitude_pid import (
-    ATT_LOS_MAX_PITCH_RAD,
-    ATT_MAX_PITCH_RAD,
-    CLIMB_THRUST_PER_M,
-    CRUISE_THRUST,
-    MAX_THRUST,
-    MIN_THRUST,
-)
 
 
 _PLANTS = (
@@ -78,30 +61,32 @@ class TestPlantGainsRegistry(unittest.TestCase):
         with self.assertRaises(KeyError):
             load_plant_gains("gazebo")
 
-    def test_jsbsim_rascal_matches_former_shared_outer_loop(self) -> None:
+    def test_jsbsim_rascal_race_snapshot(self) -> None:
         p = load_plant_gains("jsbsim_rascal")
         self.assertEqual(p.plant_id, "jsbsim_rascal")
         self.assertAlmostEqual(p.pid_kp, 0.8)
         self.assertAlmostEqual(p.pid_ki, 0.12)
         self.assertAlmostEqual(p.pid_kd, 0.04)
-        self.assertAlmostEqual(p.bank_kp_heading, BANK_KP_HEADING)
-        self.assertAlmostEqual(p.bank_kp_cross_track, BANK_KP_CROSS_TRACK)
-        self.assertAlmostEqual(p.bank_xt_lookahead_m, BANK_XT_LOOKAHEAD_M)
-        self.assertAlmostEqual(p.bank_max_roll_rad, BANK_MAX_ROLL_RAD)
-        self.assertAlmostEqual(p.bank_kp_alt, BANK_KP_ALT)
-        self.assertAlmostEqual(p.bank_max_pitch_rad, BANK_MAX_PITCH_RAD)
-        self.assertAlmostEqual(p.att_max_pitch_rad, ATT_MAX_PITCH_RAD)
-        self.assertAlmostEqual(p.att_los_max_pitch_rad, ATT_LOS_MAX_PITCH_RAD)
-        self.assertAlmostEqual(p.cruise_thrust, CRUISE_THRUST)
-        self.assertAlmostEqual(p.climb_thrust_per_m, CLIMB_THRUST_PER_M)
-        self.assertAlmostEqual(p.min_thrust, MIN_THRUST)
-        self.assertAlmostEqual(p.max_thrust, MAX_THRUST)
-        self.assertAlmostEqual(p.speed_mps, DEFAULT_SPEED_MPS)
+        self.assertAlmostEqual(p.bank_kp_heading, 1.0)
+        self.assertAlmostEqual(p.bank_kp_cross_track, 0.003)
+        self.assertAlmostEqual(p.bank_xt_lookahead_m, 180.0)
+        self.assertAlmostEqual(p.bank_max_roll_rad, 0.50)
+        self.assertAlmostEqual(p.bank_kp_alt, 0.028)
+        self.assertAlmostEqual(p.bank_max_pitch_rad, 0.12)
+        self.assertAlmostEqual(p.att_max_pitch_rad, 0.35)
+        self.assertAlmostEqual(p.att_los_max_pitch_rad, 0.70)
+        self.assertAlmostEqual(p.cruise_thrust, 0.62)
+        self.assertAlmostEqual(p.climb_thrust_per_m, 0.012)
+        self.assertAlmostEqual(p.min_thrust, 0.40)
+        self.assertAlmostEqual(p.max_thrust, 1.0)
+        self.assertAlmostEqual(p.speed_mps, 18.0)
         self.assertAlmostEqual(p.lookahead_m, 500.0)
-        self.assertAlmostEqual(p.fw_airspd_min, 5.0)
-        self.assertAlmostEqual(p.fw_airspd_trim, 30.0)
-        self.assertAlmostEqual(p.fw_airspd_max, 50.0)
-        self.assertAlmostEqual(p.los_kwargs()["kp_alt"], BANK_KP_ALT)
+        self.assertAlmostEqual(p.fw_airspd_min, 10.0)
+        self.assertAlmostEqual(p.fw_airspd_trim, 18.0)
+        self.assertAlmostEqual(p.fw_airspd_max, 40.0)
+        self.assertAlmostEqual(p.los_kwargs()["kp_heading"], 1.0)
+        self.assertAlmostEqual(p.los_kwargs()["kp_alt"], 0.028)
+        self.assertAlmostEqual(p.los_kwargs()["max_roll"], 0.50)
 
     def test_tables_differ_pairwise(self) -> None:
         loaded = {pid: load_plant_gains(pid) for pid in _PLANTS}
@@ -119,9 +104,8 @@ class TestPlantGainsRegistry(unittest.TestCase):
         yas = load_plant_gains("yasim_rascal")
         self.assertLess(yas.pid_kp, jsb.pid_kp)
         self.assertGreater(yas.pid_kd, jsb.pid_kd)
-        self.assertLess(yas.bank_kp_heading, jsb.bank_kp_heading)
+        self.assertLessEqual(yas.bank_max_roll_rad, jsb.bank_max_roll_rad)
         self.assertGreater(yas.cruise_thrust, jsb.cruise_thrust)
-        self.assertLess(yas.speed_mps, jsb.speed_mps)
 
     def test_gz_cessna_is_smaller_faster_than_jsbsim(self) -> None:
         jsb = load_plant_gains("jsbsim_rascal")
@@ -129,6 +113,7 @@ class TestPlantGainsRegistry(unittest.TestCase):
         self.assertAlmostEqual(gz.speed_mps, 16.0)
         self.assertAlmostEqual(gz.fw_airspd_trim, 16.0)
         self.assertGreater(gz.bank_kp_heading, jsb.bank_kp_heading)
+        self.assertLessEqual(gz.bank_max_roll_rad, jsb.bank_max_roll_rad)
         self.assertGreater(gz.pid_kp, jsb.pid_kp)
         self.assertLess(gz.cruise_thrust, jsb.cruise_thrust)
 
@@ -143,7 +128,11 @@ class TestPlantGainsRegistry(unittest.TestCase):
     def test_px4_inner_jsbsim_snapshot(self) -> None:
         inner = dict(load_plant_gains("jsbsim_rascal").px4_inner)
         self.assertAlmostEqual(inner["FW_PR_P"], 0.05)
-        self.assertAlmostEqual(inner["FW_RR_P"], 0.085)
+        self.assertAlmostEqual(inner["FW_RR_FF"], 0.50)
+        self.assertAlmostEqual(inner["FW_RR_I"], 0.18)
+        self.assertAlmostEqual(inner["FW_RR_P"], 0.15)
+        self.assertAlmostEqual(inner["FW_R_TC"], 0.45)
+        self.assertAlmostEqual(inner["FW_THR_TRIM"], 0.62)
 
     def test_px4_inner_yasim_not_jsbsim(self) -> None:
         jsb = dict(load_plant_gains("jsbsim_rascal").px4_inner)
@@ -251,6 +240,39 @@ class TestPrepareSitlArmingUsesPlant(unittest.TestCase):
                 self.assertEqual(written["EKF2_GPS_MODE"], 1)
                 self.assertEqual(written["COM_ARM_MAG_STR"], 0)
 
+    def test_jsbsim_yasim_force_gps_aiding_keeps_mag_off(self) -> None:
+        """Library hook: GPS aiding on JSBSim/YASim must still leave mag off.
+
+        CLI --ekf-fix gps is disabled (UPDATES.md 0.35.1). If a future agent
+        re-enables GPS fusion via prepare_sitl_arming(..., force_gps_aiding=True),
+        SYS_HAS_MAG must stay 0: enabling mag crashed a live --viz run
+        (Ekf::isYawFailure / tryYawEmergencyReset → permanent mag_fault).
+        GPS-only still failed to arm; this test only guards the mag contract.
+        """
+        from fw_sitl.mavlink_io import prepare_sitl_arming
+
+        for plant_id in ("jsbsim_rascal", "yasim_rascal"):
+            with self.subTest(plant_id=plant_id):
+                plant = load_plant_gains(plant_id)
+                with (
+                    patch("fw_sitl.mavlink_io.time.sleep"),
+                    patch("fw_sitl.mavlink_io.set_param") as set_param,
+                ):
+                    prepare_sitl_arming(MagicMock(), plant, force_gps_aiding=True)
+                written = {
+                    call.args[1]: call.args[2] for call in set_param.call_args_list
+                }
+                self.assertEqual(written["SYS_HAS_MAG"], 0)
+                self.assertEqual(written["EKF2_GPS_MODE"], 0)
+                self.assertEqual(written["COM_ARM_MAG_STR"], 0)
+
+    def test_sitl_disables_cpu_and_imu_arm_gates(self) -> None:
+        """Force-arm 21196 does not skip commander health; FG viz CPU/gyro blocks 60s."""
+        written = self._arming_written("jsbsim_rascal")
+        self.assertEqual(written["COM_CPU_MAX"], -1.0)
+        self.assertEqual(written["COM_ARM_IMU_GYR"], 0.0)
+        self.assertEqual(written["COM_ARM_IMU_ACC"], 0.0)
+
 
 class TestMakeBodyCmdControllerUsesPlant(unittest.TestCase):
     def test_attitude_pid_from_plant(self) -> None:
@@ -302,6 +324,7 @@ class TestRunnerPlantBinding(unittest.TestCase):
         self.assertIn('"--model"', ctl)
         self.assertIn("plant_id_from_flags", ctl)
         self.assertIn("prepare_sitl_arming(master, plant)", ctl)
+        self.assertNotIn("force_gps_aiding=force_gps_aiding", ctl)
         self.assertIn("plant=plant", ctl)
         self.assertNotIn("GZ: airspeed SP", ctl)
 

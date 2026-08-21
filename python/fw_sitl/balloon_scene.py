@@ -8,8 +8,9 @@ import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from fw_sitl.flight_setup import BalloonSpec
+from fw_sitl.flight_setup import BalloonSpec, FlightSetup
 from fw_sitl.gz_pose import DEFAULT_GZ_ORIGIN_ENU, ned_to_gz_enu
+from fw_sitl.race_guidance import rebase_balloons_to_local_z
 
 # WGS84
 _WGS84_A = 6378137.0
@@ -24,6 +25,8 @@ DEFAULT_GROUND_ALT_M = 419.2  # LSZH scene elevation (m MSL)
 # (z≈0 at cruise); FG telnet placement must use this MSL as NED origin altitude.
 DEFAULT_AIRCRAFT_MSL_M = 919.2
 DEFAULT_ORIGIN_ALT_M = DEFAULT_AIRCRAFT_MSL_M
+# FGModelMgr::add_model reads elevation-ft only (not elevation-m).
+_M_TO_FT = 1.0 / 0.3048
 
 ASSETS_BALLOONS = Path(__file__).resolve().parents[1] / "assets" / "balloons"
 # Bind-mount target in runSimJsbsimRascal.sh --viz (host assets → container).
@@ -38,6 +41,79 @@ def balloons_assets_dir() -> Path:
     if env:
         return Path(env)
     return ASSETS_BALLOONS
+
+
+def fg_elevation_ft_from_msl_m(alt_m: float) -> float:
+    """Metres AMSL → feet for FG ``/models/model/elevation-ft``.
+
+    ``geo.put_model`` writes ``elevation-m``. FGModelMgr::add_model only
+    reads ``elevation-ft`` (default 0) so 919.2 m MSL balloons appeared at
+    sea level while the JSBSim aircraft stayed at cruise.
+    """
+    return float(alt_m) * _M_TO_FT
+
+
+def fg_msl_m_from_altitude_ft(alt_ft: float) -> float:
+    """Feet AMSL → metres (inverse of ``fg_elevation_ft_from_msl_m``)."""
+    return float(alt_ft) / _M_TO_FT
+
+
+def parse_fg_telnet_float(raw: str) -> float | None:
+    """Parse FG ``get /path``: ``/path = '3977.03' (double)``."""
+    if not raw or "=" not in raw:
+        return None
+    rhs = raw.split("=", 1)[1]
+    for quote in ("'", '"'):
+        if quote in rhs:
+            try:
+                return float(rhs.split(quote)[1])
+            except (IndexError, ValueError):
+                return None
+    try:
+        return float(rhs.split()[0].strip())
+    except (ValueError, IndexError):
+        return None
+
+
+def origin_alt_m_from_fg_altitude_ft(
+    alt_ft: float | None,
+    *,
+    fallback_m: float = DEFAULT_ORIGIN_ALT_M,
+) -> float:
+    """NED origin MSL from live FG ``/position/altitude-ft``.
+
+    Hardcoded 919.2 m left models ~293 m under a visual aircraft at 3977 ft;
+    EKF chase still rebased ΔD≈0 so the plot hid the gap.
+    """
+    if alt_ft is None or not math.isfinite(float(alt_ft)) or float(alt_ft) < 100.0:
+        return float(fallback_m)
+    return fg_msl_m_from_altitude_ft(float(alt_ft))
+
+
+def origin_latlon_from_fg(
+    lat_deg: float | None,
+    lon_deg: float | None,
+    *,
+    fallback_lat_deg: float = DEFAULT_ORIGIN_LAT_DEG,
+    fallback_lon_deg: float = DEFAULT_ORIGIN_LON_DEG,
+) -> tuple[float, float]:
+    """NED origin lat/lon from live FG ``/position/latitude-deg`` / ``longitude-deg``.
+
+    Live --viz 20260821: models used DEFAULT_ORIGIN while the aircraft had
+    already drifted (NED ≈ 326 N, 127 E at spawn; 411 m from balloon 0 at
+    race t=0, heading error 134°). HSV locked only when the camera swept
+    past them. Use the live aircraft as XY origin (same idea as live alt).
+    """
+    if (
+        lat_deg is None
+        or lon_deg is None
+        or not math.isfinite(float(lat_deg))
+        or not math.isfinite(float(lon_deg))
+        or abs(float(lat_deg)) > 90.0
+        or abs(float(lon_deg)) > 180.0
+    ):
+        return float(fallback_lat_deg), float(fallback_lon_deg)
+    return float(lat_deg), float(lon_deg)
 
 
 def balloons_fg_model_dir() -> Path:
@@ -164,12 +240,36 @@ class FgTelnet:
             if not chunk:
                 break
             chunks.append(chunk)
-            if b"\n" in chunk:
+            joined = b"".join(chunks)
+            # FG often uses `\r` and/or `/>` with no `\n`. Do not treat `=` as
+            # end-of-reply: a truncated packet parsed as lat/lon and sent
+            # guidance to x≈−3.7e6 m (live 20260821_081926).
+            if b"\n" in joined or b"\r" in joined or b"/>" in joined:
                 break
+        # Trailing `/>` after `\r` must not become the next get's whole reply.
+        try:
+            self._sock.settimeout(0.0)
+            extra = self._sock.recv(4096)
+            if extra:
+                chunks.append(extra)
+        except (BlockingIOError, TimeoutError, OSError, socket.timeout, AttributeError):
+            pass
+        try:
+            self._sock.settimeout(self._timeout)
+        except AttributeError:
+            pass
         return b"".join(chunks).decode("utf-8", errors="replace")
 
     def set_prop(self, path: str, value: str | float | int) -> None:
-        self.command(f"set {path} {value}")
+        """Fire-and-forget property write.
+
+        FG ``set`` often sends no line. ``command()`` then waits the full socket
+        timeout (2s) per write — ~26 view props per capture tick froze --viz.
+        """
+        if self._sock is None:
+            raise RuntimeError("not connected")
+        payload = (f"set {path} {value}".strip() + "\r\n").encode("utf-8")
+        self._sock.sendall(payload)
 
     def nasal(self, code: str, *, timeout_s: float = 5.0) -> str:
         """Run Nasal via telnet (requires FG ``--allow-nasal-from-sockets``).
@@ -215,6 +315,43 @@ class FgTelnet:
                 break
         self._sock.settimeout(self._timeout)
         return b"".join(chunks).decode("utf-8", errors="replace")
+
+    def read_pose_deg(self) -> tuple[
+        float | None, float | None, float | None, float | None, float | None, float | None
+    ]:
+        """lat, lon, alt-ft, roll, pitch, heading (deg) via six ``get``s.
+
+        A Nasal snapshot still needed a following ``get``, and FG's ``/>``
+        prompt without ``\\n`` made that ``get`` wait the socket timeout
+        (~0.8 s/tick, 16 plot samples / 60 s). ``command()`` now returns on
+        ``/>``; six gets are then milliseconds on a live socket.
+        """
+        paths = (
+            "/position/latitude-deg",
+            "/position/longitude-deg",
+            "/position/altitude-ft",
+            "/orientation/roll-deg",
+            "/orientation/pitch-deg",
+            "/orientation/heading-deg",
+        )
+        out: list[float | None] = []
+        for path in paths:
+            out.append(parse_fg_telnet_float(self.command(f"get {path}")))
+        return (out[0], out[1], out[2], out[3], out[4], out[5])
+
+    def read_pose_snapshot(
+        self,
+    ) -> tuple[float | None, float | None, float | None, float | None, float | None, float | None, float, float, float] | None:
+        """lat, lon, alt-ft, roll, pitch, heading, vn/ve/vd fps via one Nasal dump."""
+        self.nasal(_DUMP_POSE_NASAL, timeout_s=2.0)
+        vals = parse_fg_csv_prop(self.command("get /tmp/fw_pose"))
+        if len(vals) < 6:
+            return None
+        while len(vals) < 9:
+            vals.append(0.0)
+        pose = tuple(vals[i] if math.isfinite(vals[i]) else None for i in range(6))
+        vn, ve, vd = float(vals[6]), float(vals[7]), float(vals[8])
+        return (pose[0], pose[1], pose[2], pose[3], pose[4], pose[5], vn, ve, vd)
 
     def close(self) -> None:
         if self._sock is not None:
@@ -304,6 +441,44 @@ setprop("/tmp/fw_balloon_model_count", size(paths));
 setprop("/tmp/fw_balloon_model_paths", string.join("|", paths));
 """
 
+# One Nasal dump of live model lat/lon so chase NED matches the visual mesh
+# (same WGS84 conversion as the aircraft GT), not settle+config offset.
+_DUMP_FIXEDWING_BALLOON_LL_NASAL = r"""
+var s = "";
+var root = props.globals.getNode("/models", 1);
+foreach (var c; root.getChildren("model")) {
+  var p = c.getNode("path");
+  if (p == nil) { continue; }
+  var path = p.getValue();
+  if (path == nil or find("FixedWing/balloon_", path) < 0) { continue; }
+  var latn = c.getNode("latitude-deg");
+  var lonn = c.getNode("longitude-deg");
+  var lat = (latn != nil) ? latn.getValue() : 0;
+  var lon = (lonn != nil) ? lonn.getValue() : 0;
+  s = s ~ lat ~ "," ~ lon ~ ";";
+}
+setprop("/tmp/fw_balloon_ll", s);
+"""
+
+# One Nasal dump of aircraft pose + NED fps so the GT thread is not 6 serial
+# ``get``s plus a balloon-model walk (~4 s/cycle in pickle 143601).
+_DUMP_POSE_NASAL = r"""
+var g = func (p) {
+  var v = getprop(p);
+  return (v == nil) ? 0 : v;
+};
+var s = g("/position/latitude-deg") ~ "," ~
+  g("/position/longitude-deg") ~ "," ~
+  g("/position/altitude-ft") ~ "," ~
+  g("/orientation/roll-deg") ~ "," ~
+  g("/orientation/pitch-deg") ~ "," ~
+  g("/orientation/heading-deg") ~ "," ~
+  g("/velocities/speed-north-fps") ~ "," ~
+  g("/velocities/speed-east-fps") ~ "," ~
+  g("/velocities/speed-down-fps");
+setprop("/tmp/fw_pose", s);
+"""
+
 
 def clear_fixedwing_balloons_fg(tel: FgTelnet) -> int:
     """Remove previously placed ``Models/FixedWing/balloon_*`` models. Returns count."""
@@ -334,6 +509,72 @@ def list_fixedwing_balloon_paths_fg(tel: FgTelnet) -> list[str]:
     return [p for p in val.split("|") if p]
 
 
+def parse_fg_csv_prop(raw: str) -> list[float]:
+    """Parse FG ``get /tmp/fw_pose``: ``/tmp/fw_pose = '1,2,3' (string)``."""
+    val = ""
+    if raw and "=" in raw:
+        rhs = raw.split("=", 1)[1]
+        for quote in ("'", '"'):
+            if quote in rhs:
+                try:
+                    val = rhs.split(quote)[1]
+                    break
+                except IndexError:
+                    val = ""
+        else:
+            tok = rhs.split()
+            val = tok[0].strip() if tok else ""
+    out: list[float] = []
+    for part in val.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            out.append(float(part))
+        except ValueError:
+            continue
+    return out
+
+
+def parse_fg_balloon_ll_dump(raw: str) -> list[tuple[float, float]]:
+    """Parse Nasal ``lat,lon;lat,lon;`` dump from ``/tmp/fw_balloon_ll``."""
+    try:
+        val = raw.split("=")[-1].split("'")[1]
+    except IndexError:
+        val = ""
+        rhs = raw.split("=")[-1] if "=" in raw else raw
+        val = rhs.strip().strip('"')
+    out: list[tuple[float, float]] = []
+    for part in val.split(";"):
+        part = part.strip()
+        if not part or "," not in part:
+            continue
+        a, b = part.split(",", 1)
+        try:
+            out.append((float(a), float(b)))
+        except ValueError:
+            continue
+    return out
+
+
+def fg_balloons_ned_from_models(
+    tel: FgTelnet,
+    *,
+    origin_lat_deg: float = DEFAULT_ORIGIN_LAT_DEG,
+    origin_lon_deg: float = DEFAULT_ORIGIN_LON_DEG,
+) -> list[tuple[float, float]]:
+    """Live FixedWing model lat/lon → NED XY in the aircraft GT frame."""
+    tel.nasal(_DUMP_FIXEDWING_BALLOON_LL_NASAL, timeout_s=5.0)
+    pairs = parse_fg_balloon_ll_dump(tel.command("get /tmp/fw_balloon_ll"))
+    neds: list[tuple[float, float]] = []
+    for lat, lon in pairs:
+        n, e, _ = geodetic_to_ned(
+            lat, lon, 0.0, origin_lat_deg, origin_lon_deg, 0.0
+        )
+        neds.append((n, e))
+    return neds
+
+
 def spawn_balloons_fg(
     balloons: tuple[BalloonSpec, ...],
     *,
@@ -344,18 +585,26 @@ def spawn_balloons_fg(
     telnet_port: int = 5501,
     connect_retries: int = 60,
     connect_delay_s: float = 1.0,
+    timeout_s: float | None = None,
     clear_existing: bool = True,
-) -> None:
-    """Place visible static models at balloon NED via ``geo.put_model`` (Nasal).
+) -> tuple[float, float, float]:
+    """Place visible static models at balloon NED via ``fgcommand("add-model")``.
 
-    Setting ``/ai/models/model[i]/*`` alone only creates property stubs — FG does
-    not instantiate drawable geometry from those. Runtime placement needs
-    ``fgcommand("add-model", ...)`` (``geo.put_model``), which requires FG
-    launched with ``--allow-nasal-from-sockets``.
+    Returns the live FG origin ``(lat_deg, lon_deg, alt_m)`` used for placement.
+    Chase NED must use this same origin (not a lat/lon sampled seconds earlier).
+
+    ``geo.put_model`` passes ``elevation-m``. FG 2024 ``FGModelMgr::add_model``
+    only reads ``elevation-ft`` (metres are ignored → 0 ft MSL). We set
+    ``elevation-ft`` from MSL metres. Requires FG ``--allow-nasal-from-sockets``.
 
     By default clears prior ``Models/FixedWing/balloon_*`` instances first so
     repeated race starts / probes do not accumulate leftover models.
+    ``timeout_s`` overrides ``connect_retries`` as ceil(timeout / delay).
     """
+    if timeout_s is not None:
+        connect_retries = max(
+            1, int(math.ceil(float(timeout_s) / float(connect_delay_s)))
+        )
     tel = FgTelnet(host=telnet_host, port=telnet_port)
     tel.connect(retries=connect_retries, delay_s=connect_delay_s)
     # Probe Nasal-from-sockets via a property (print() does not echo on telnet).
@@ -370,6 +619,25 @@ def spawn_balloons_fg(
                 "--allow-nasal-from-sockets (patch V6+). "
                 f"probe={probe.strip()[:160]!r}"
             )
+    default_origin_m = float(origin_alt_m)
+    live_ft = parse_fg_telnet_float(tel.command("get /position/altitude-ft"))
+    origin_alt_m = origin_alt_m_from_fg_altitude_ft(
+        live_ft, fallback_m=default_origin_m
+    )
+    live_lat = parse_fg_telnet_float(tel.command("get /position/latitude-deg"))
+    live_lon = parse_fg_telnet_float(tel.command("get /position/longitude-deg"))
+    origin_lat_deg, origin_lon_deg = origin_latlon_from_fg(
+        live_lat,
+        live_lon,
+        fallback_lat_deg=origin_lat_deg,
+        fallback_lon_deg=origin_lon_deg,
+    )
+    print(
+        f"FG balloon origin MSL {origin_alt_m:.1f} m "
+        f"lat={origin_lat_deg:.6f} lon={origin_lon_deg:.6f} "
+        f"(live altitude-ft={live_ft!r} lat={live_lat!r} lon={live_lon!r}, "
+        f"default alt {default_origin_m:.1f} m)"
+    )
     if clear_existing:
         cleared = clear_fixedwing_balloons_fg(tel)
         if cleared:
@@ -388,14 +656,27 @@ def spawn_balloons_fg(
         # Escape for Nasal string literal.
         path_lit = model_path.replace("\\", "\\\\").replace('"', '\\"')
         status_prop = f"/tmp/fw_balloon_{i}"
+        elev_ft = fg_elevation_ft_from_msl_m(alt)
+        # elevation-ft: FGModelMgr ignores elevation-m (geo.put_model's field).
         code = (
             f'setprop("{status_prop}", "pending");\n'
-            f'var n = geo.put_model("{path_lit}", {lat:.8f}, {lon:.8f}, {alt:.3f}, 0);\n'
+            f'fgcommand("add-model", var req = props.Node.new({{\n'
+            f'  "path": "{path_lit}",\n'
+            f'  "latitude-deg": {lat:.8f},\n'
+            f'  "longitude-deg": {lon:.8f},\n'
+            f'  "elevation-ft": {elev_ft:.3f},\n'
+            f'  "heading-deg": 0\n'
+            f'}}));\n'
+            f'var n = (req.getNode("property") == nil) ? nil '
+            f': props.globals.getNode(req.getNode("property").getValue());\n'
+            f'if (n != nil) {{\n'
+            f'  n.getNode("elevation-ft", 1).setDoubleValue({elev_ft:.3f});\n'
+            f'}}\n'
             f'setprop("{status_prop}", (n == nil) ? "nil" : n.getPath());\n'
         )
         print(
             f"FG balloon {i} color={spec.color} path={model_path} "
-            f"lat={lat:.6f} lon={lon:.6f} alt={alt:.1f}"
+            f"lat={lat:.6f} lon={lon:.6f} alt_m={alt:.1f} elev_ft={elev_ft:.1f}"
         )
         tel.nasal(code, timeout_s=8.0)
         status = tel.command(f"get {status_prop}")
@@ -408,7 +689,7 @@ def spawn_balloons_fg(
     live_paths = list_fixedwing_balloon_paths_fg(tel)
     tel.close()
     print(
-        f"Spawned {placed}/{len(balloons)} FG balloons via geo.put_model "
+        f"Spawned {placed}/{len(balloons)} FG balloons via add-model elevation-ft "
         f"telnet {telnet_host}:{telnet_port}; "
         f"live FixedWing balloons={len(live_paths)} paths={live_paths}"
     )
@@ -417,6 +698,26 @@ def spawn_balloons_fg(
             f"FG balloon count mismatch: expected {len(balloons)}, "
             f"live {len(live_paths)}"
         )
+    return (float(origin_lat_deg), float(origin_lon_deg), float(origin_alt_m))
+
+
+def spawn_fg_from_setup(
+    setup: FlightSetup,
+    *,
+    timeout_s: float = 90.0,
+    host: str = "127.0.0.1",
+    port: int = 5501,
+) -> tuple[float, float, float]:
+    """Place FG balloons at live-aircraft MSL (fallback cruise 919.2 m).
+
+    Returns the FG origin used for ``ned_to_geodetic``.
+    """
+    return spawn_balloons_fg(
+        rebase_balloons_to_local_z(setup.balloons, local_z=0.0),
+        telnet_host=host,
+        telnet_port=port,
+        timeout_s=timeout_s,
+    )
 
 
 GZ_CONTAINER_MODELS = Path("/opt/fixedwing/gz/models")
@@ -558,3 +859,59 @@ def spawn_balloons_gz(
         sdf_path = str(models_dir / name / "model.sdf")
         print(f"GZ balloon {name} ENU={pose} sdf={sdf_path}")
         exec_fn(gz_create_argv(world, name, sdf_path, pose))
+
+
+def spawn_gz_from_setup(
+    setup: FlightSetup,
+    *,
+    timeout_s: float = 90.0,
+    container: str = DEFAULT_GZ_CONTAINER,
+    world: str = DEFAULT_GZ_WORLD,
+) -> None:
+    """Place Gazebo balloons at cruise-relative NED; retry until gz create works."""
+    balloons = rebase_balloons_to_local_z(setup.balloons, local_z=0.0)
+    deadline = time.time() + float(timeout_s)
+    last_exc: BaseException | None = None
+    while time.time() < deadline:
+        try:
+            spawn_balloons_gz(balloons, container=container, world=world)
+            return
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            time.sleep(1.0)
+    raise TimeoutError(
+        f"GZ balloon spawn timed out after {timeout_s:.0f}s ({last_exc})"
+    ) from last_exc
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    import argparse
+
+    from fw_sitl.flight_setup import load_flight_setup
+
+    parser = argparse.ArgumentParser(
+        description="Place race balloons in FlightGear or Gazebo before PX4 is used"
+    )
+    parser.add_argument("--setup", required=True, help="flightSetup.json")
+    renderer = parser.add_mutually_exclusive_group(required=True)
+    renderer.add_argument("--fg", action="store_true", help="FlightGear geo.put_model")
+    renderer.add_argument("--gz", action="store_true", help="Gazebo model create")
+    parser.add_argument("--timeout", type=float, default=90.0)
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=5501)
+    parser.add_argument("--container", default=DEFAULT_GZ_CONTAINER)
+    args = parser.parse_args(argv)
+    setup = load_flight_setup(Path(args.setup).resolve())
+    if args.fg:
+        spawn_fg_from_setup(
+            setup, timeout_s=args.timeout, host=args.host, port=args.port
+        )
+        return 0
+    spawn_gz_from_setup(
+        setup, timeout_s=args.timeout, container=args.container
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

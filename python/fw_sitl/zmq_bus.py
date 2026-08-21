@@ -75,6 +75,7 @@ class TargetColor:
     assisted: bool = False
     t_s: float | None = None
     pos_ned: tuple[float, float, float] | None = None
+    balloons_ned: tuple[tuple[float, float, float], ...] | None = None
 
     def as_tuple(self) -> tuple[int, int, int]:
         return (int(self.r), int(self.g), int(self.b))
@@ -108,6 +109,7 @@ class TrackMessage:
     dir_cam: tuple[float, float, float] | None
     stamp: float = 0.0
     centroid_uv: tuple[float, float] | None = None
+    area_px: float = 0.0
 
 
 def _ctx(context: zmq.Context | None) -> zmq.Context:
@@ -182,6 +184,8 @@ def send_color(sock: zmq.Socket, color: TargetColor | RgbLike) -> None:
             payload["pos_n"] = float(color.pos_ned[0])
             payload["pos_e"] = float(color.pos_ned[1])
             payload["pos_d"] = float(color.pos_ned[2])
+        if color.balloons_ned is not None:
+            payload["balloons"] = [list(map(float, p)) for p in color.balloons_ned]
     else:
         r, g, b = color
         payload = {
@@ -210,6 +214,13 @@ def recv_color(sock: zmq.Socket, flags: int = 0) -> TargetColor | None:
     if "pos_n" in data and "pos_e" in data and "pos_d" in data:
         pos_ned = (float(data["pos_n"]), float(data["pos_e"]), float(data["pos_d"]))
     t_raw = data.get("t_s")
+    balloons_ned: tuple[tuple[float, float, float], ...] | None = None
+    if "balloons" in data:
+        balloons_ned = tuple(
+            tuple(float(x) for x in triple) for triple in data["balloons"]
+        )
+        if any(len(triple) != 3 for triple in balloons_ned):
+            raise ValueError("balloons NED entries must be length 3")
     return TargetColor(
         r=int(data["r"]),
         g=int(data["g"]),
@@ -218,6 +229,7 @@ def recv_color(sock: zmq.Socket, flags: int = 0) -> TargetColor | None:
         assisted=bool(data.get("assisted", False)),
         t_s=float(t_raw) if t_raw is not None else None,
         pos_ned=pos_ned,
+        balloons_ned=balloons_ned,
     )
 
 
@@ -230,6 +242,8 @@ def send_track(sock: zmq.Socket, result: TrackMessage) -> None:
     }
     if result.centroid_uv is not None:
         payload["centroid_uv"] = [float(result.centroid_uv[0]), float(result.centroid_uv[1])]
+    if float(result.area_px) > 0.0:
+        payload["area_px"] = float(result.area_px)
     sock.send_multipart([TOPIC_TRACK, json.dumps(payload, separators=(",", ":")).encode("utf-8")])
 
 
@@ -261,6 +275,7 @@ def recv_track(sock: zmq.Socket, flags: int = 0) -> TrackMessage | None:
         dir_cam=dir_cam,
         stamp=float(data.get("stamp", 0.0)),
         centroid_uv=centroid_uv,
+        area_px=float(data.get("area_px", 0.0) or 0.0),
     )
 
 
@@ -385,6 +400,7 @@ class TrackPublisher:
         centroid_uv: tuple[float, float] | None = None,
         *,
         stamp: float | None = None,
+        area_px: float = 0.0,
     ) -> None:
         send_track(
             self._sock,
@@ -393,6 +409,7 @@ class TrackPublisher:
                 dir_cam=dir_cam,
                 stamp=float(time.time() if stamp is None else stamp),
                 centroid_uv=centroid_uv,
+                area_px=float(area_px),
             ),
         )
 
