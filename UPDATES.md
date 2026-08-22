@@ -1,5 +1,16 @@
 # Updates
 
+## 0.37.1 - PP vertical ψ^c, stalled v̂, honest in-view tests
+- Nearly-vertical LOS: `ψ^c` is velocity heading (`atan2(vy,vx)`) or `yaw_act`, not `atan2(0,0)`.
+- `‖v‖ < 0.5`: reuse `_last_v_hat`; if never had velocity, skip PP and hold last commands, else yaw-heading `v̂` (no invented NED north). `normalize()` default unchanged.
+- `visual_lock` unused on the PP branch. In-view tests renamed/doc'd for accel-driven pitch (not look-at / alt-loop climb).
+- `load_plant_gains` raises `ValueError` if JSONC `plant_id` ≠ requested id.
+
+## 0.37.0 - Pure-pursuit chase + JSONC plants
+- Per-plant JSONC under `python/fw_sitl/plants/` (`jsbsim_rascal`, `jsbsim_rascal_viz`, `yasim_rascal`, `gz_rc_cessna`, `gz_advanced_plane`, `xplane_cessna172`). `plant_loader` (`strip_jsonc` scanner) → `PlantGains`; `load_plant_gains` reads `{id}.jsonc`; unknown id `KeyError`; missing file `FileNotFoundError` (chase fallback `jsbsim_rascal`).
+- On-target chase: `pure_pursuit_accel` `a_des=k(u_hat-v_hat)` → `attitude_from_accel` (polar/geom) → `thrust_energy` (quadratic `D`, `T=(m a_par+D+mg sinγ)/cosα`, `SpeedGovernor` 0.8/1.1/1.2 with exclusive recover/reduce/ramp). `last_law` `pp_polar`/`pp_geom`.
+- Path-hold unchanged (`path`). Sent yaw stays actual; roll/pitch LPF+slew kept. No `q_des_from_los` / `chase_speed_mps` on the PP branch.
+
 ## 0.35.27 - FG balloon collision actually off
 - Live YASim `201819`: still crashed on a hit (roll 218°, GS p90 166). Root XML `<enable-hot>` and a post-`add-model` `solid=0` do not clear `SG_NODEMASK_TERRAIN_BIT`.
 - Wiki form at end of each balloon XML: `<animation><object-name>balloon</object-name><enable-hot>false</enable-hot></animation>`. `add-model` request itself now has `enable-hot: 0` (load-time). Restart FG so `FG_ROOT` copy refreshes.

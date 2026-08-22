@@ -27,6 +27,7 @@ from fw_sitl.balloon_scene import (
     spawn_balloons_gz,
     spawn_fg_from_setup,
 )
+from fw_sitl.xp_balloon import spawn_xp_from_setup
 from fw_sitl.balloon_tracker import track_centroid_near_expected
 from fw_sitl.body_cmd_controllers import make_body_cmd_controller, parse_body_cmd_mode
 from fw_sitl.camera_model import (
@@ -267,6 +268,12 @@ def main() -> int:
     )
     parser.add_argument("--spawn-gz-balloons", action="store_true")
     parser.add_argument("--yasim", action="store_true", help="YASim FlightGear Rascal plant (runSimYasimRascal.sh)")
+    parser.add_argument(
+        "--xplane",
+        action="store_true",
+        help="X-Plane 12 demo Cessna plant (runSimXplaneCessna.sh)",
+    )
+    parser.add_argument("--spawn-xp-balloons", action="store_true")
     parser.add_argument("--gz-container", default="px4-noble-gz-plane")
     parser.add_argument("--no-plot", action="store_true")
     parser.add_argument(
@@ -317,9 +324,17 @@ def main() -> int:
         )
         return 2
 
-    plant_flags = int(bool(args.viz)) + int(bool(args.gz)) + int(bool(args.yasim))
+    plant_flags = (
+        int(bool(args.viz))
+        + int(bool(args.gz))
+        + int(bool(args.yasim))
+        + int(bool(args.xplane))
+    )
     if plant_flags > 1:
-        print("Error: --viz, --gz, and --yasim are mutually exclusive", file=sys.stderr)
+        print(
+            "Error: --viz, --gz, --yasim, and --xplane are mutually exclusive",
+            file=sys.stderr,
+        )
         return 2
 
     # --viz/--yasim: PX4 EKF dead-reckons (SYS_HAS_MAG=0, EKF2_GPS_MODE=1).
@@ -332,10 +347,23 @@ def main() -> int:
         args.sim = SCRIPTS_DIR / "runSimGzPlane.sh"
     elif args.yasim and args.sim == DEFAULT_SIM:
         args.sim = SCRIPTS_DIR / "runSimYasimRascal.sh"
-    kill_target = "--gz" if args.gz else ("--fg" if args.yasim else KILL_TARGET)
+    elif args.xplane and args.sim == DEFAULT_SIM:
+        args.sim = SCRIPTS_DIR / "runSimXplaneCessna.sh"
+    if args.gz:
+        kill_target = "--gz"
+    elif args.yasim:
+        kill_target = "--fg"
+    elif args.xplane:
+        kill_target = "--xplane"
+    else:
+        kill_target = KILL_TARGET
     plant = load_plant_gains(
         plant_id_from_flags(
-            gz=args.gz, yasim=args.yasim, viz=args.viz, gz_model=args.model
+            gz=args.gz,
+            yasim=args.yasim,
+            viz=args.viz,
+            xplane=args.xplane,
+            gz_model=args.model,
         )
     )
     speed_mps = plant.speed_mps
@@ -386,6 +414,7 @@ def main() -> int:
     # Standalone control that owns the sim still spawns before MAVLink connect.
     want_fg_balloons = bool(args.spawn_fg_balloons or args.viz or args.yasim)
     want_gz_balloons = bool(args.spawn_gz_balloons or args.gz)
+    want_xp_balloons = bool(args.spawn_xp_balloons or args.xplane)
     if want_fg_balloons and not args.no_sim:
         try:
             print(
@@ -409,6 +438,14 @@ def main() -> int:
         except Exception as exc:  # noqa: BLE001
             print(f"GZ balloon spawn warning: {exc}")
             print("world balloons are missing")
+    if want_xp_balloons and not args.no_sim:
+        try:
+            print("XP balloon spawn → UDP plugin...")
+            if spawn_xp_from_setup(setup, timeout_s=90.0) != 0:
+                print("world balloons are missing")
+        except Exception as exc:  # noqa: BLE001
+            print(f"XP balloon spawn warning: {exc}")
+            print("world balloons are missing")
 
     stop_flag = [False]
 
@@ -429,7 +466,9 @@ def main() -> int:
     # FG viz attach: skip reboot — EKF re-init while the unarmed plane falls yields
     # persistent "High Gyro Bias" / arm denied. Fresh sim already has params applied
     # after prepare; headless still reboots so reboot-required params stick.
-    skip_reboot = bool(args.no_sim or args.viz or args.gz or args.yasim)
+    skip_reboot = bool(
+        args.no_sim or args.viz or args.gz or args.yasim or args.xplane
+    )
     if not skip_reboot:
         try:
             master = reboot_autopilot(master)
@@ -440,7 +479,7 @@ def main() -> int:
         prepare_sitl_arming(master, plant)
     else:
         print(
-            "Skipping autopilot reboot (--no-sim/--viz/--gz/--yasim): "
+            "Skipping autopilot reboot (--no-sim/--viz/--gz/--yasim/--xplane): "
             "engage ASAP before in-air fall"
         )
 
@@ -470,9 +509,9 @@ def main() -> int:
             sim_script=None if args.no_sim else args.sim,
             sim_extra_args=sim_extra,
             # Race attach / in-air SITL: keep flying even if EKF drifted while peers started.
-            max_attempts=1 if (args.viz or args.gz or args.yasim or args.no_sim) else 3,
-            arm_timeout_s=60.0 if (args.viz or args.gz or args.yasim or args.no_sim) else 12.0,
-            full_sim_restart=(not args.viz) and (not args.gz) and (not args.yasim) and (not args.no_sim),
+            max_attempts=1 if (args.viz or args.gz or args.yasim or args.xplane or args.no_sim) else 3,
+            arm_timeout_s=60.0 if (args.viz or args.gz or args.yasim or args.xplane or args.no_sim) else 12.0,
+            full_sim_restart=(not args.viz) and (not args.gz) and (not args.yasim) and (not args.xplane) and (not args.no_sim),
             accept_unhealthy=True,
             plant=plant,
         )
@@ -580,7 +619,7 @@ def main() -> int:
     # --viz/--yasim: z_hold_true rebases onto the balloon's real placed altitude;
     # XY is translated by live FG NED so chase matches models at the visual AC.
     live_xy = (0.0, 0.0)
-    if args.gz:
+    if args.gz or args.xplane:
         world_balloons = rebase_balloons_to_local_z(setup.balloons, local_z=0.0)
         race_balloons = world_balloons
         z_hold_true = (
@@ -653,7 +692,7 @@ def main() -> int:
     )
     if hasattr(controller, "_bridge"):
         controller._bridge._alt_hold_z = float(
-            z_hold_true if args.gz else z_hold
+            z_hold_true if (args.gz or args.xplane) else z_hold
         )
     color_pub = ColorPublisher(setup.zmq.color)
     track_sub = TrackSubscriber(setup.zmq.track)
@@ -701,8 +740,9 @@ def main() -> int:
     # spawn-frame pos = ekf − origin_bias, locked from the first good EKF+mesh
     # pair (|h| >= 1 m). PoseSubscriber stays for that lock sample; do not
     # per-tick mesh-overwrite after lock, and do not use raw EKF as balloon NED.
-    pose_sub = PoseSubscriber(setup.zmq.pose) if args.gz else None
+    pose_sub = PoseSubscriber(setup.zmq.pose) if (args.gz or args.xplane) else None
     origin_bias: tuple[float, float, float] | None = None
+    pose_label = "xp" if args.xplane else "gz"
 
     # Continuously overwrite guidance pos+att from FG/JSBSim ground truth
     # (telnet) instead of PX4's dead-reckoning EKF. Zero-order-hold between
@@ -829,7 +869,7 @@ def main() -> int:
                     origin_bias = ned_sub(ekf_ned, world_ned)
                     h = horiz_ned_err_m(ekf_ned, world_ned)
                     print(
-                        f"gz origin_bias N,E,D={origin_bias[0]:.1f},{origin_bias[1]:.1f},{origin_bias[2]:.1f} "
+                        f"{pose_label} origin_bias N,E,D={origin_bias[0]:.1f},{origin_bias[1]:.1f},{origin_bias[2]:.1f} "
                         f"|h|={h:.1f}m",
                         flush=True,
                     )
@@ -999,12 +1039,12 @@ def main() -> int:
                     float(centroid_uv[1]) - float(expected_uv[1]),
                 )
             if tracker_in_view and not geom_ok and not (
-                args.viz or args.gz or args.yasim
+                args.viz or args.gz or args.yasim or args.xplane
             ):
                 # Headless synth only: largest HSV blob can be scenery.
-                # --viz/--yasim FG and --gz race_cam vs EKF pinhole sit
-                # 150–300 px off the blob, so this gate never armed look-at
-                # (live --gz 153119: assisted=1 until t=60.6, cam 24°/10°).
+                # --viz/--yasim FG, --gz race_cam, and --xplane mss vs EKF
+                # pinhole sit 150–300 px off the blob, so this gate never
+                # armed look-at (live --gz 153119: assisted=1 until t=60.6).
                 tracker_in_view = False
                 last_track_in_view = False
                 last_dir_cam = None
@@ -1125,9 +1165,11 @@ def main() -> int:
             if gt_rebase_active and gt_vel is not None:
                 chase_gs = math.hypot(gt_vel[0], gt_vel[1])
                 chase_vx, chase_vy = float(gt_vel[0]), float(gt_vel[1])
+                chase_vz = float(gt_vel[2])
             else:
                 chase_gs = history.last_groundspeed
                 chase_vx, chase_vy = history.last_vx, history.last_vy
+                chase_vz = history.last_vz
             controller.send_chase_setpoint(
                 master,
                 pos,
@@ -1141,6 +1183,7 @@ def main() -> int:
                 z_target=tgt[2],
                 vx=chase_vx,
                 vy=chase_vy,
+                vz=chase_vz,
                 path_lock_token=race.target_idx,
                 visual_lock=tracker_in_view,
                 q_exec=ekf_q if gt_rebase_active and ekf_q is not None else None,
@@ -1186,7 +1229,7 @@ def main() -> int:
                     pos_ned=plane_ned,
                     tgt_ned=race.balloon_ned(),
                 )
-                if args.gz:
+                if args.gz or args.xplane:
                     if ekf_ned is not None and world_ned is not None:
                         ekf_err_h = horiz_ned_err_m(ekf_ned, world_ned)
                     else:
@@ -1270,6 +1313,8 @@ def main() -> int:
                 title = f"Balloon race (Gazebo {args.model})"
             elif args.yasim:
                 title = "Balloon race (YASim)"
+            elif args.xplane:
+                title = "Balloon race (X-Plane Cessna)"
             elif args.viz:
                 title = "Balloon race (JSBSim + FG viz)"
             else:

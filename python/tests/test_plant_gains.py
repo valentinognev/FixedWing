@@ -26,6 +26,7 @@ _PLANTS = (
     "yasim_rascal",
     "gz_rc_cessna",
     "gz_advanced_plane",
+    "xplane_cessna172",
 )
 
 
@@ -60,6 +61,13 @@ class TestPlantIdFromFlags(unittest.TestCase):
         with self.assertRaises(ValueError):
             plant_id_from_flags(gz=True, gz_model="iris")
 
+    def test_xplane(self) -> None:
+        self.assertEqual(plant_id_from_flags(xplane=True), "xplane_cessna172")
+
+    def test_xplane_and_gz_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            plant_id_from_flags(xplane=True, gz=True)
+
 
 class TestPlantGainsRegistry(unittest.TestCase):
     def test_known_ids_match_registry(self) -> None:
@@ -68,6 +76,32 @@ class TestPlantGainsRegistry(unittest.TestCase):
     def test_unknown_id_fails(self) -> None:
         with self.assertRaises(KeyError):
             load_plant_gains("gazebo")
+
+    def test_jsonc_plant_id_mismatch_raises(self) -> None:
+        from fw_sitl.plant_loader import load_plant_jsonc as real_load
+
+        def _wrong_id(path):
+            data = real_load(path)
+            data["plant_id"] = "yasim_rascal"
+            return data
+
+        with patch("fw_sitl.plant_loader.load_plant_jsonc", side_effect=_wrong_id):
+            with self.assertRaises(ValueError) as ctx:
+                load_plant_gains("jsbsim_rascal")
+        self.assertIn("plant_id", str(ctx.exception))
+
+    def test_xplane_cessna172_race_snapshot(self) -> None:
+        p = load_plant_gains("xplane_cessna172")
+        self.assertEqual(p.plant_id, "xplane_cessna172")
+        self.assertAlmostEqual(p.speed_mps, 40.0)
+        self.assertAlmostEqual(p.approach_speed_mps, 28.0)
+        self.assertAlmostEqual(p.fw_airspd_trim, 40.0)
+        self.assertAlmostEqual(p.fw_airspd_min, 25.0)
+        self.assertAlmostEqual(p.fw_airspd_max, 65.0)
+        self.assertAlmostEqual(p.bank_max_roll_rad, 0.40)
+        self.assertAlmostEqual(p.slow_range_m, 280.0)
+        self.assertAlmostEqual(p.cruise_thrust, 0.60)
+        self.assertAlmostEqual(p.visual_lock_kp_alt, 0.028)
 
     def test_jsbsim_rascal_race_snapshot(self) -> None:
         p = load_plant_gains("jsbsim_rascal")
@@ -111,6 +145,16 @@ class TestPlantGainsRegistry(unittest.TestCase):
         self.assertAlmostEqual(p.bank_max_roll_rad, jsb.bank_max_roll_rad)
         self.assertAlmostEqual(p.visual_lock_kp_alt, p.bank_kp_alt)
         self.assertGreater(p.visual_lock_kp_alt, jsb.visual_lock_kp_alt)
+
+    def test_every_plant_has_aero_and_pp(self) -> None:
+        for pid in _PLANTS:
+            with self.subTest(pid=pid):
+                p = load_plant_gains(pid)
+                self.assertGreater(p.mass_kg, 0.0)
+                self.assertGreater(p.t_max_n, 0.0)
+                self.assertGreater(p.v_stall_mps, 0.0)
+                self.assertGreater(p.pp_gain, 0.0)
+                self.assertIn(p.attitude_from_accel, ("polar", "geometric"))
 
     def test_every_plant_has_approach_speed_below_cruise(self) -> None:
         """Miss∝v²; every sim/airframe table must slow on final."""
