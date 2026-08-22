@@ -1,0 +1,48 @@
+{
+  "rate_hz": 50,
+  "hold_quiet_s": 1.0,
+  "hold_timeout_s": 15.0,
+  "phases": [
+    {"segment": "settle", "duration_s": 3.0},
+    {"segment": "chirp", "duration_s": 20.0},
+    {"segment": "settle", "duration_s": 2.0},
+    {"segment": "inv_chirp", "duration_s": 20.0},
+    {"segment": "settle", "duration_s": 2.0}
+  ],
+  "layers": {
+    "rates": {
+      "f0_hz": 0.3,
+      "f1_hz": 8.0,
+      "amplitude": {"p": 0.15, "q": 0.15, "r": 0.15}
+    },
+    "attitude": {
+      "f0_hz": 0.2,
+      "f1_hz": 4.0,
+      "amplitude": {
+        "roll": 0.08726646259971647,
+        "pitch": 0.08726646259971647,
+        "yaw": 0.13962634015954636
+      }
+    },
+    "accel_z": {
+      "f0_hz": 0.2,
+      "f1_hz": 3.0,
+      "amplitude": {"az": 1.0, "thrust": 0.08}
+    },
+    "vel_z": {
+      "f0_hz": 0.1,
+      "f1_hz": 2.0,
+      "amplitude": {"w": 1.0, "thrust": 0.08}
+    }
+  },
+  "window_s": {
+    "p": 0.5,
+    "q": 0.5,
+    "r": 0.5,
+    "roll": 1.0,
+    "pitch": 1.0,
+    "yaw": 1.0,
+    "az": 2.0,
+    "w": 2.0
+  }
+}

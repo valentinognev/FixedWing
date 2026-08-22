@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
 from pathlib import Path
 
@@ -18,30 +17,12 @@ from controlCallibration.chirp import estimate_freq_response
 from controlCallibration.hints import build_report, hints_for_channel
 from controlCallibration.log_io import COLUMNS, read_csv, response_series, select_excitation
 from controlCallibration.overlay import channels_for
+from controlCallibration.procedure import amplitude_map, load_procedure
 from controlCallibration.stepresponse import default_min_input, step_calc, step_stats
 
-WINDOW_S = {
-    "p": 0.5,
-    "q": 0.5,
-    "r": 0.5,
-    "roll": 1.0,
-    "pitch": 1.0,
-    "yaw": 1.0,
-    "az": 2.0,
-    "w": 2.0,
-}
-
-CHIRP_AMPLITUDE = {
-    "p": 0.15,
-    "q": 0.15,
-    "r": 0.15,
-    "roll": math.radians(5),
-    "pitch": math.radians(5),
-    "yaw": math.radians(8),
-    "az": 1.0,
-    "w": 1.0,
-    "thrust": 0.08,
-}
+_PROCEDURE = load_procedure()
+WINDOW_S = _PROCEDURE.window_s
+CHIRP_AMPLITUDE = amplitude_map(_PROCEDURE)
 
 
 def _read_log(path: Path) -> list[dict]:

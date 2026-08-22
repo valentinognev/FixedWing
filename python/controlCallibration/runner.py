@@ -10,29 +10,20 @@ from pathlib import Path
 
 import numpy as np
 
-from controlCallibration.analyze import CHIRP_AMPLITUDE, analyze_log
+from controlCallibration.analyze import analyze_log
 from controlCallibration.chirp import inv_log_chirp, log_chirp
 from controlCallibration.log_io import COLUMNS, write_csv
 from controlCallibration.overlay import AxisCommand, Trim, axis_command, channels_for
+from controlCallibration.procedure import amplitude_map, load_procedure
 
-PHASES: tuple[tuple[str, float], ...] = (
-    ("settle", 3.0),
-    ("chirp", 20.0),
-    ("settle", 2.0),
-    ("inv_chirp", 20.0),
-    ("settle", 2.0),
-)
+_PROCEDURE = load_procedure()
+PHASES: tuple[tuple[str, float], ...] = _PROCEDURE.phases
+_AMPLITUDE = amplitude_map(_PROCEDURE)
 
 _LAYERS = ("rates", "attitude", "accel_z", "vel_z")
 _INJECTS = ("pitch", "thrust")
 _Z_LAYERS = frozenset({"accel_z", "vel_z"})
 _STR_COLUMNS = frozenset({"channel", "segment"})
-_LAYER_FREQS = {
-    "rates": (0.3, 8),
-    "attitude": (0.2, 4),
-    "accel_z": (0.2, 3),
-    "vel_z": (0.1, 2),
-}
 
 
 @dataclass
@@ -66,15 +57,16 @@ def envelope_ok(
 
 def layer_freqs(layer: str) -> tuple[float, float]:
     try:
-        return _LAYER_FREQS[layer]
+        spec = _PROCEDURE.layers[layer]
     except KeyError:
         raise ValueError(f"unknown layer: {layer}") from None
+    return (spec.f0_hz, spec.f1_hz)
 
 
 def layer_amplitude(layer: str, channel: str, inject: str | None) -> float:
     if inject == "thrust":
-        return CHIRP_AMPLITUDE["thrust"]
-    return CHIRP_AMPLITUDE[channel]
+        return _AMPLITUDE["thrust"]
+    return _AMPLITUDE[channel]
 
 
 def chirp_value(
@@ -136,11 +128,11 @@ def parse_run_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 DEFAULT_TRIM = Trim(roll=0.0, pitch=0.0, yaw=0.0, p=0.0, q=0.0, r=0.0, thrust=0.62)
-RATE_HZ = 50.0
+RATE_HZ = _PROCEDURE.rate_hz
 # Inter-axis path-hold recapture: hold until the envelope has been inside
 # limits this long without interruption, then give up and warn.
-HOLD_QUIET_S = 1.0
-HOLD_TIMEOUT_S = 15.0
+HOLD_QUIET_S = _PROCEDURE.hold_quiet_s
+HOLD_TIMEOUT_S = _PROCEDURE.hold_timeout_s
 
 
 def capture_trim(telemetry: object, cruise_thrust: float) -> Trim:
