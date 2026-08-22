@@ -1,5 +1,15 @@
 # Updates
 
+## 0.38.1 - X-Plane plugin builds; fetch px4xplane
+- `fixedwing_balloons`: place via `XPLMWorldToLocal` + instance pose refresh; Makefile uses Laminar `XPSDK411.zip` and `--allow-shlib-undefined` (no link to libXPLM).
+- `runSimXplaneCessna.sh` prefers `plugin/64/lin.xpl`, else builds with clean `/usr/bin/g++` (fail loud).
+- `fetch_px4xplane.sh` → `assets/xplane/px4xplane/` (gitignored with `*.xpl`).
+
+## 0.38.0 - X-Plane 12 demo Cessna balloon-race plant
+- `./run_balloon_race.sh --xplane`: bind-mount host `$XP12_HOME` (`~/X-Plane 12`) into `px4-noble-xplane-cessna` on image `px4-noble-sim-ros`; LOWS spawn (~500 m AGL); plant `xplane_cessna172` (trim 40 / approach 28 m/s, `max_roll` 0.40).
+- Runtime airframe `assets/xplane/5001_xplane_cessna172`; `fetch_px4xplane.sh` + `fixedwing_balloons` UDP plugin (49091); mss `--mode xp`; pose pane via plugin `pose_query`.
+- Mutually exclusive with `--viz`/`--yasim`/`--gz`. `kill.sh --xplane` / `--all`. Spec/plan under `docs/superpowers/`.
+
 ## 0.37.1 - PP vertical ψ^c, stalled v̂, honest in-view tests
 - Nearly-vertical LOS: `ψ^c` is velocity heading (`atan2(vy,vx)`) or `yaw_act`, not `atan2(0,0)`.
 - `‖v‖ < 0.5`: reuse `_last_v_hat`; if never had velocity, skip PP and hold last commands, else yaw-heading `v̂` (no invented NED north). `normalize()` default unchanged.

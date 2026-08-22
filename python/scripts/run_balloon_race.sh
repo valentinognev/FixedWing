@@ -9,6 +9,7 @@ MODE="synth"
 VIZ=0
 GZ=0
 YASIM=0
+XPLANE=0
 GZ_MODEL="rc_cessna"
 MODEL_SET=0
 NO_SIM=0
@@ -29,10 +30,11 @@ MAVLINK_IMAGE_PORT="${MAVLINK_IMAGE_PORT:-14541}"
 HEARTBEAT_TIMEOUT_S="${HEARTBEAT_TIMEOUT_S:-120}"
 
 usage() {
-  echo "Usage: $0 [--viz] [--gz] [--yasim] [--model rc_cessna|advanced_plane] [--setup PATH] [--session NAME] [--no-sim] [--duration SEC] [--no-plot] [--detach]"
+  echo "Usage: $0 [--viz] [--gz] [--yasim] [--xplane] [--model rc_cessna|advanced_plane] [--setup PATH] [--session NAME] [--no-sim] [--duration SEC] [--no-plot] [--detach]"
   echo "  --viz       FG viz sim + fg image capture (default: headless synth)"
   echo "  --gz        Gazebo plane + onboard camera (--mode gz); exclusive with --viz"
   echo "  --yasim     YASim FG Rascal FDM + fg camera; exclusive with --viz/--gz"
+  echo "  --xplane    X-Plane 12 demo Cessna + mss camera; exclusive with --viz/--gz/--yasim"
   echo "  --model     gz model (requires --gz); default rc_cessna"
   echo "  --no-sim    control connects to existing sim (do not kill docker)"
   echo "  --duration  race length seconds (0 = no time limit; default: flightSetup.json)"
@@ -41,7 +43,7 @@ usage() {
   echo "  --ekf-fix   rebase only (--viz/--yasim). gps is disabled (see UPDATES.md 0.35.1)"
   echo "  Enables mavlink-server fan-out by default (MAVLINK_FANOUT=1);"
   echo "  aborts image/control if fan-out is not running."
-  echo "  After sim/fan-out: place FG/GZ balloons, then wait for HEARTBEAT on UDP ${MAVLINK_CONTROL_PORT}"
+  echo "  After sim/fan-out: place FG/GZ/XP balloons, then wait for HEARTBEAT on UDP ${MAVLINK_CONTROL_PORT}"
   echo "  (timeout HEARTBEAT_TIMEOUT_S=${HEARTBEAT_TIMEOUT_S}s, fail if none)."
   echo "  Timed end: host matplotlib window (zoom/pan, shared time axis)."
   exit 0
@@ -58,6 +60,9 @@ mavlink_fanout_up() {
     return 0
   fi
   if [[ "${YASIM}" -eq 1 ]] && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "${PX4_SITL_DOCKER_NAME:-px4-noble-sim-ros}-mavlink"; then
+    return 0
+  fi
+  if [[ "${XPLANE}" -eq 1 ]] && docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "${PX4_XP_DOCKER_NAME:-px4-noble-xplane-cessna}-mavlink"; then
     return 0
   fi
   return 1
@@ -127,6 +132,7 @@ while [[ $# -gt 0 ]]; do
     --viz) VIZ=1; MODE="fg" ;;
     --gz) GZ=1; MODE="gz" ;;
     --yasim) YASIM=1; MODE="fg" ;;
+    --xplane) XPLANE=1; MODE="xp" ;;
     --model) MODEL_SET=1; GZ_MODEL="$2"; shift ;;
     --no-sim) NO_SIM=1 ;;
     --no-plot) NO_PLOT=1 ;;
@@ -151,6 +157,18 @@ if [[ "${VIZ}" -eq 1 && "${YASIM}" -eq 1 ]]; then
 fi
 if [[ "${GZ}" -eq 1 && "${YASIM}" -eq 1 ]]; then
   echo "Error: --gz and --yasim are mutually exclusive" >&2
+  exit 2
+fi
+if [[ "${XPLANE}" -eq 1 && "${VIZ}" -eq 1 ]]; then
+  echo "Error: --xplane and --viz are mutually exclusive" >&2
+  exit 2
+fi
+if [[ "${XPLANE}" -eq 1 && "${GZ}" -eq 1 ]]; then
+  echo "Error: --xplane and --gz are mutually exclusive" >&2
+  exit 2
+fi
+if [[ "${XPLANE}" -eq 1 && "${YASIM}" -eq 1 ]]; then
+  echo "Error: --xplane and --yasim are mutually exclusive" >&2
   exit 2
 fi
 if [[ "${MODEL_SET}" -eq 1 && "${GZ}" -eq 0 ]]; then
@@ -226,6 +244,9 @@ elif [[ "${YASIM}" -eq 1 ]]; then
   if [[ "${MAVLINK_FANOUT}" == "1" ]]; then
     SIM_CMD+=" --mavlink-server"
   fi
+elif [[ "${XPLANE}" -eq 1 ]]; then
+  CONTAINER_NAME="${PX4_XP_DOCKER_NAME:-px4-noble-xplane-cessna}"
+  SIM_CMD="MAVLINK_FANOUT=${MAVLINK_FANOUT} bash ${PYTHON_ROOT}/scripts/runSimXplaneCessna.sh --mavlink-server --setup ${SETUP}"
 else
   SIM_CMD="MAVLINK_FANOUT=${MAVLINK_FANOUT} bash ${PYTHON_ROOT}/scripts/runSimJsbsimRascal.sh --setup ${SETUP}"
   if [[ "${MAVLINK_FANOUT}" == "1" ]]; then
@@ -272,6 +293,10 @@ if [[ "${GZ}" -eq 1 ]]; then
 fi
 if [[ "${YASIM}" -eq 1 ]]; then
   CTL_CMD+=" --yasim --spawn-fg-balloons --ekf-fix ${EKF_FIX}"
+fi
+if [[ "${XPLANE}" -eq 1 ]]; then
+  CTL_CMD+=" --xplane --spawn-xp-balloons"
+  POSE_CMD="PYTHONUNBUFFERED=1 ${PYTHON} -u ${PYTHON_ROOT}/run_balloon_xp_pose.py --setup ${SETUP}"
 fi
 
 # One window; peers are split panes (tiled) after heartbeat.
@@ -323,6 +348,14 @@ elif [[ "${GZ}" -eq 1 ]]; then
     tmux kill-session -t "${SESSION}" 2>/dev/null || true
     exit 1
   fi
+elif [[ "${XPLANE}" -eq 1 ]]; then
+  echo "Placing X-Plane balloons from ${SETUP} before PX4 heartbeat..."
+  if ! PYTHONPATH="${PYTHON_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" \
+      "${PYTHON}" -m fw_sitl.balloon_scene --setup "${SETUP}" --xplane --timeout 90; then
+    echo "Error: X-Plane balloon spawn failed; not launching image/camera/control" >&2
+    tmux kill-session -t "${SESSION}" 2>/dev/null || true
+    exit 1
+  fi
 fi
 
 if ! wait_control_heartbeat "${MAVLINK_CONTROL_PORT}" "${HEARTBEAT_TIMEOUT_S}"; then
@@ -340,10 +373,9 @@ _img_pane="$(tmux split-window -d -t "${SESSION}:0.0" -P -F '#{pane_id}' "${IMG_
 tmux select-pane -t "${_img_pane}" -T image
 _cam_pane="$(tmux split-window -d -t "${SESSION}:0.0" -P -F '#{pane_id}' "${CAM_CMD}")"
 tmux select-pane -t "${_cam_pane}" -T camera
-if [[ "${GZ}" -eq 1 ]]; then
-  # Streams the plane's true Gazebo pose to control (continuous, ~40 Hz);
-  # replaces the old per-sample `docker exec gz model --pose` polling, whose
-  # subprocess latency (~0.4-0.5s) produced a jittery position staircase.
+if [[ "${GZ}" -eq 1 || "${XPLANE}" -eq 1 ]]; then
+  # Streams the plane's true Gazebo/X-Plane pose to control (continuous);
+  # replaces one-shot docker-exec polling that produced position jitter.
   _pose_pane="$(tmux split-window -d -t "${SESSION}:0.0" -P -F '#{pane_id}' "${POSE_CMD}")"
   tmux select-pane -t "${_pose_pane}" -T pose
 fi

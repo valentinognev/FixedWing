@@ -20,6 +20,7 @@ DEFAULT_WIDTH_PX = 640
 DEFAULT_HEIGHT_PX = 480
 DEFAULT_CAMERA_RATE_HZ = 10.0
 DEFAULT_FG_WINDOW_PATTERN = "FlightGear|fgfs"
+DEFAULT_XP_WINDOW_PATTERN = "X-Plane|X-System"
 # FG cockpit eyepoint sits behind canopy/struts; push eye forward (body +X / -Z view).
 # Past Rascal nose/canopy (stock cockpit z≈+0.9 aft); pair with draw-mask hide.
 DEFAULT_FG_EYE_FORWARD_M = 5.0
@@ -76,6 +77,8 @@ class CameraSpec:
     height_px: int = DEFAULT_HEIGHT_PX
     rate_hz: float = DEFAULT_CAMERA_RATE_HZ
     fg_window_pattern: str = DEFAULT_FG_WINDOW_PATTERN
+    # X-Plane mss grab title/class regex (--mode xp).
+    xp_window_pattern: str = DEFAULT_XP_WINDOW_PATTERN
     # FG viz: meters forward of model origin for eyepoint (clears fuselage/canopy).
     fg_eye_forward_m: float = DEFAULT_FG_EYE_FORWARD_M
     # Hide ownship mesh so capture matches fictional body camera (no cockpit frame).
@@ -251,6 +254,10 @@ def _parse_camera(raw: Any) -> CameraSpec:
         fg_window_pattern=_as_str(
             data.get("fg_window_pattern", DEFAULT_FG_WINDOW_PATTERN),
             "camera.fg_window_pattern",
+        ),
+        xp_window_pattern=_as_str(
+            data.get("xp_window_pattern", DEFAULT_XP_WINDOW_PATTERN),
+            "camera.xp_window_pattern",
         ),
         fg_eye_forward_m=eye_fwd,
         fg_hide_aircraft=hide_ac,

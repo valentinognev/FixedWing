@@ -100,6 +100,7 @@ def _main(argv: list[str] | None = None) -> int:
     parser.add_argument("--jsb-xml", type=Path, default=None)
     parser.add_argument("--fg-env", type=Path, default=None)
     parser.add_argument("--gz-pose", action="store_true")
+    parser.add_argument("--xp-geodetic", action="store_true")
     args = parser.parse_args(argv)
     setup = load_flight_setup(args.setup)
     if args.jsb_xml is not None:
@@ -108,8 +109,17 @@ def _main(argv: list[str] | None = None) -> int:
         write_fg_spawn_env(args.fg_env, setup.spawn)
     if args.gz_pose:
         print(gz_pose_csv(setup))
-    if args.jsb_xml is None and args.fg_env is None and not args.gz_pose:
-        parser.error("pass --jsb-xml, --fg-env, and/or --gz-pose")
+    if args.xp_geodetic:
+        from fw_sitl.xp_origin import xp_geodetic_csv
+
+        print(xp_geodetic_csv(setup.spawn))
+    if (
+        args.jsb_xml is None
+        and args.fg_env is None
+        and not args.gz_pose
+        and not args.xp_geodetic
+    ):
+        parser.error("pass --jsb-xml, --fg-env, --gz-pose, and/or --xp-geodetic")
     return 0
 
 

@@ -15,15 +15,16 @@ from fw_sitl.fg_camera import run_fg_publisher
 from fw_sitl.flight_setup import load_flight_setup
 from fw_sitl.gz_camera import run_gz_publisher_via_docker
 from fw_sitl.synthetic_camera import run_synthetic_publisher
+from fw_sitl.xp_camera import run_xp_publisher
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Balloon race image source (ZMQ PUB)")
     parser.add_argument(
         "--mode",
-        choices=("synth", "fg", "gz"),
+        choices=("synth", "fg", "gz", "xp"),
         required=True,
-        help="synth: pinhole renderer; fg: FlightGear capture; gz: docker exec gz_camera",
+        help="synth: pinhole; fg: FlightGear; gz: docker gz_camera; xp: X-Plane mss",
     )
     parser.add_argument(
         "--setup",
@@ -57,6 +58,9 @@ def main() -> int:
             telnet_host=args.telnet_host,
             telnet_port=args.telnet_port,
         )
+        return 0
+    if args.mode == "xp":
+        run_xp_publisher(setup, udp_port=args.udp)
         return 0
     return run_gz_publisher_via_docker(setup, container=args.container)
 

@@ -31,6 +31,12 @@ python/logs/
 # Host-fetched binaries (mavlink-server, etc.)
 python/bin/
 
+# X-Plane plant: fetched bridge + built plugin binary (not source)
+python/assets/xplane/px4xplane/
+python/assets/xplane/plugin/**/lin.xpl
+python/assets/xplane/plugin/**/*.xpl
+
+
 # Local secrets / overrides (keep example env files tracked if added)
 *.pem
 *.key

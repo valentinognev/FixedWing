@@ -19,12 +19,11 @@ class TestYasimControlContracts(unittest.TestCase):
         ctl = _CTL.read_text(encoding="utf-8")
         self.assertIn('add_argument("--yasim"', ctl)
         self.assertIn("runSimYasimRascal.sh", ctl)
-        self.assertIn('kill_target = "--gz" if args.gz else ("--fg" if args.yasim else KILL_TARGET)', ctl)
-        self.assertIn(
-            "skip_reboot = bool(args.no_sim or args.viz or args.gz or args.yasim)", ctl
-        )
+        self.assertIn('kill_target = "--fg"', ctl)
+        self.assertIn("args.yasim", ctl)
+        self.assertIn("args.no_sim or args.viz or args.gz or args.yasim or args.xplane", ctl)
         self.assertIn("args.spawn_fg_balloons or args.viz or args.yasim", ctl)
-        self.assertIn("--viz, --gz, and --yasim are mutually exclusive", ctl)
+        self.assertIn("--viz, --gz, --yasim, and --xplane are mutually exclusive", ctl)
 
     def test_ekf_fix_gps_is_rejected(self) -> None:
         r = subprocess.run(

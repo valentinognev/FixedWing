@@ -893,14 +893,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     import argparse
 
     from fw_sitl.flight_setup import load_flight_setup
+    from fw_sitl.xp_balloon import spawn_xp_from_setup
 
     parser = argparse.ArgumentParser(
-        description="Place race balloons in FlightGear or Gazebo before PX4 is used"
+        description="Place race balloons in FlightGear, Gazebo, or X-Plane before PX4 is used"
     )
     parser.add_argument("--setup", required=True, help="flightSetup.json")
     renderer = parser.add_mutually_exclusive_group(required=True)
     renderer.add_argument("--fg", action="store_true", help="FlightGear geo.put_model")
     renderer.add_argument("--gz", action="store_true", help="Gazebo model create")
+    renderer.add_argument("--xplane", action="store_true", help="X-Plane plugin UDP")
     parser.add_argument("--timeout", type=float, default=90.0)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=5501)
@@ -912,6 +914,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             setup, timeout_s=args.timeout, host=args.host, port=args.port
         )
         return 0
+    if args.xplane:
+        return spawn_xp_from_setup(
+            setup, host=args.host, timeout_s=args.timeout
+        )
     spawn_gz_from_setup(
         setup, timeout_s=args.timeout, container=args.container
     )

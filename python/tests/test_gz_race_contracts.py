@@ -267,7 +267,7 @@ class TestGzRaceContracts(unittest.TestCase):
         start = ctl.index("# Config balloon Z is home/aircraft-relative")
         end = ctl.index('f"Balloon NED rebased to local z=')
         block = ctl[start:end]
-        gz_idx = block.index("if args.gz:")
+        gz_idx = block.index("if args.gz or args.xplane:")
         else_idx = block.index("else:", gz_idx)
         gz = block[gz_idx:else_idx]
         self.assertIn("local_z=0.0", gz)
