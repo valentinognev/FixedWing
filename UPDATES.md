@@ -1,5 +1,12 @@
 # Updates
 
+## 0.48.0 - Calibration launcher (multi-plant SID)
+- Root `./run_control_calibration.sh` (`chmod +x`) execs `python3 -m controlCallibration run` from `python/` (`set -euo pipefail`). One `--layer` per invocation.
+- Chirp numbers (rate, phases, per-layer f0/f1/A, windows) live in `python/controlCallibration/procedure.json` (JSONC `//` allowed).
+- Live plant + sim from `python/flightSetup.json` `sim.platform`/`sim.gz_model`; CLI `--gz`/`--yasim`/`--viz`/`--jsbsim`/`--model` override. No `--xplane`. Does not write plant JSONC.
+- Analyze always writes `<stem>_<ch>_history.png`, `_fft.png`, `_step.png` plus `hints.json` and a printed metrics table. Interactive `plt.show(block=True)` unless `--no-plot`.
+- Host unittest `tests.test_calibration_cli.TestRootShim`.
+
 ## 0.47.1 - Control calibration review fixes
 - `stepresponse.step_calc` scale fix: relative Wiener regularizer (`|H|² + eps·mean|H|²`), each segment normalized by `max|sp_seg|`, and `resp / mean_steady` instead of the partial `resp * (2 - mean_steady)`. Reconstructed DC gain of a unity-DC plant went 0.79 → 1.00, so `overshoot` can fire at all: a ζ=0.15 ringer at the rates operating point reads `peak_mean` 0.97 → 1.29 (was verdict `weak` → "raise P" on a ringing airframe). Spec thresholds 0.85 / 1.25 kept. Regression: `tests.test_calibration_step.TestZetaSweepAtRatesOperatingPoint`.
 - Peak estimation still *compresses* large overshoots (ζ=0.3 at 3 Hz reads ~1.17 against a true 1.37): a 0.5 s window plus 2 s Wiener segments cannot resolve the full first peak. Treat `peak_mean` as "does it ring", not as a calibrated overshoot percentage. Because `y_correction` normalizes DC to 1, `weak` (<0.85) now essentially cannot fire on a real log — a sluggish loop shows up as `slow` (latency), not `weak`.

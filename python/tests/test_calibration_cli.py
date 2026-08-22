@@ -74,5 +74,14 @@ class TestMissingInjectExits2(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 2)
 
 
+class TestRootShim(unittest.TestCase):
+    def test_root_shim_exists_and_execs_run(self) -> None:
+        root = _PYTHON_ROOT.parent / "run_control_calibration.sh"
+        self.assertTrue(root.is_file())
+        text = root.read_text(encoding="utf-8")
+        self.assertIn("controlCallibration run", text)
+        self.assertIn("set -euo pipefail", text)
+
+
 if __name__ == "__main__":
     unittest.main()
