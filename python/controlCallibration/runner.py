@@ -150,6 +150,31 @@ def effective_inject(layer: str, inject: str | None) -> str | None:
     return inject
 
 
+def measured_channel(
+    channel: str,
+    roll: float,
+    pitch: float,
+    yaw: float,
+    p: float,
+    q: float,
+    r: float,
+    thrust: float,
+) -> float:
+    """Real per-channel GT/PX4 measurement for a schedule ``channel``.
+
+    ``rates``/``attitude`` map 1:1 onto FlightHistory's cached body rates
+    and Euler angles — exact, as required for the layers flown live next.
+    ``accel_z``/``vel_z`` (``az``/``w``) have no live GT source wired yet
+    (no vertical accel/speed passed into the live loop); returning ``nan``
+    is a deliberate, visible gap instead of mislabeling pitch/thrust data
+    as an az/w measurement.
+    """
+    mapping = {"p": p, "q": q, "r": r, "roll": roll, "pitch": pitch, "yaw": yaw}
+    if channel in mapping:
+        return mapping[channel]
+    return float("nan")
+
+
 def _log_row_from_axis_command(cmd: AxisCommand) -> dict:
     return {
         "cmd": cmd.cmd,
@@ -391,23 +416,32 @@ def run_sitl(args: argparse.Namespace) -> int:
                         send_attitude_target(master, cmd.roll, cmd.pitch, cmd.yaw, cmd.thrust)
                     _gcs_heartbeat()
 
+                    measured = measured_channel(
+                        channel, roll_gt, pitch_gt, yaw_gt, p_gt, q_gt, r_gt, cmd.thrust
+                    )
+                    log_row = _log_row_from_axis_command(
+                        AxisCommand(
+                            roll=roll_gt,
+                            pitch=pitch_gt,
+                            yaw=yaw_gt,
+                            p=p_gt,
+                            q=q_gt,
+                            r=r_gt,
+                            thrust=cmd.thrust,
+                            cmd=cmd.cmd,
+                        )
+                    )
+                    # Override the dry-run 0.9x-of-command fixture with the
+                    # real per-channel measurement: this is what
+                    # select_excitation/response_series actually analyze.
+                    log_row["gt"] = measured
+                    log_row["px4"] = measured
                     append_row(
                         rows,
                         t=time.time() - t0,
                         channel=channel,
                         segment=phase,
-                        **_log_row_from_axis_command(
-                            AxisCommand(
-                                roll=roll_gt,
-                                pitch=pitch_gt,
-                                yaw=yaw_gt,
-                                p=p_gt,
-                                q=q_gt,
-                                r=r_gt,
-                                thrust=cmd.thrust,
-                                cmd=cmd.cmd,
-                            )
-                        ),
+                        **log_row,
                     )
 
                     armed, _mode = poll_vehicle_state(master)

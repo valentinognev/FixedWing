@@ -19,6 +19,7 @@ from controlCallibration.runner import (
     iter_schedule,
     layer_amplitude,
     layer_freqs,
+    measured_channel,
     parse_run_args,
 )
 
@@ -119,6 +120,31 @@ class TestLayerHelpers(unittest.TestCase):
     def test_layer_amplitude_thrust_inject_is_0_08(self) -> None:
         self.assertAlmostEqual(layer_amplitude("accel_z", "az", "thrust"), 0.08)
         self.assertAlmostEqual(layer_amplitude("rates", "p", None), 0.15)
+
+
+class TestMeasuredChannel(unittest.TestCase):
+    """``run_sitl``'s gt/px4 columns must be the real per-channel telemetry,
+    not the commanded chirp value — this is what select_excitation/
+    response_series in analyze.py actually reads."""
+
+    _ARGS = dict(roll=0.11, pitch=0.22, yaw=0.33, p=0.44, q=0.55, r=0.66, thrust=0.7)
+
+    def test_rates_channels_map_exactly(self) -> None:
+        self.assertEqual(measured_channel("p", **self._ARGS), 0.44)
+        self.assertEqual(measured_channel("q", **self._ARGS), 0.55)
+        self.assertEqual(measured_channel("r", **self._ARGS), 0.66)
+
+    def test_attitude_channels_map_exactly(self) -> None:
+        self.assertEqual(measured_channel("roll", **self._ARGS), 0.11)
+        self.assertEqual(measured_channel("pitch", **self._ARGS), 0.22)
+        self.assertEqual(measured_channel("yaw", **self._ARGS), 0.33)
+
+    def test_az_and_w_are_named_fallback_not_silently_wrong(self) -> None:
+        # No live GT source wired for accel_z/vel_z yet: must not fabricate
+        # a value from an unrelated channel (e.g. pitch) — NaN is a visible
+        # gap, not a plausible-looking wrong number.
+        self.assertTrue(math.isnan(measured_channel("az", **self._ARGS)))
+        self.assertTrue(math.isnan(measured_channel("w", **self._ARGS)))
 
 
 class TestAppendRow(unittest.TestCase):
