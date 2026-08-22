@@ -13,6 +13,14 @@ if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
 from controlCallibration.procedure import DEFAULT_PROCEDURE_PATH, load_procedure
+from fw_sitl.plant_loader import strip_jsonc
+
+
+def _load_shipped_raw() -> dict:
+    """Shipped procedure.json is JSONC (``//`` comments allowed) — fixtures
+    that mutate a copy must strip comments the same way ``load_procedure``
+    does, not assume the file is plain JSON."""
+    return json.loads(strip_jsonc(DEFAULT_PROCEDURE_PATH.read_text(encoding="utf-8")))
 
 
 class TestLoadProcedure(unittest.TestCase):
@@ -36,7 +44,7 @@ class TestLoadProcedure(unittest.TestCase):
         self.assertEqual(proc.hold_quiet_s, 1.0)
 
     def test_custom_path_overrides_chirp_length(self) -> None:
-        raw = json.loads(DEFAULT_PROCEDURE_PATH.read_text(encoding="utf-8"))
+        raw = _load_shipped_raw()
         raw["phases"] = [{"segment": "chirp", "duration_s": 4.0}]
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "proc.json"
@@ -49,7 +57,7 @@ class TestLoadProcedure(unittest.TestCase):
             load_procedure(Path("/nonexistent/calibration-procedure.json"))
 
     def test_unknown_layer_name_raises_value_error(self) -> None:
-        raw = json.loads(DEFAULT_PROCEDURE_PATH.read_text(encoding="utf-8"))
+        raw = _load_shipped_raw()
         raw["layers"]["nope"] = {"f0_hz": 1.0, "f1_hz": 2.0, "amplitude": {"p": 0.1}}
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "proc.json"
@@ -58,7 +66,7 @@ class TestLoadProcedure(unittest.TestCase):
                 load_procedure(path)
 
     def test_jsonc_line_comments_are_stripped(self) -> None:
-        raw = json.loads(DEFAULT_PROCEDURE_PATH.read_text(encoding="utf-8"))
+        raw = _load_shipped_raw()
         text = "// chirp SID numbers\n" + json.dumps(raw)
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "proc.jsonc"

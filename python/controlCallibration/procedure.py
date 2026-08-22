@@ -31,14 +31,6 @@ class Procedure:
     window_s: dict[str, float]
 
 
-def amplitude_map(proc: Procedure) -> dict[str, float]:
-    """Flatten per-layer amplitudes; later layers overwrite duplicate keys."""
-    out: dict[str, float] = {}
-    for spec in proc.layers.values():
-        out.update(spec.amplitude)
-    return out
-
-
 def load_procedure(path: Path | None = None) -> Procedure:
     src = DEFAULT_PROCEDURE_PATH if path is None else path
     raw = json.loads(strip_jsonc(src.read_text(encoding="utf-8")))

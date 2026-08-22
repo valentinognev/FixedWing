@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import math
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 _PYTHON_ROOT = Path(__file__).resolve().parents[1]
 if str(_PYTHON_ROOT) not in sys.path:
@@ -18,6 +20,7 @@ from controlCallibration.runner import (
     append_row,
     capture_trim,
     chirp_value,
+    default_out_dir,
     envelope_ok,
     hold_until_quiet,
     iter_schedule,
@@ -125,6 +128,27 @@ class TestParseRunArgs(unittest.TestCase):
         self.assertEqual(args.response, "gt")
         self.assertIsNone(args.inject)
 
+    def test_out_dir_defaults_to_none_not_cwd(self) -> None:
+        # Resolved to /tmp/fw_calib_<utcstamp> at call time, not "." under
+        # python/ (see test_default_out_dir_uses_tmp_fw_calib_prefix).
+        args = parse_run_args(["--layer", "rates"])
+        self.assertIsNone(args.out_dir)
+
+
+class TestDefaultOutDir(unittest.TestCase):
+    def test_default_out_dir_uses_tmp_fw_calib_prefix(self) -> None:
+        out_dir = default_out_dir()
+        self.assertEqual(out_dir.parent, Path("/tmp"))
+        self.assertTrue(out_dir.name.startswith("fw_calib_"))
+
+    def test_default_out_dir_uses_utc_stamp(self) -> None:
+        import time
+
+        fixed = time.struct_time((2026, 8, 22, 20, 21, 22, 5, 234, 0))
+        with patch("time.gmtime", return_value=fixed):
+            out_dir = default_out_dir()
+        self.assertEqual(out_dir, Path("/tmp/fw_calib_20260822_202122"))
+
 
 class TestLayerHelpers(unittest.TestCase):
     def test_layer_freqs(self) -> None:
@@ -136,6 +160,25 @@ class TestLayerHelpers(unittest.TestCase):
     def test_layer_amplitude_thrust_inject_is_0_08(self) -> None:
         self.assertAlmostEqual(layer_amplitude("accel_z", "az", "thrust"), 0.08)
         self.assertAlmostEqual(layer_amplitude("rates", "p", None), 0.15)
+
+    def test_layer_amplitude_looks_up_within_the_given_layer(self) -> None:
+        # roll/pitch/yaw only exist under "attitude" — a flattened global
+        # amplitude map would still resolve this, but only by accident.
+        self.assertAlmostEqual(
+            layer_amplitude("attitude", "roll", None), math.radians(5)
+        )
+        self.assertAlmostEqual(
+            layer_amplitude("vel_z", "w", None), 1.0
+        )
+
+    def test_layer_amplitude_thrust_inject_without_thrust_key_raises(self) -> None:
+        # "rates"/"attitude" have no "thrust" amplitude entry; a flattened
+        # global map silently falls back to accel_z/vel_z's 0.08 instead of
+        # surfacing the layer/channel mismatch.
+        with self.assertRaises(ValueError):
+            layer_amplitude("rates", "p", "thrust")
+        with self.assertRaises(ValueError):
+            layer_amplitude("attitude", "roll", "thrust")
 
 
 class TestMeasuredChannel(unittest.TestCase):
@@ -248,6 +291,29 @@ class TestHoldUntilQuiet(unittest.TestCase):
     def test_spec_defaults(self) -> None:
         self.assertEqual(HOLD_QUIET_S, 1.0)
         self.assertEqual(HOLD_TIMEOUT_S, 15.0)
+
+
+class TestRunOfflineDemoUsesDefaultOutDir(unittest.TestCase):
+    def test_missing_out_dir_arg_resolves_via_default_out_dir(self) -> None:
+        import tempfile
+
+        from controlCallibration import runner
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_dir = Path(tmp) / "fw_calib_fake_stamp"
+            args = argparse.Namespace(
+                layer="rates",
+                inject=None,
+                response="gt",
+                out_dir=None,
+                no_plot=True,
+            )
+            with patch.object(runner, "default_out_dir", return_value=fake_dir) as mock_default:
+                rc = runner.run_offline_demo(args)
+            mock_default.assert_called_once()
+            self.assertEqual(rc, 0)
+            self.assertTrue(fake_dir.is_dir())
+            self.assertTrue(list(fake_dir.glob("*.csv")))
 
 
 if __name__ == "__main__":

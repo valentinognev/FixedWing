@@ -187,6 +187,34 @@ class TestRunSitlAttitudeTrim(unittest.TestCase):
         self.assertGreater(thrust, 0.0)
 
 
+class TestRunSitlStartsResolvedSim(unittest.TestCase):
+    """``no_sim=False`` must kill/start the sim the resolved CalibrationSim
+    picked from flightSetup.json + CLI plant flags (e.g. ``--gz --model
+    advanced_plane``), not a hardcoded JSBSim script. Still no live Docker:
+    ``start_sim``/``kill_docker`` are mocked."""
+
+    def test_no_sim_false_kills_docker_and_starts_resolved_sim(self) -> None:
+        hist = _FakeHistory()
+        with tempfile.TemporaryDirectory() as tmp:
+            with _Fakes(hist):
+                with patch("fw_sitl.sim_lifecycle.kill_docker") as mock_kill_docker, \
+                        patch("fw_sitl.sim_lifecycle.start_sim") as mock_start_sim:
+                    args = _args("attitude", Path(tmp))
+                    args.no_sim = False
+                    args.gz = True
+                    args.model = "advanced_plane"
+                    rc = runner.run_sitl(args)
+            self.assertEqual(rc, 0)
+        mock_kill_docker.assert_called_once_with(target="--gz")
+        mock_start_sim.assert_called_once()
+        sim_script_arg = mock_start_sim.call_args.args[0]
+        self.assertEqual(sim_script_arg.name, "runSimGzPlane.sh")
+        self.assertEqual(
+            mock_start_sim.call_args.kwargs.get("extra_args"),
+            ["--model", "advanced_plane"],
+        )
+
+
 class TestRunSitlHoldUntilQuiet(unittest.TestCase):
     def test_recapture_between_axes_waits_for_quiet(self) -> None:
         hist = _FakeHistory()

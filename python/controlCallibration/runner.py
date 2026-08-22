@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,11 +16,10 @@ from controlCallibration.chirp import inv_log_chirp, log_chirp
 from controlCallibration.log_io import COLUMNS, write_csv
 from controlCallibration.overlay import AxisCommand, Trim, axis_command, channels_for
 from controlCallibration.plant import resolve_calibration_sim
-from controlCallibration.procedure import amplitude_map, load_procedure
+from controlCallibration.procedure import load_procedure
 
 _PROCEDURE = load_procedure()
 PHASES: tuple[tuple[str, float], ...] = _PROCEDURE.phases
-_AMPLITUDE = amplitude_map(_PROCEDURE)
 
 _LAYERS = ("rates", "attitude", "accel_z", "vel_z")
 _INJECTS = ("pitch", "thrust")
@@ -65,9 +65,24 @@ def layer_freqs(layer: str) -> tuple[float, float]:
 
 
 def layer_amplitude(layer: str, channel: str, inject: str | None) -> float:
-    if inject == "thrust":
-        return _AMPLITUDE["thrust"]
-    return _AMPLITUDE[channel]
+    """Amplitude for ``channel`` (or the ``thrust`` inject) *within* ``layer``.
+
+    Per-layer lookup, not a flattened global map: a flattened map can only
+    collide silently (two layers sharing a key with different values) or
+    mask a layer/channel mismatch (e.g. asking "rates" for a "thrust"
+    amplitude it does not define) by falling back to another layer's value.
+    """
+    try:
+        spec = _PROCEDURE.layers[layer]
+    except KeyError:
+        raise ValueError(f"unknown layer: {layer}") from None
+    key = "thrust" if inject == "thrust" else channel
+    try:
+        return spec.amplitude[key]
+    except KeyError:
+        raise ValueError(
+            f"layer {layer!r} has no {key!r} amplitude"
+        ) from None
 
 
 def chirp_value(
@@ -115,7 +130,12 @@ def parse_run_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Synthetic schedule -> CSV -> analyze; no Docker, no MAVLink",
     )
-    parser.add_argument("--out-dir", type=Path, default=Path("."))
+    parser.add_argument(
+        "--out-dir",
+        type=Path,
+        default=None,
+        help="Defaults to /tmp/fw_calib_<utcstamp> (see default_out_dir)",
+    )
     parser.add_argument(
         "--no-sim",
         action="store_true",
@@ -286,6 +306,18 @@ def _csv_stem(layer: str, inject: str | None) -> str:
     return f"calib_{layer}" + (f"_{inject}" if inject else "")
 
 
+def default_out_dir() -> Path:
+    """``--out-dir`` fallback: a fresh ``/tmp/fw_calib_<utcstamp>`` per run,
+    not ``.`` (which would drop CSV/PNGs under ``python/`` wherever the
+    shim happens to be invoked from)."""
+    stamp = time.strftime("%Y%m%d_%H%M%S", time.gmtime())
+    return Path(f"/tmp/fw_calib_{stamp}")
+
+
+def _resolve_out_dir(args: argparse.Namespace) -> Path:
+    return Path(args.out_dir) if args.out_dir is not None else default_out_dir()
+
+
 def run_offline_demo(args: argparse.Namespace) -> int:
     """Synthetic dry-run: ``iter_schedule`` + ``axis_command`` at 50 Hz -> CSV -> analyze.
 
@@ -314,7 +346,7 @@ def run_offline_demo(args: argparse.Namespace) -> int:
             )
             t += dt
 
-    out_dir = Path(args.out_dir)
+    out_dir = _resolve_out_dir(args)
     out_dir.mkdir(parents=True, exist_ok=True)
     csv_path = out_dir / f"{_csv_stem(layer, inject)}.csv"
     write_csv(csv_path, rows)
@@ -587,7 +619,7 @@ def run_sitl(args: argparse.Namespace) -> int:
     if not rows:
         return 1
 
-    out_dir = Path(args.out_dir)
+    out_dir = _resolve_out_dir(args)
     out_dir.mkdir(parents=True, exist_ok=True)
     csv_path = out_dir / f"{_csv_stem(layer, inject)}.csv"
     write_csv(csv_path, rows)

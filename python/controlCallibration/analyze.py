@@ -14,12 +14,11 @@ from controlCallibration.chirp import estimate_freq_response
 from controlCallibration.hints import build_report, hints_for_channel
 from controlCallibration.log_io import COLUMNS, read_csv, response_series, select_excitation
 from controlCallibration.overlay import channels_for
-from controlCallibration.procedure import amplitude_map, load_procedure
+from controlCallibration.procedure import load_procedure
 from controlCallibration.stepresponse import default_min_input, step_calc, step_stats
 
 _PROCEDURE = load_procedure()
 WINDOW_S = _PROCEDURE.window_s
-CHIRP_AMPLITUDE = amplitude_map(_PROCEDURE)
 
 
 def _read_log(path: Path) -> list[dict]:
@@ -45,10 +44,17 @@ def _estimate_fs(t: np.ndarray) -> float:
     return float(1.0 / np.median(diffs))
 
 
-def _amplitude(channel: str, inject: str | None) -> float:
-    if inject in ("thrust",):
-        return CHIRP_AMPLITUDE["thrust"]
-    return CHIRP_AMPLITUDE[channel]
+def _amplitude(layer: str, channel: str, inject: str | None) -> float:
+    """Per-layer amplitude lookup — mirrors ``runner.layer_amplitude``."""
+    try:
+        spec = _PROCEDURE.layers[layer]
+    except KeyError:
+        raise ValueError(f"unknown layer: {layer}") from None
+    key = "thrust" if inject == "thrust" else channel
+    try:
+        return spec.amplitude[key]
+    except KeyError:
+        raise ValueError(f"layer {layer!r} has no {key!r} amplitude") from None
 
 
 def _welch_too_short(n: int, fs: float) -> bool:
@@ -148,7 +154,7 @@ def analyze_log(
         t, cmd, _gt = select_excitation(rows, ch)
         resp = response_series(rows, ch, which=response)
         fs = _estimate_fs(t)
-        amp = _amplitude(ch, inject)
+        amp = _amplitude(layer, ch, inject)
         stack, time_ms = step_calc(
             cmd,
             resp,

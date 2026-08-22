@@ -16,7 +16,7 @@ _PYTHON_ROOT = Path(__file__).resolve().parents[1]
 if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
-from controlCallibration.analyze import analyze_log, main_analyze
+from controlCallibration.analyze import _amplitude, analyze_log, main_analyze
 from controlCallibration.chirp import inv_log_chirp, log_chirp
 from controlCallibration.log_io import COLUMNS, write_csv
 
@@ -68,6 +68,18 @@ def _p_chirp_rows(fs: float = 50.0, duration_s: float = 8.0) -> list[dict]:
             )
         t0 += duration_s
     return rows
+
+
+class TestAmplitudeLookup(unittest.TestCase):
+    """Per-layer amplitude lookup — no flattened global map to collide on."""
+
+    def test_amplitude_is_scoped_to_the_given_layer(self) -> None:
+        self.assertAlmostEqual(_amplitude("rates", "p", None), 0.15)
+        self.assertAlmostEqual(_amplitude("accel_z", "az", "thrust"), 0.08)
+
+    def test_thrust_inject_without_thrust_key_in_layer_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            _amplitude("rates", "p", "thrust")
 
 
 class TestAnalyzeLog(unittest.TestCase):

@@ -1,5 +1,12 @@
 # Updates
 
+## 0.48.1 - Calibration launcher review fixes
+- `runner.layer_amplitude` / `analyze._amplitude` now look up amplitude within the given `layer`'s `procedure.json` block instead of a flattened `amplitude_map` global (removed). A flattened map could silently collide on a shared key or mask a layer/channel mismatch (e.g. `layer_amplitude("rates", "p", "thrust")` used to return accel_z's `thrust` amplitude instead of erroring); both now raise `ValueError` when the layer has no matching amplitude key. Thrust `0.08` stays duplicated under `accel_z`/`vel_z` in `procedure.json` — same value, no collision.
+- `run`'s `--out-dir` defaults to a fresh `runner.default_out_dir()` (`/tmp/fw_calib_<utcstamp>`), not `.` (which dropped CSV/PNGs under wherever `python/` happened to be the cwd). Dry-run and live both use it; tests that already pass `--out-dir` are unaffected.
+- README: live run examples are `--layer rates` / `--layer attitude` (`--gz` etc. optional); `accel_z`/`vel_z` have no live GT wired (`gt`/`px4` are `nan`, hints read `verdict=no_data`) so they're `--dry-run`-only for now. `_fft.png` is written unless the log is too short for a Welch segment, not unconditionally.
+- `tests.test_calibration_procedure` fixtures that mutate a copy of the shipped `procedure.json` now go through `strip_jsonc` (matching `load_procedure`) instead of raw `json.loads`, so `//` comments in the shipped file stay legal for those tests.
+- New coverage: `tests.test_calibration_run_sitl.TestRunSitlStartsResolvedSim` pins `no_sim=False` calling `kill_docker(target=...)` / `start_sim(..., extra_args=...)` from the resolved `CalibrationSim` (e.g. `--gz --model advanced_plane`) — no live Docker, `start_sim`/`kill_docker` mocked.
+
 ## 0.48.0 - Calibration launcher (multi-plant SID)
 - Root `./run_control_calibration.sh` (`chmod +x`) execs `python3 -m controlCallibration run` from `python/` (`set -euo pipefail`). One `--layer` per invocation.
 - Chirp numbers (rate, phases, per-layer f0/f1/A, windows) live in `python/controlCallibration/procedure.json` (JSONC `//` allowed).
