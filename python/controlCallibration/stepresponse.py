@@ -5,6 +5,9 @@ from __future__ import annotations
 import numpy as np
 
 
+WIENER_EPS = 1e-4
+
+
 def default_min_input(amplitude: float) -> float:
     return 0.20 * abs(amplitude)
 
@@ -17,10 +20,15 @@ def step_calc(
     window_s: float = 0.5,
     min_input: float | None = None,
     y_correction: bool = True,
+    eps: float = WIENER_EPS,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Deconvolve step response using Wiener deconvolution.
     Returns (stepresponse stack n x wnd, time_ms).
+
+    The regularizer is *relative* (``eps * mean|H|²``) and each segment is
+    normalized by ``max|sp_seg|``, so the result does not depend on the
+    physical units of the excitation (0.15 rad/s vs 5° vs 0.08 thrust).
     """
     gy = np.asarray(gy, dtype=float).ravel()
     sp = np.asarray(sp, dtype=float).ravel()
@@ -61,12 +69,16 @@ def step_calc(
     hann = np.hanning
 
     for sp_seg, gy_seg in zip(sp_seg_list, gy_seg_list):
-        a = gy_seg * hann(len(gy_seg))
-        b = sp_seg * hann(len(sp_seg))
+        scale = float(np.max(np.abs(sp_seg)))
+        if not np.isfinite(scale) or scale <= 0.0:
+            continue
+        a = (gy_seg / scale) * hann(len(gy_seg))
+        b = (sp_seg / scale) * hann(len(sp_seg))
         g = np.fft.fft(np.concatenate([np.zeros(pad_length), a, np.zeros(pad_length)]))
         h = np.fft.fft(np.concatenate([np.zeros(pad_length), b, np.zeros(pad_length)]))
         h_conj = np.conj(h)
-        imp = np.real(np.fft.ifft((g * h_conj) / (h * h_conj + 1e-4)))
+        h_mag2 = np.real(h * h_conj)
+        imp = np.real(np.fft.ifft((g * h_conj) / (h_mag2 + eps * np.mean(h_mag2))))
         resp = np.cumsum(imp)
         resp_len = min(len(resp), len(t))
         resp = resp[:resp_len]
@@ -74,11 +86,13 @@ def step_calc(
 
         steady_window = (t_seg > 200) & (t_seg < step_resp_duration_ms)
         if y_correction and np.any(steady_window):
-            steady = resp[steady_window]
-            mean_steady = np.nanmean(steady)
-            if mean_steady < 1 or mean_steady > 1:
-                yoffset = 1 - mean_steady
-                resp = resp * (yoffset + 1)
+            # Normalize the reconstructed step to unit DC gain. The old
+            # ``resp * (2 - mean_steady)`` only removed part of the error
+            # (mean 0.8 -> 0.96, mean 0.5 -> 0.75), so every peak came out
+            # low and ``overshoot`` could never fire.
+            mean_steady = float(np.nanmean(resp[steady_window]))
+            if np.isfinite(mean_steady) and abs(mean_steady) > 1e-9:
+                resp = resp / mean_steady
 
         if np.any(steady_window):
             steady = resp[steady_window]

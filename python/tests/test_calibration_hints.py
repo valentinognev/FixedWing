@@ -4,11 +4,13 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 _PYTHON_ROOT = Path(__file__).resolve().parents[1]
 if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
+from controlCallibration import hints
 from controlCallibration.hints import build_report, hints_for_channel, verdict
 
 
@@ -46,6 +48,41 @@ class TestOvershootP(unittest.TestCase):
         self.assertEqual(out["verdict"], "overshoot")
         self.assertEqual([h["key"] for h in out["hints"]], ["pid_kp"])
         self.assertEqual(out["hints"][0]["direction"], "down")
+
+
+class TestOvershootWithoutPorFfKeys(unittest.TestCase):
+    """Channels whose key map has no P/FF entry must still emit a hint.
+
+    ``overshoot`` used to filter on ``_is_p_or_ff`` and return ``[]`` for
+    yaw and both body-Z injects, so the loudest verdict produced no
+    actionable key at all.
+    """
+
+    _CASES = (
+        ("yaw", None, "bank_kp_heading"),
+        ("az", "pitch", "bank_kp_alt"),
+        ("az", "thrust", "climb_thrust_per_m"),
+        ("w", "thrust", "climb_thrust_per_m"),
+    )
+
+    def test_falls_back_to_first_key_inverted_sense(self) -> None:
+        stats = _stats(peak=1.6, latency_ms=120.0, n=7)
+        for channel, inject, key in self._CASES:
+            with self.subTest(channel=channel, inject=inject):
+                out = hints_for_channel(channel, inject, stats)
+                self.assertEqual(out["verdict"], "overshoot")
+                self.assertEqual(len(out["hints"]), 1)
+                self.assertEqual(out["hints"][0]["key"], key)
+                self.assertEqual(out["hints"][0]["direction"], "down")
+                self.assertIn("1.6", out["hints"][0]["reason"])
+                self.assertIn("> 1.25", out["hints"][0]["reason"])
+
+    def test_tc_first_key_inverts_to_up(self) -> None:
+        stats = _stats(peak=1.6, latency_ms=120.0, n=7)
+        with patch.dict(hints.KEYS, {("tc_only", None): ("pitch_tc",)}):
+            out = hints_for_channel("tc_only", None, stats)
+        self.assertEqual(out["hints"][0]["key"], "pitch_tc")
+        self.assertEqual(out["hints"][0]["direction"], "up")
 
 
 class TestWeakQ(unittest.TestCase):

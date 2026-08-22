@@ -88,9 +88,21 @@ def _hint_items(channel: str, inject: str | None, stats: dict, kind: str) -> lis
         return []
     peak = stats.get("peak_mean")
     if kind == "overshoot":
-        selected = [k for k in keys if _is_p_or_ff(k)][:_MAX_HINTS]
         reason = f"peak {peak} > 1.25"
-        return [{"key": k, "direction": "down", "reason": reason} for k in selected]
+        selected = [k for k in keys if _is_p_or_ff(k)][:_MAX_HINTS]
+        if not selected:
+            # yaw and both body-Z injects have no P/FF key at all; fall back
+            # to the first entry with the sense inverted from weak/slow so
+            # the loudest verdict still names something to change.
+            selected = [keys[0]]
+        return [
+            {
+                "key": k,
+                "direction": "up" if "_tc" in k else "down",
+                "reason": reason,
+            }
+            for k in selected
+        ]
     # weak / slow: first KEYS entry
     key = keys[0]
     direction = "down" if "_tc" in key else "up"
