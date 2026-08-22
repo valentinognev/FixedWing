@@ -1,5 +1,9 @@
 # Updates
 
+## 0.44.0 - Log chirp and Welch FRF
+- `python/controlCallibration/` (spelling locked): `log_chirp` / `inv_log_chirp` (log-sine phase) and Welch `estimate_freq_response` (PIDToolBox copy, no pidbox import).
+- Host unittest `tests.test_calibration_chirp`.
+
 ## 0.43.0 - race_euler controller
 - Selectable `guidance.controller=race_euler`: same LOS/path as `race_quat`, closes wrap(φ_des−φ)/wrap(θ_des−θ) every tick including in-view (no cascade reset).
 - Plant JSONC `controllers.race_euler` copies `race_quat` outer gains; PP-only still filled from sibling `pure_pursuit_quat`.
