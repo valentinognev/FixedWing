@@ -17,7 +17,7 @@ if str(_PYTHON_ROOT) not in sys.path:
 
 from fw_sitl.balloon_scene import FgTelnet
 from fw_sitl.flight_setup import CameraSpec
-from fw_sitl.fg_camera import (
+from fw_sitl.platforms.yasim.fg_camera import (
     FG_GEO_REFRESH_PERIOD_S,
     FG_VIEW_SYNC_PERIOD_S,
     capture_fg_frame,
@@ -115,8 +115,8 @@ class TestFindFgWindowGeometryMock(unittest.TestCase):
             raise AssertionError(args)
 
         with (
-            patch("fw_sitl.fg_camera._have", side_effect=fake_have),
-            patch("fw_sitl.fg_camera.subprocess.run", side_effect=fake_run),
+            patch("fw_sitl.platforms.yasim.fg_camera._have", side_effect=fake_have),
+            patch("fw_sitl.platforms.yasim.fg_camera.subprocess.run", side_effect=fake_run),
         ):
             geo = find_fg_window_geometry("FlightGear|fgfs")
         self.assertEqual(geo, {"x": 100, "y": 200, "width": 640, "height": 480})
@@ -141,8 +141,8 @@ class TestFindFgWindowGeometryMock(unittest.TestCase):
             raise AssertionError(args)
 
         with (
-            patch("fw_sitl.fg_camera._have", side_effect=fake_have),
-            patch("fw_sitl.fg_camera.subprocess.run", side_effect=fake_run),
+            patch("fw_sitl.platforms.yasim.fg_camera._have", side_effect=fake_have),
+            patch("fw_sitl.platforms.yasim.fg_camera.subprocess.run", side_effect=fake_run),
         ):
             geo = find_fg_window_geometry("FlightGear|fgfs")
         self.assertEqual(geo, {"x": 896, "y": 132, "width": 1024, "height": 768})
@@ -174,8 +174,8 @@ class TestFindFgWindowGeometryMock(unittest.TestCase):
             raise AssertionError(f"unexpected extra lookup {args}")
 
         with (
-            patch("fw_sitl.fg_camera._have", side_effect=fake_have),
-            patch("fw_sitl.fg_camera.subprocess.run", side_effect=fake_run),
+            patch("fw_sitl.platforms.yasim.fg_camera._have", side_effect=fake_have),
+            patch("fw_sitl.platforms.yasim.fg_camera.subprocess.run", side_effect=fake_run),
         ):
             geo = find_fg_window_geometry("FlightGear|fgfs")
         self.assertEqual(geo, {"x": 10, "y": 20, "width": 640, "height": 480})
@@ -214,8 +214,8 @@ class TestFindFgWindowGeometryMock(unittest.TestCase):
             raise AssertionError(args)
 
         with (
-            patch("fw_sitl.fg_camera._have", side_effect=fake_have),
-            patch("fw_sitl.fg_camera.subprocess.run", side_effect=fake_run),
+            patch("fw_sitl.platforms.yasim.fg_camera._have", side_effect=fake_have),
+            patch("fw_sitl.platforms.yasim.fg_camera.subprocess.run", side_effect=fake_run),
         ):
             geo = find_fg_window_geometry("FlightGear|fgfs")
         self.assertEqual(geo, {"x": 896, "y": 132, "width": 1024, "height": 768})
@@ -242,7 +242,7 @@ class TestCaptureCachedGeometry(unittest.TestCase):
                 grabbed["region"] = region
                 return np.zeros((region["height"], region["width"], 4), dtype=np.uint8)
 
-        with patch("fw_sitl.fg_camera.find_fg_window_geometry") as find:
+        with patch("fw_sitl.platforms.yasim.fg_camera.find_fg_window_geometry") as find:
             frame = capture_fg_frame(cam, geometry=geo, sct=FakeSct())
         find.assert_not_called()
         self.assertEqual(grabbed["region"], {"left": 0, "top": 0, "width": 80, "height": 60})
@@ -275,7 +275,9 @@ class TestFgTelnetSetProp(unittest.TestCase):
 
 class TestFgPublisherLoopContract(unittest.TestCase):
     def test_publisher_syncs_view_on_period_and_reuses_geometry(self) -> None:
-        src = (_PYTHON_ROOT / "fw_sitl" / "fg_camera.py").read_text(encoding="utf-8")
+        src = (
+            _PYTHON_ROOT / "fw_sitl" / "platforms" / "yasim" / "fg_camera.py"
+        ).read_text(encoding="utf-8")
         self.assertIn("FG_VIEW_SYNC_PERIOD_S", src)
         self.assertIn("FG_GEO_REFRESH_PERIOD_S", src)
         self.assertIn("due_for_refresh", src)

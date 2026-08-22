@@ -9,7 +9,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from fw_sitl.flight_setup import BalloonSpec, FlightSetup
-from fw_sitl.gz_pose import DEFAULT_GZ_ORIGIN_ENU, ned_to_gz_enu
+from fw_sitl.platforms.gz.gz_pose import DEFAULT_GZ_ORIGIN_ENU, ned_to_gz_enu
 from fw_sitl.race_guidance import rebase_balloons_to_local_z
 
 # WGS84
@@ -893,7 +893,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     import argparse
 
     from fw_sitl.flight_setup import load_flight_setup
-    from fw_sitl.xp_balloon import spawn_xp_from_setup
+    from fw_sitl.platforms.xplane.xp_balloon import spawn_xp_from_setup
 
     parser = argparse.ArgumentParser(
         description="Place race balloons in FlightGear, Gazebo, or X-Plane before PX4 is used"

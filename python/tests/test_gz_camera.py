@@ -9,7 +9,7 @@ _PYTHON_ROOT = Path(__file__).resolve().parents[1]
 if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
-from fw_sitl.gz_camera import find_race_cam_topic, gz_image_to_rgb
+from fw_sitl.platforms.gz.gz_camera import find_race_cam_topic, gz_image_to_rgb
 
 
 class TestGzCamera(unittest.TestCase):
@@ -35,7 +35,7 @@ class TestGzCamera(unittest.TestCase):
         self.assertIn("px4-noble-gz-plane", text)
 
     def test_run_bridge_timeout_is_from_start(self) -> None:
-        text = (_PYTHON_ROOT / "fw_sitl" / "gz_camera.py").read_text(encoding="utf-8")
+        text = (_PYTHON_ROOT / "fw_sitl" / "platforms" / "gz" / "gz_camera.py").read_text(encoding="utf-8")
         src = text[text.index("def run_bridge") : text.index("def run_gz_publisher_via_docker")]
         self.assertIn("deadline = time.time() + timeout_s", src)
         self.assertNotIn("t0 = time.time()", src)
@@ -43,7 +43,7 @@ class TestGzCamera(unittest.TestCase):
         self.assertEqual(src.count("time.time() + timeout_s"), 1)
 
     def test_docker_exec_unbuffered_stdout(self) -> None:
-        text = (_PYTHON_ROOT / "fw_sitl" / "gz_camera.py").read_text(encoding="utf-8")
+        text = (_PYTHON_ROOT / "fw_sitl" / "platforms" / "gz" / "gz_camera.py").read_text(encoding="utf-8")
         src = text[text.index("def run_gz_publisher_via_docker") :]
         self.assertIn("PYTHONUNBUFFERED=1", src)
         self.assertIn("-u", src)

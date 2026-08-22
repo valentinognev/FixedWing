@@ -7,7 +7,7 @@ from dataclasses import replace
 import cv2
 from pymavlink import mavutil
 
-from fw_sitl.fg_camera import (
+from fw_sitl.platforms.yasim.fg_camera import (
     FG_GEO_REFRESH_PERIOD_S,
     capture_fg_frame,
     due_for_refresh,

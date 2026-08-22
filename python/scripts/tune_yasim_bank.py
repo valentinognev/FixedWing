@@ -14,7 +14,7 @@ from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[2]
 _PYTHON = Path.home() / "anaconda/envs/pigeon/bin/python3"
-_PLANT = _ROOT / "python/fw_sitl/plants/yasim_rascal.jsonc"
+_PLANT = _ROOT / "python/fw_sitl/platforms/yasim/yasim_rascal.jsonc"
 _RACE = _ROOT / "python/scripts/run_balloon_race.sh"
 _KILL = _ROOT / "python/scripts/kill.sh"
 _LOG = Path("/tmp/yasim_bank_tune_log.jsonl")

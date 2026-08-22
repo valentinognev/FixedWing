@@ -10,7 +10,7 @@ from typing import Any
 from fw_sitl.balloon_scene import gz_balloon_model_name, ned_to_geodetic
 from fw_sitl.flight_setup import FlightSetup
 from fw_sitl.race_guidance import rebase_balloons_to_local_z
-from fw_sitl.xp_origin import XP_AIRCRAFT_MSL_M, XP_ORIGIN_LAT_DEG, XP_ORIGIN_LON_DEG
+from fw_sitl.platforms.xplane.xp_origin import XP_AIRCRAFT_MSL_M, XP_ORIGIN_LAT_DEG, XP_ORIGIN_LON_DEG
 
 XP_BALLOON_PORT = 49091
 

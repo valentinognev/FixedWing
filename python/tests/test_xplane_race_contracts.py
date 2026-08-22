@@ -78,7 +78,7 @@ class TestXplaneRaceContracts(unittest.TestCase):
 
         mod = importlib.import_module("run_balloon_image_source")
         self.assertTrue(hasattr(mod, "main"))
-        from fw_sitl import xp_camera
+        from fw_sitl.platforms.xplane import xp_camera
 
         self.assertTrue(callable(xp_camera.run_xp_publisher))
 

@@ -11,7 +11,7 @@ _PYTHON_ROOT = Path(__file__).resolve().parents[1]
 if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
-from fw_sitl.gz_pose import (
+from fw_sitl.platforms.gz.gz_pose import (
     DEFAULT_GZ_ORIGIN_ENU,
     DEFAULT_GZ_YAW_RAD,
     gz_enu_to_ned,

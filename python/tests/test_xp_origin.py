@@ -16,7 +16,7 @@ from fw_sitl.flight_setup import SpawnSpec
 
 class TestXpOrigin(unittest.TestCase):
     def test_spawn_zero_is_lows_cruise(self) -> None:
-        from fw_sitl.xp_origin import (
+        from fw_sitl.platforms.xplane.xp_origin import (
             XP_AIRCRAFT_MSL_M,
             XP_ORIGIN_LAT_DEG,
             XP_ORIGIN_LON_DEG,
@@ -31,7 +31,7 @@ class TestXpOrigin(unittest.TestCase):
         self.assertAlmostEqual(alt, XP_AIRCRAFT_MSL_M, places=1)
 
     def test_geodetic_to_ned_xp_roundtrip_at_origin(self) -> None:
-        from fw_sitl.xp_origin import (
+        from fw_sitl.platforms.xplane.xp_origin import (
             XP_AIRCRAFT_MSL_M,
             XP_ORIGIN_LAT_DEG,
             XP_ORIGIN_LON_DEG,
@@ -46,7 +46,7 @@ class TestXpOrigin(unittest.TestCase):
         self.assertAlmostEqual(d, 0.0, places=2)
 
     def test_geodetic_to_ned_xp_north_offset(self) -> None:
-        from fw_sitl.xp_origin import XP_AIRCRAFT_MSL_M, XP_ORIGIN_LON_DEG, geodetic_to_ned_xp
+        from fw_sitl.platforms.xplane.xp_origin import XP_AIRCRAFT_MSL_M, XP_ORIGIN_LON_DEG, geodetic_to_ned_xp
 
         # ~111 m per degree latitude
         n, e, d = geodetic_to_ned_xp(

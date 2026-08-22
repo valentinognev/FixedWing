@@ -11,7 +11,7 @@ _PYTHON_ROOT = Path(__file__).resolve().parents[1]
 if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
-from fw_sitl.gz_pose_bridge import extract_named_pose, model_name_candidates
+from fw_sitl.platforms.gz.gz_pose_bridge import extract_named_pose, model_name_candidates
 
 
 @dataclass
@@ -61,7 +61,7 @@ class TestGzPoseBridge(unittest.TestCase):
         self.assertIn("rc_cessna", names)
 
     def test_run_gz_pose_publisher_via_docker_wiring(self) -> None:
-        text = (_PYTHON_ROOT / "fw_sitl" / "gz_pose_bridge.py").read_text(encoding="utf-8")
+        text = (_PYTHON_ROOT / "fw_sitl" / "platforms" / "gz" / "gz_pose_bridge.py").read_text(encoding="utf-8")
         src = text[text.index("def run_gz_pose_publisher_via_docker") :]
         self.assertIn("PYTHONUNBUFFERED=1", src)
         self.assertIn("-u", src)

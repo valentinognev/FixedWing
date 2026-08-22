@@ -28,7 +28,7 @@ from fw_sitl.balloon_scene import (  # noqa: E402
 )
 from fw_sitl.balloon_tracker import track_balloon  # noqa: E402
 from fw_sitl.camera_model import CameraModel  # noqa: E402
-from fw_sitl.fg_camera import capture_fg_frame, sync_camera_view  # noqa: E402
+from fw_sitl.platforms.yasim.fg_camera import capture_fg_frame, sync_camera_view  # noqa: E402
 from fw_sitl.flight_setup import BalloonSpec, load_flight_setup  # noqa: E402
 from fw_sitl.synthetic_camera import render_frame  # noqa: E402
 

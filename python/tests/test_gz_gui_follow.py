@@ -10,7 +10,7 @@ _PYTHON_ROOT = Path(__file__).resolve().parents[1]
 if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
-from fw_sitl.gz_gui_follow import (
+from fw_sitl.platforms.gz.gz_gui_follow import (
     DEFAULT_BACK_M,
     DEFAULT_UP_M,
     camera_track_protobuf,
@@ -59,7 +59,7 @@ class TestGzGuiFollow(unittest.TestCase):
         self.assertIn("follow_pgain: 1.0", msg)
 
     def test_model_name_candidates_include_plain_and_gz_prefix(self) -> None:
-        from fw_sitl.gz_gui_follow import model_name_candidates
+        from fw_sitl.platforms.gz.gz_gui_follow import model_name_candidates
 
         names = model_name_candidates("rc_cessna")
         self.assertIn("rc_cessna", names)
@@ -68,7 +68,7 @@ class TestGzGuiFollow(unittest.TestCase):
 
     def test_resolve_follow_prefers_exact_suffixed_name(self) -> None:
         """PX4 lists rc_cessna_0; substring 'rc_cessna' in that line is not the node name."""
-        from fw_sitl.gz_gui_follow import listed_model_names, resolve_follow_model
+        from fw_sitl.platforms.gz.gz_gui_follow import listed_model_names, resolve_follow_model
 
         text = (
             "Requesting list of models...\n"

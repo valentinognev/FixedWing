@@ -1,5 +1,9 @@
 # Updates
 
+## 0.40.0 - Platform folders under fw_sitl/platforms
+- Move plant JSONC + backend modules into `platforms/{jsbsim,yasim,gz,xplane}/` (drop top-level `plants/`); `fg_camera` under `yasim/`.
+- `load_plant_gains` resolves `platforms/<family>/{plant_id}.jsonc` via plant-id prefix; imports updated across runners/tests/scripts.
+
 ## 0.39.12 - YASim 10-cycle bank tune (miss-safe)
 - Live tuner `python/scripts/tune_yasim_bank.py`: ≥10 YASim races; keep only if bank shake drops and miss stays within baseline budget.
 - `yasim_rascal` (both controllers + inner): `bank_kp_heading` 0.85→0.78, `max_roll` 0.38→0.36, `kp_alt`/`visual` 0.022→0.032, `climb_thrust` 0.018→0.028; `FW_R_TC` 0.70→0.80, `FW_RR_P` 0.11→0.095, `FW_RR_I` 0.12→0.10.

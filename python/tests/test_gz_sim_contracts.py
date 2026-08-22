@@ -62,7 +62,12 @@ class TestGzSimContracts(unittest.TestCase):
         self.assertIn("nvidia-container-toolkit", text)
         self.assertIn("GZ_GUI_CONFIG", text)
         self.assertIn("gz_gui_follow", text)
-        self.assertIn("/gui/track", (_PYTHON_ROOT / "fw_sitl" / "gz_gui_follow.py").read_text(encoding="utf-8"))
+        self.assertIn(
+            "/gui/track",
+            (_PYTHON_ROOT / "fw_sitl" / "platforms" / "gz" / "gz_gui_follow.py").read_text(
+                encoding="utf-8"
+            ),
+        )
 
     def test_host_spawn_ic_prefixes_pythonpath(self) -> None:
         """Host python3 -m fw_sitl.spawn_ic must inherit PYTHONPATH (tmux has none)."""

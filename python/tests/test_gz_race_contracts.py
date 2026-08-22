@@ -228,7 +228,7 @@ class TestGzRaceContracts(unittest.TestCase):
         self.assertIn("POSE_CMD", gz_block[: gz_block.index("fi")])
 
     def test_gz_pose_bridge_module_contract(self) -> None:
-        bridge = (_PYTHON_ROOT / "fw_sitl" / "gz_pose_bridge.py").read_text(encoding="utf-8")
+        bridge = (_PYTHON_ROOT / "fw_sitl" / "platforms" / "gz" / "gz_pose_bridge.py").read_text(encoding="utf-8")
         self.assertIn("dynamic_pose/info", bridge)
         self.assertIn("def run_bridge", bridge)
         self.assertIn("def run_gz_pose_publisher_via_docker", bridge)

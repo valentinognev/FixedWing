@@ -11,11 +11,11 @@ _PYTHON_ROOT = Path(__file__).resolve().parent
 if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
-from fw_sitl.fg_camera import run_fg_publisher
+from fw_sitl.platforms.yasim.fg_camera import run_fg_publisher
 from fw_sitl.flight_setup import load_flight_setup
-from fw_sitl.gz_camera import run_gz_publisher_via_docker
+from fw_sitl.platforms.gz.gz_camera import run_gz_publisher_via_docker
 from fw_sitl.synthetic_camera import run_synthetic_publisher
-from fw_sitl.xp_camera import run_xp_publisher
+from fw_sitl.platforms.xplane.xp_camera import run_xp_publisher
 
 
 def main() -> int:

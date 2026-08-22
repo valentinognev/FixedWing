@@ -13,17 +13,17 @@ if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
 from fw_sitl.flight_setup import BalloonSpec, FlightSetup, SpawnSpec
-from fw_sitl.xp_origin import XP_AIRCRAFT_MSL_M, XP_ORIGIN_LAT_DEG, XP_ORIGIN_LON_DEG
+from fw_sitl.platforms.xplane.xp_origin import XP_AIRCRAFT_MSL_M, XP_ORIGIN_LAT_DEG, XP_ORIGIN_LON_DEG
 
 
 class TestXpBalloonCodec(unittest.TestCase):
     def test_encode_clear(self) -> None:
-        from fw_sitl.xp_balloon import encode_clear
+        from fw_sitl.platforms.xplane.xp_balloon import encode_clear
 
         self.assertEqual(json.loads(encode_clear()), {"cmd": "clear"})
 
     def test_encode_place(self) -> None:
-        from fw_sitl.xp_balloon import encode_place
+        from fw_sitl.platforms.xplane.xp_balloon import encode_place
 
         msg = json.loads(
             encode_place(
@@ -41,7 +41,7 @@ class TestXpBalloonCodec(unittest.TestCase):
         self.assertAlmostEqual(msg["diameter_m"], 10.0)
 
     def test_parse_pose_reply(self) -> None:
-        from fw_sitl.xp_balloon import parse_reply
+        from fw_sitl.platforms.xplane.xp_balloon import parse_reply
 
         raw = json.dumps(
             {
@@ -62,7 +62,7 @@ class TestXpBalloonCodec(unittest.TestCase):
 
 class TestSpawnXpFromSetup(unittest.TestCase):
     def test_clear_then_three_places_at_lows(self) -> None:
-        from fw_sitl.xp_balloon import spawn_xp_from_setup
+        from fw_sitl.platforms.xplane.xp_balloon import spawn_xp_from_setup
 
         sent: list[dict] = []
 

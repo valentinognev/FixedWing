@@ -5,8 +5,8 @@ import time
 from dataclasses import dataclass
 
 from fw_sitl.flight_setup import FlightSetup
-from fw_sitl.xp_balloon import XP_BALLOON_PORT, encode_pose_query, udp_transact
-from fw_sitl.xp_origin import (
+from fw_sitl.platforms.xplane.xp_balloon import XP_BALLOON_PORT, encode_pose_query, udp_transact
+from fw_sitl.platforms.xplane.xp_origin import (
     XP_ORIGIN_ALT_MSL_M,
     XP_ORIGIN_LAT_DEG,
     XP_ORIGIN_LON_DEG,

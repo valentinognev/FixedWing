@@ -27,7 +27,7 @@ from fw_sitl.balloon_scene import (
     spawn_balloons_gz,
     spawn_fg_from_setup,
 )
-from fw_sitl.xp_balloon import spawn_xp_from_setup
+from fw_sitl.platforms.xplane.xp_balloon import spawn_xp_from_setup
 from fw_sitl.balloon_tracker import track_centroid_near_expected
 from fw_sitl.body_cmd_controllers import make_body_cmd_controller, parse_body_cmd_mode
 from fw_sitl.camera_model import (
@@ -38,7 +38,7 @@ from fw_sitl.camera_model import (
 )
 from fw_sitl.flight_history import FlightHistory, extrapolate_ned, slew_toward_rpy
 from fw_sitl.flight_setup import load_flight_setup
-from fw_sitl.gz_pose import gz_enu_to_ned, horiz_ned_err_m, ned_sub
+from fw_sitl.platforms.gz.gz_pose import gz_enu_to_ned, horiz_ned_err_m, ned_sub
 from fw_sitl.mavlink_io import (
     PX4_CUSTOM_MAIN_MODE_OFFBOARD,
     arm,

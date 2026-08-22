@@ -20,11 +20,11 @@ import sys
 import time
 from pathlib import Path
 
-_PYTHON_ROOT = Path(__file__).resolve().parent.parent
+_PYTHON_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
-from fw_sitl.gz_camera import _import_gz
+from fw_sitl.platforms.gz.gz_camera import _import_gz
 from fw_sitl.zmq_bus import PosePublisher, PoseSample
 
 DYNAMIC_POSE_TOPIC = "/world/default/dynamic_pose/info"

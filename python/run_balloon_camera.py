@@ -17,7 +17,7 @@ import numpy as np
 
 from fw_sitl.balloon_tracker import track_balloon
 from fw_sitl.camera_model import CameraModel
-from fw_sitl.fg_camera import (
+from fw_sitl.platforms.yasim.fg_camera import (
     FG_GEO_REFRESH_PERIOD_S,
     due_for_refresh,
     find_fg_window_geometry,

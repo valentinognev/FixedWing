@@ -19,7 +19,7 @@ from fw_sitl.balloon_scene import (
     spawn_balloons_gz,
 )
 from fw_sitl.flight_setup import BalloonSpec
-from fw_sitl.gz_pose import DEFAULT_GZ_ORIGIN_ENU
+from fw_sitl.platforms.gz.gz_pose import DEFAULT_GZ_ORIGIN_ENU
 
 
 class TestGzBalloons(unittest.TestCase):

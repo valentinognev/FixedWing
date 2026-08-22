@@ -16,7 +16,7 @@ if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
 from fw_sitl.flight_setup import load_flight_setup
-from fw_sitl.gz_pose_bridge import run_gz_pose_publisher_via_docker
+from fw_sitl.platforms.gz.gz_pose_bridge import run_gz_pose_publisher_via_docker
 
 
 def main() -> int:

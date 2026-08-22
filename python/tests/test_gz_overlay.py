@@ -13,7 +13,7 @@ if str(_PYTHON_ROOT) not in sys.path:
 if str(_SYS_DIR) not in sys.path:
     sys.path.insert(0, str(_SYS_DIR))
 
-from fw_sitl.gz_overlay import apply_plane_overlay, canonical_link_name, inject_race_cam
+from fw_sitl.platforms.gz.gz_overlay import apply_plane_overlay, canonical_link_name, inject_race_cam
 from race_spawn_velocity import velocity_from_env
 
 _STOCK = """<?xml version="1.0"?>

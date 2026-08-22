@@ -1,7 +1,7 @@
 """Controller constants keyed by plant + airframe.
 
-Tables live in ``plants/{plant_id}.jsonc`` with shared top-level
-airspeed/lookahead/px4_inner and per-controller blocks under
+Tables live in ``platforms/<family>/{plant_id}.jsonc`` with shared
+top-level airspeed/lookahead/px4_inner and per-controller blocks under
 ``controllers``. ``load_plant_gains(plant_id, controller=...)`` merges
 into a flat ``PlantGains``. JSBSim headless is ``jsbsim_rascal``;
 JSBSim+FG ``--viz`` is ``jsbsim_rascal_viz``. Unknown plant ids fail.
@@ -23,6 +23,32 @@ KNOWN_PLANT_IDS = (
     "gz_advanced_plane",
     "xplane_cessna172",
 )
+
+_PLANT_FAMILY_PREFIXES = (
+    ("jsbsim_", "jsbsim"),
+    ("yasim_", "yasim"),
+    ("gz_", "gz"),
+    ("xplane_", "xplane"),
+)
+
+
+def plant_platform_dir(plant_id: str) -> str:
+    """Map ``plant_id`` prefix → ``platforms/<family>`` folder name."""
+    pid = str(plant_id)
+    for prefix, family in _PLANT_FAMILY_PREFIXES:
+        if pid.startswith(prefix):
+            return family
+    raise KeyError(f"unknown plant family for {pid!r}")
+
+
+def plant_jsonc_path(plant_id: str) -> Path:
+    family = plant_platform_dir(plant_id)
+    return (
+        Path(__file__).resolve().parent
+        / "platforms"
+        / family
+        / f"{plant_id}.jsonc"
+    )
 
 
 @dataclass(frozen=True)
@@ -191,7 +217,7 @@ def load_plant_gains(
     pid = str(plant_id)
     if pid not in KNOWN_PLANT_IDS:
         raise KeyError(f"unknown plant {pid!r}; expected one of {KNOWN_PLANT_IDS}")
-    path = Path(__file__).resolve().parent / "plants" / f"{pid}.jsonc"
+    path = plant_jsonc_path(pid)
     if not path.is_file():
         raise FileNotFoundError(f"plant file missing: {path}")
     raw = load_plant_jsonc(path)

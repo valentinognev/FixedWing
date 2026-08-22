@@ -12,7 +12,7 @@ if str(_PYTHON_ROOT) not in sys.path:
 
 from fw_sitl.thrust_energy import SpeedGovernor, cd_from_alpha, drag_n, thrust_n
 
-# jsbsim_rascal aero/PP seeds (plants/jsbsim_rascal.jsonc).
+# jsbsim_rascal aero/PP seeds (platforms/jsbsim/jsbsim_rascal.jsonc).
 _MASS = 13.0
 _S = 1.0
 _CD0 = 0.05

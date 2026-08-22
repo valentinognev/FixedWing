@@ -12,8 +12,8 @@ if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
 from fw_sitl.flight_setup import load_flight_setup
-from fw_sitl.xp_balloon import XP_BALLOON_PORT
-from fw_sitl.xp_pose_bridge import run_xp_pose_publisher
+from fw_sitl.platforms.xplane.xp_balloon import XP_BALLOON_PORT
+from fw_sitl.platforms.xplane.xp_pose_bridge import run_xp_pose_publisher
 
 
 def main() -> int:

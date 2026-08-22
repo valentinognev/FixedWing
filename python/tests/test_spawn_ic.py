@@ -15,7 +15,7 @@ if str(_PYTHON_ROOT) not in sys.path:
 
 from fw_sitl.balloon_scene import DEFAULT_ORIGIN_LAT_DEG, DEFAULT_ORIGIN_LON_DEG
 from fw_sitl.flight_setup import SpawnSpec, flight_setup_from_dict
-from fw_sitl.gz_pose import DEFAULT_GZ_ORIGIN_ENU, DEFAULT_GZ_POSE
+from fw_sitl.platforms.gz.gz_pose import DEFAULT_GZ_ORIGIN_ENU, DEFAULT_GZ_POSE
 from fw_sitl.spawn_ic import (
     fg_spawn_env_text,
     gz_pose_csv,

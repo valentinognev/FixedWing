@@ -14,7 +14,7 @@ from fw_sitl.balloon_scene import (
     ned_to_geodetic,
 )
 from fw_sitl.flight_setup import FlightSetup, SpawnSpec, load_flight_setup
-from fw_sitl.gz_pose import DEFAULT_GZ_ORIGIN_ENU, ned_to_gz_enu, world_velocity_enu
+from fw_sitl.platforms.gz.gz_pose import DEFAULT_GZ_ORIGIN_ENU, ned_to_gz_enu, world_velocity_enu
 
 # Match python/assets/jsb_spawn.xml / fg_spawn.env in-air IC (~30 m/s).
 _JSB_VT_FT_S = 98.4
@@ -110,7 +110,7 @@ def _main(argv: list[str] | None = None) -> int:
     if args.gz_pose:
         print(gz_pose_csv(setup))
     if args.xp_geodetic:
-        from fw_sitl.xp_origin import xp_geodetic_csv
+        from fw_sitl.platforms.xplane.xp_origin import xp_geodetic_csv
 
         print(xp_geodetic_csv(setup.spawn))
     if (

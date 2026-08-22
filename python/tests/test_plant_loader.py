@@ -154,7 +154,7 @@ class TestPlantGainsFromDict(unittest.TestCase):
 
 class TestLoadPlantJsoncFile(unittest.TestCase):
     def test_load_jsbsim_rascal_jsonc_from_disk(self) -> None:
-        path = _PYTHON_ROOT / "fw_sitl" / "plants" / "jsbsim_rascal.jsonc"
+        path = _PYTHON_ROOT / "fw_sitl" / "platforms" / "jsbsim" / "jsbsim_rascal.jsonc"
         data = load_plant_jsonc(path)
         self.assertIn("controllers", data)
         self.assertIn("pure_pursuit_quat", data["controllers"])

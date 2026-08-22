@@ -247,7 +247,7 @@ from pathlib import Path
 import sys
 sys.path.insert(0, '/opt/fixedwing/python')
 from fw_sitl.flight_setup import load_flight_setup
-from fw_sitl.gz_overlay import apply_plane_overlay
+from fw_sitl.platforms.gz.gz_overlay import apply_plane_overlay
 from fw_sitl.spawn_ic import gz_spawn_velocity_enu
 stock = Path(sys.argv[1])
 setup = load_flight_setup(Path('/opt/fixedwing/flightSetup.json'))
@@ -270,9 +270,9 @@ PY
 		source /tmp/fw_gz_vel.env
 		export GZ_SIM_RESOURCE_PATH=/tmp/fw_gz_overlay/models:/opt/fixedwing/gz/models\${GZ_SIM_RESOURCE_PATH:+:\$GZ_SIM_RESOURCE_PATH}
 		export GZ_SIM_SYSTEM_PLUGIN_PATH=/opt/fixedwing/gz/systems\${GZ_SIM_SYSTEM_PLUGIN_PATH:+:\$GZ_SIM_SYSTEM_PLUGIN_PATH}
-		python3 -m fw_sitl.gz_gui_follow --write-gui-config /tmp/fw_gz_gui.config --model ${GZ_MODEL}
+		python3 -m fw_sitl.platforms.gz.gz_gui_follow --write-gui-config /tmp/fw_gz_gui.config --model ${GZ_MODEL}
 		export GZ_GUI_CONFIG=/tmp/fw_gz_gui.config
-		python3 -m fw_sitl.gz_gui_follow --follow --model ${GZ_MODEL} --timeout-s 0 >/tmp/fw_gz_follow.log 2>&1 &
+		python3 -m fw_sitl.platforms.gz.gz_gui_follow --follow --model ${GZ_MODEL} --timeout-s 0 >/tmp/fw_gz_follow.log 2>&1 &
 		make px4_sitl ${MAKE_TGT}
 "
 

@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 
 # Allow `python3 /opt/fixedwing/python/fw_sitl/gz_camera.py` with PYTHONPATH=.../python
-_PYTHON_ROOT = Path(__file__).resolve().parent.parent
+_PYTHON_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
