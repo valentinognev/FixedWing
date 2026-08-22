@@ -41,14 +41,16 @@ class TestSendAttitudeTarget(unittest.TestCase):
 
 class TestAttitudeCallSites(unittest.TestCase):
     def test_chase_sends_angles_not_raw_quat(self) -> None:
-        text = (_PYTHON_ROOT / "fw_sitl" / "body_cmd_controllers.py").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("roll, pitch, yaw = rpy_from_quat(q_cmd)", text)
-        self.assertIn(
-            "send_attitude_target(master, roll, pitch, yaw, thrust)", text
-        )
-        self.assertNotIn("send_attitude_quat(master, q_cmd, thrust)", text)
+        for rel in (
+            "fw_sitl/controllers/pure_pursuit_quat.py",
+            "fw_sitl/controllers/race_quat.py",
+        ):
+            text = (_PYTHON_ROOT / rel).read_text(encoding="utf-8")
+            self.assertIn("roll, pitch, yaw = rpy_from_quat(q_cmd)", text, rel)
+            self.assertIn(
+                "send_attitude_target(master, roll, pitch, yaw, thrust)", text, rel
+            )
+            self.assertNotIn("send_attitude_quat(master, q_cmd, thrust)", text, rel)
 
     def test_hold_sends_angles_not_raw_quat(self) -> None:
         text = (_PYTHON_ROOT / "fw_sitl" / "straight_flight_core.py").read_text(

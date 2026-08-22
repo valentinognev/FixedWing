@@ -187,15 +187,18 @@ class TestPlantGainsRegistry(unittest.TestCase):
         self.assertGreater(yas.cruise_thrust, jsb.cruise_thrust)
 
     def test_yasim_rascal_closes_altitude_on_hsv(self) -> None:
-        """Live 192354: XY 0.4–6 m but ΔD 26–30 m (energy flare on final)."""
+        """0.39.12 bank tune: softer bank + stronger alt vs 0.39.11."""
         p = load_plant_gains("yasim_rascal")
         self.assertAlmostEqual(p.speed_mps, 28.0)
-        self.assertAlmostEqual(p.approach_speed_mps, 20.0)
+        self.assertAlmostEqual(p.approach_speed_mps, 22.0)
         self.assertAlmostEqual(p.slow_range_m, 280.0)
-        self.assertAlmostEqual(p.bank_max_roll_rad, 0.40)
-        self.assertAlmostEqual(p.bank_kp_alt, 0.028)
-        self.assertAlmostEqual(p.visual_lock_kp_alt, 0.028)
-        self.assertAlmostEqual(p.climb_thrust_per_m, 0.025)
+        self.assertAlmostEqual(p.bank_max_roll_rad, 0.36)
+        self.assertAlmostEqual(p.bank_kp_heading, 0.78)
+        self.assertAlmostEqual(p.pid_kp, 0.45)
+        self.assertAlmostEqual(p.pid_kd, 0.10)
+        self.assertAlmostEqual(p.bank_kp_alt, 0.032)
+        self.assertAlmostEqual(p.visual_lock_kp_alt, 0.032)
+        self.assertAlmostEqual(p.climb_thrust_per_m, 0.028)
         self.assertAlmostEqual(p.min_thrust, 0.18)
         self.assertAlmostEqual(p.speed_thrust_per_mps, 0.06)
 
@@ -237,8 +240,10 @@ class TestPlantGainsRegistry(unittest.TestCase):
         yas = dict(load_plant_gains("yasim_rascal").px4_inner)
         self.assertLess(yas["FW_PR_P"], jsb["FW_PR_P"])
         self.assertGreater(yas["FW_PR_I"], jsb["FW_PR_I"])
-        self.assertAlmostEqual(yas["FW_RR_P"], 0.14)
+        self.assertAlmostEqual(yas["FW_RR_P"], 0.095)
         self.assertAlmostEqual(yas["FW_RR_FF"], 0.48)
+        self.assertAlmostEqual(yas["FW_R_TC"], 0.80)
+        self.assertAlmostEqual(yas["FW_RR_I"], 0.10)
 
     def test_px4_inner_gz_cessna_snapshot(self) -> None:
         inner = dict(load_plant_gains("gz_rc_cessna").px4_inner)

@@ -1,5 +1,59 @@
 # Updates
 
+## 0.39.12 - YASim 10-cycle bank tune (miss-safe)
+- Live tuner `python/scripts/tune_yasim_bank.py`: ≥10 YASim races; keep only if bank shake drops and miss stays within baseline budget.
+- `yasim_rascal` (both controllers + inner): `bank_kp_heading` 0.85→0.78, `max_roll` 0.38→0.36, `kp_alt`/`visual` 0.022→0.032, `climb_thrust` 0.018→0.028; `FW_R_TC` 0.70→0.80, `FW_RR_P` 0.11→0.095, `FW_RR_I` 0.12→0.10.
+- Round-2 best `111346` vs baseline `111019`: shake 28.5→6.5, sat 43%→10%, roll corr→0.50, closest3d 36.6→19.5 m, |dD| 35.4→19.1 m, passes 1→3.
+- Confirm `113014`: shake 18.8, sat 22%, 3 passes, closest_xy 1.4 m (ΔD still run-to-run noisy ~36 m); shake still below baseline.
+
+## 0.39.11 - Damp YASim bank oscillation
+- `yasim_rascal`: `bank_kp_heading` 1.05→0.85, `max_roll` 0.45→0.38, `pid_kp` 0.55→0.45 / `ki` 0.10→0.08 / `kd` 0.08→0.10; inner `FW_R_TC` 0.55→0.70, `FW_RR_P` 0.14→0.11, `FW_RR_I` 0.18→0.12.
+- Verify `102021` vs `101639`: roll sat 43%→28%, cmd rate p90 18.9→11.5 °/s, meas std 24→19°; 2 gate passes.
+
+## 0.39.10 - FG GT altitude frame (phantom ~40 m ΔD)
+- Cause: `_gt_pose_from_telnet_raw` used balloon-frame `z_hold_true` as the aircraft datum at settle → double-counted (ac−elev); CSV ΔD≈40 m on visual co-altitude hits. Separately, post–re-place `(ac_ft−elevation-ft)` often disagreed ~40 m with just-placed models → phantom climb, LOS off camera, YASim heading oscillation (`100130`/`100337`).
+- Fix: GT Z datum is raw `z_hold` (`z_ref_at_settle`); after successful FG re-place set `z_hold_true=z_hold` (elev-ft only if re-place failed).
+- Verify `100934`: pass ΔD **0.9 m** (was ~40); `yasim_rascal` bank_kp 1.05 / pid_kp 0.55 / `FW_RR_P` 0.14 (recover tracking after Z fix).
+
+## 0.39.9 - Soften YASim race_quat shake
+- Live baseline `093801`: roll cmd–meas corr 0.04, sat@22.5° 45%, pitch rate p90 24°/s, 1 pass miss 40 m ΔD.
+- `yasim_rascal` (both controllers): `bank_kp_heading` 1.2→0.9, `max_roll` 0.40→0.45, `pid_kp` 0.65→0.50 / `kd` 0.06→0.08, alt/visual `kp_alt` 0.028→0.022, `climb_thrust` 0.025→0.018, approach 20→22 m/s; inner `FW_R_TC` 0.50→0.55, `FW_RR_P` 0.14→0.12.
+- Verify `094707`: corr 0.20, sat 6%, pitch rate p90 14°/s, track err p50 7.5° (was 26°), 3 passes; 3D miss still ~39 m ΔD (XY 1–6 m) — later shown as bookkeeping bug (0.39.10).
+
+## 0.39.8 - Image pane crash (waiting for image)
+- Cause: `run_balloon_image_source` always imports `xp_camera`, which imported missing `request_data_streams` → image pane died on every plant; camera stayed on "waiting for image".
+- `xp_camera`: use `request_local_position` + ATTITUDE interval (same as FG/synth).
+- Launcher: `PLOT_TIMEOUT` truncates float `duration_s` (`60.0`) so bash arithmetic does not fail.
+
+## 0.39.7 - Live race_quat e2e (opt-in)
+- `fw_sitl/race_e2e.py` + `tests/test_race_quat_e2e.py`: per-platform live SITL with `guidance.controller=race_quat` (`jsbsim`|`viz`|`yasim`|`gz`); gated by `FW_SITL_E2E=1`; CSV must have `end_*` and ≥1 pass.
+- Runner: `python/scripts/run_race_quat_e2e.sh` (`FW_SITL_E2E_PLATFORMS`, `FW_SITL_E2E_DURATION_S`).
+
+## 0.39.6 - Per-platform race_quat tests
+- `tests/test_race_quat_platforms.py`: for each `KNOWN_SIM_PLATFORMS` plant (plus gz `advanced_plane`), load `race_quat` gains, build controller, assert in-view `los` / off-screen `path`, and setup `sim.platform`+`controller=race_quat` E2E.
+
+## 0.39.5 - Drop xplane from sim.platform menu
+- `KNOWN_SIM_PLATFORMS` / `flightSetup` comments: `jsbsim`|`viz`|`yasim`|`gz` only; `sim.platform=xplane` and `./run_balloon_race.sh --xplane` exit with a clear error (plant code remains in-tree).
+
+## 0.39.4 - Race duration under sim.duration_s
+- `sim.duration_s` sits next to `platform` / `gz_model` (CLI `--duration` overrides); still mirrored onto `guidance.duration_s` for control. Legacy `guidance.duration_s`-only setups still load.
+
+## 0.39.3 - gz_model availability errors
+- `validate_gz_model_for_platform`: unknown model on `gz`, or any `--model`/explicit model on non-`gz`, raises a clear available-list message; launcher prints `Error: …` and exits 2.
+
+## 0.39.2 - flightSetup sim.platform + CLI override
+- Top-level `sim.platform` (`jsbsim`|`viz`|`yasim`|`gz`|`xplane`) and `sim.gz_model`; `guidance.duration_s` remains race length.
+- `run_balloon_race.sh` defaults from setup; `--viz`/`--yasim`/`--gz`/`--xplane`/`--model`/`--duration` override via `resolve_race_sim`.
+
+## 0.39.1 - flightSetup option comments (JSONC)
+- `flightSetup.json` / `.e2e.json`: `//` comments on multi-option guidance fields (`laps`, `duration_s`, `cmd_mode`, `controller`).
+- `load_flight_setup` strips JSONC via `strip_jsonc` (same scanner as plant files).
+
+## 0.39.0 - Selectable chase controllers
+- `guidance.controller` in `flightSetup.json` (`pure_pursuit_quat` default; unknown id hard error).
+- `python/fw_sitl/controllers/`: registry + `race_quat` (LOS `q_des_from_los`) and `pure_pursuit_quat` (PP `a_des`→attitude→governor).
+- Plant JSONC: nested `controllers.race_quat` / `controllers.pure_pursuit_quat`; `load_plant_gains(plant_id, controller=...)` merges selected block.
+
 ## 0.38.1 - X-Plane plugin builds; fetch px4xplane
 - `fixedwing_balloons`: place via `XPLMWorldToLocal` + instance pose refresh; Makefile uses Laminar `XPSDK411.zip` and `--allow-shlib-undefined` (no link to libXPLM).
 - `runSimXplaneCessna.sh` prefers `plugin/64/lin.xpl`, else builds with clean `/usr/bin/g++` (fail loud).

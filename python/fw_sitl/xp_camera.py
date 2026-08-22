@@ -14,7 +14,7 @@ from fw_sitl.fg_camera import (
     find_fg_window_geometry,
 )
 from fw_sitl.flight_setup import DEFAULT_FG_WINDOW_PATTERN, FlightSetup
-from fw_sitl.mavlink_io import connect, poll_mavlink, request_data_streams
+from fw_sitl.mavlink_io import connect, poll_mavlink, request_local_position
 from fw_sitl.zmq_bus import ImagePublisher
 
 DEFAULT_XP_WINDOW_PATTERN = "X-Plane|X-System"
@@ -34,8 +34,13 @@ def xp_window_pattern(setup: FlightSetup) -> str:
 def run_xp_publisher(setup: FlightSetup, *, udp_port: int = 14541) -> None:
     """Grab the X-Plane window and PUB RGB frames (no FG telnet view sync)."""
     master = connect(udp_port, timeout=180.0)
-    request_data_streams(
-        master,
+    request_local_position(master, hz=setup.render_rate_hz)
+    master.mav.command_long_send(
+        master.target_system,
+        master.target_component,
+        mavutil.mavlink.MAV_CMD_SET_MESSAGE_INTERVAL,
+        0,
+        mavutil.mavlink.MAVLINK_MSG_ID_ATTITUDE,
         int(1e6 / max(setup.render_rate_hz, 1.0)),
         0,
         0,

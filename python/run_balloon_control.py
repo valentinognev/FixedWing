@@ -115,10 +115,15 @@ def _gt_pose_from_telnet_raw(
     ],
     *,
     ac_ft_at_settle: float | None,
-    z_hold_true: float,
+    z_ref_at_settle: float,
     ft_to_m: float,
 ) -> tuple[tuple[float, float, float] | None, tuple[float, float, float] | None]:
-    """FG telnet lat/lon/alt-ft + Euler deg → settle-frame NED and att rad."""
+    """FG telnet lat/lon/alt-ft + Euler deg → settle-frame NED and att rad.
+
+    ``z_ref_at_settle`` is the EKF local-Z at ``ac_ft_at_settle`` (raw ``z_hold``),
+    not balloon-frame ``z_hold_true``. Using ``z_hold_true`` here double-counts
+    (ac_ft − balloon_elev) and invents a ~40 m ΔD on visual co-altitude hits.
+    """
     t_lat, t_lon, t_alt_ft, t_roll, t_pitch, t_hdg = raw
     gt_pos = None
     gt_att = None
@@ -136,7 +141,7 @@ def _gt_pose_from_telnet_raw(
             DEFAULT_ORIGIN_LON_DEG,
             0.0,
         )
-        t_z = z_hold_true - (t_alt_ft - ac_ft_at_settle) * ft_to_m
+        t_z = z_ref_at_settle - (t_alt_ft - ac_ft_at_settle) * ft_to_m
         gt_pos = (t_n, t_e, t_z)
     if t_roll is not None and t_pitch is not None and t_hdg is not None:
         yaw_rad = math.radians(((t_hdg + 180.0) % 360.0) - 180.0)
@@ -285,7 +290,7 @@ def main() -> int:
         "--duration",
         type=float,
         default=None,
-        help="Race length seconds; 0 = no time limit (default: guidance.duration_s)",
+        help="Race length seconds; 0 = no time limit (default: sim.duration_s)",
     )
     parser.add_argument("--warmup", type=float, default=0.0)
     parser.add_argument("--spawn-fg-balloons", action="store_true")
@@ -357,6 +362,7 @@ def main() -> int:
         kill_target = "--xplane"
     else:
         kill_target = KILL_TARGET
+    setup = load_flight_setup(args.setup)
     plant = load_plant_gains(
         plant_id_from_flags(
             gz=args.gz,
@@ -364,16 +370,16 @@ def main() -> int:
             viz=args.viz,
             xplane=args.xplane,
             gz_model=args.model,
-        )
+        ),
+        controller=setup.guidance.controller,
     )
     speed_mps = plant.speed_mps
     lookahead_m = plant.lookahead_m
 
-    setup = load_flight_setup(args.setup)
     duration_s = (
         float(args.duration)
         if args.duration is not None
-        else float(setup.guidance.duration_s)
+        else float(setup.sim.duration_s)
     )
     laps_target = int(setup.guidance.laps)
     csv_path = args.csv if args.csv is not None else default_csv_path()
@@ -545,8 +551,12 @@ def main() -> int:
     # Rebasing the race/CSV target onto raw z_hold silently adopted that drifted
     # origin as "the balloon's altitude", so ΔD stayed ~0 while the real gap (FG
     # aircraft alt vs FG balloon-0 elevation, both ground truth) did not.
-    # Cross-check both altitudes live (ft, MSL) here and correct z_hold onto the
-    # same physical reference the balloon was actually placed at.
+    # After a successful settle re-place, balloon0 is at live AC MSL (config z=0)
+    # so z_hold_true == z_hold. Do NOT re-apply (ac_ft − elevation-ft): FG's
+    # /models/model/elevation-ft often disagrees by ~40 m with the just-placed
+    # models, which invented a phantom climb, pulled LOS off the camera, and
+    # left YASim oscillating (live 100130/100337). Elev correction is only a
+    # fallback when re-place failed.
     FT_TO_M = 0.3048
     diag_tel: FgTelnet | None = None
     z_hold_true = z_hold
@@ -558,9 +568,6 @@ def main() -> int:
         try:
             diag_tel = FgTelnet(host=args.telnet_host, port=args.telnet_port, timeout=1.0)
             diag_tel.connect(retries=3, delay_s=0.2)
-            diag_balloon0_elev_ft = parse_fg_telnet_float(
-                diag_tel.command("get /models/model/elevation-ft")
-            )
             ac_ft_at_settle = parse_fg_telnet_float(
                 diag_tel.command("get /position/altitude-ft")
             )
@@ -570,8 +577,6 @@ def main() -> int:
             ac_lon_at_settle = parse_fg_telnet_float(
                 diag_tel.command("get /position/longitude-deg")
             )
-            if ac_ft_at_settle is not None and diag_balloon0_elev_ft is not None:
-                z_hold_true = z_hold + (ac_ft_at_settle - diag_balloon0_elev_ft) * FT_TO_M
             # Models were placed before HEARTBEAT at then-live origin; the
             # aircraft keeps drifting through arm/settle. Re-place around the
             # settled pose so balloon 0 sits ~200 m north of the visual AC.
@@ -599,13 +604,17 @@ def main() -> int:
             ac_lon_at_settle = parse_fg_telnet_float(
                 diag_tel.command("get /position/longitude-deg")
             )
-            diag_balloon0_elev_ft = parse_fg_telnet_float(
-                diag_tel.command("get /models/model/elevation-ft")
-            )
-            if ac_ft_at_settle is not None and diag_balloon0_elev_ft is not None:
-                z_hold_true = (
-                    z_hold + (ac_ft_at_settle - diag_balloon0_elev_ft) * FT_TO_M
+            if placed_origin is not None:
+                # Re-place put balloon0 at live AC MSL; trust that over elev-ft.
+                z_hold_true = z_hold
+            else:
+                diag_balloon0_elev_ft = parse_fg_telnet_float(
+                    diag_tel.command("get /models/model/elevation-ft")
                 )
+                if ac_ft_at_settle is not None and diag_balloon0_elev_ft is not None:
+                    z_hold_true = (
+                        z_hold + (ac_ft_at_settle - diag_balloon0_elev_ft) * FT_TO_M
+                    )
         except Exception:
             diag_tel = None
             z_hold_true = z_hold
@@ -689,6 +698,7 @@ def main() -> int:
             setup.guidance.alt_preserve_heading_err_deg
         ),
         plant=plant,
+        controller=setup.guidance.controller,
     )
     if hasattr(controller, "_bridge"):
         controller._bridge._alt_hold_z = float(
@@ -780,7 +790,7 @@ def main() -> int:
                 gpos, gatt = _gt_pose_from_telnet_raw(
                     raw0,
                     ac_ft_at_settle=ac_ft_at_settle,
-                    z_hold_true=z_hold_true,
+                    z_ref_at_settle=z_hold,
                     ft_to_m=FT_TO_M,
                 )
                 if gpos is not None:
@@ -903,7 +913,7 @@ def main() -> int:
                     gt_pos, gt_att = _gt_pose_from_telnet_raw(
                         raw,
                         ac_ft_at_settle=ac_ft_at_settle,
-                        z_hold_true=z_hold_true,
+                        z_ref_at_settle=z_hold,
                         ft_to_m=FT_TO_M,
                     )
                 if (

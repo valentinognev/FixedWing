@@ -17,27 +17,26 @@ _SIM = _PYTHON_ROOT / "scripts" / "runSimXplaneCessna.sh"
 
 
 class TestXplaneRaceContracts(unittest.TestCase):
-    def test_race_xplane_wiring(self) -> None:
+    def test_race_xplane_flag_rejected(self) -> None:
         text = _RACE.read_text(encoding="utf-8")
-        self.assertIn("--xplane", text)
+        self.assertIn("platform xplane is not available", text)
         self.assertIn("runSimXplaneCessna.sh", text)
-        self.assertIn('MODE="xp"', text)
-        self.assertIn("--mode ${MODE}", text)
-        self.assertIn("--spawn-xp-balloons", text)
-        self.assertIn("px4-noble-xplane-cessna", text)
-        self.assertIn("balloon_scene --setup", text)
-        self.assertIn("--xplane and --gz are mutually exclusive", text)
-        self.assertIn("--xplane and --viz are mutually exclusive", text)
-        self.assertIn("--xplane and --yasim are mutually exclusive", text)
+        r = subprocess.run(
+            ["bash", str(_RACE), "--xplane"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("xplane is not available", r.stderr)
 
-    def test_race_xplane_exclusive_with_gz(self) -> None:
+    def test_race_xplane_with_gz_still_exit_2(self) -> None:
         r = subprocess.run(
             ["bash", str(_RACE), "--xplane", "--gz"],
             capture_output=True,
             text=True,
         )
         self.assertEqual(r.returncode, 2)
-        self.assertIn("--xplane and --gz are mutually exclusive", r.stderr)
+        self.assertIn("xplane is not available", r.stderr)
 
     def test_kill_has_xplane(self) -> None:
         text = _KILL.read_text(encoding="utf-8")
@@ -70,6 +69,18 @@ class TestXplaneRaceContracts(unittest.TestCase):
         img = _IMG.read_text(encoding="utf-8")
         self.assertIn('"xp"', img)
         self.assertIn("run_xp_publisher", img)
+
+    def test_image_source_module_imports(self) -> None:
+        """Import must succeed: top-level xp_camera pull kills every plant's image pane."""
+        if str(_PYTHON_ROOT) not in sys.path:
+            sys.path.insert(0, str(_PYTHON_ROOT))
+        import importlib
+
+        mod = importlib.import_module("run_balloon_image_source")
+        self.assertTrue(hasattr(mod, "main"))
+        from fw_sitl import xp_camera
+
+        self.assertTrue(callable(xp_camera.run_xp_publisher))
 
     def test_sim_script_exists_and_mentions_bind_mount(self) -> None:
         self.assertTrue(_SIM.is_file(), f"missing {_SIM}")

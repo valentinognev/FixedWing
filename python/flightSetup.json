@@ -6,13 +6,22 @@
     "pose": "tcp://127.0.0.1:5558"
   },
   "balloons": [
-    {"ned": [500,   0, -10], "color": [255, 0, 0], "diameter_m": 10},
-    {"ned": [500, 200, -10], "color": [0, 255, 0], "diameter_m": 10},
-    {"ned": [300, 200, -10], "color": [0, 0, 255], "diameter_m": 10}
+    {"ned": [500,   0,  0], "color": [255, 0, 0], "diameter_m": 10},
+    {"ned": [500, 200, -20], "color": [0, 255, 0], "diameter_m": 10},
+    {"ned": [300, 200,  20], "color": [0, 0, 255], "diameter_m": 10}
   ],
   "spawn": {
     "ned": [0, 0, 0],
     "heading_deg": 10
+  },
+  // Race launcher plant + length (CLI --viz/--yasim/--gz/--model/--duration override)
+  "sim": {
+    // jsbsim (headless default) | viz | yasim | gz
+    "platform": "yasim",
+    // only used when platform=gz (or CLI --gz): rc_cessna | advanced_plane
+    "gz_model": "rc_cessna",
+    // 0 = no time limit; >0 = stop after that many seconds (CLI --duration overrides)
+    "duration_s": 60
   },
   "camera": {
     "hfov_deg": 90, "vfov_deg": 70,
@@ -22,16 +31,24 @@
     "fg_window_pattern": "FlightGear|fgfs"
   },
   "render_rate_hz": 20,
-    "guidance": {
+  "guidance": {
     "control_rate_hz": 20,
     "speed_mps": 30,
     "pass_radius_m": 10,
     "lookahead_m": 500,
     "assisted_print_period_s": 5,
     "stale_track_warn_s": 10,
+    // 0 = keep cycling balloons until sim.duration_s (or Ctrl+C); N>0 = end after N full circuits
     "laps": 0,
-    "duration_s": 60,
+    // cmd_mode:
+    //    velocity = locked-line TECS path setpoints; 
+    //    attitude = quaternion chase (uses controller); 
+    //    rates = stub (not implemented)
     "cmd_mode": "attitude",
+    // default controller: 
+    //    pure_pursuit_quat = PP a_des→attitude→governor (default); 
+    //    race_quat = pre-PP LOS q_des_from_los chase
+    "controller": "race_quat",
     "alt_preserve_heading_err_deg": 20
   },
   "verification": {

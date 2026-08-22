@@ -1,9 +1,10 @@
 """Controller constants keyed by plant + airframe.
 
-Tables live in ``plants/{plant_id}.jsonc``. JSBSim headless is
-``jsbsim_rascal``; JSBSim+FG ``--viz`` is ``jsbsim_rascal_viz`` (same
-FDM, HSV keeps the altitude mix). Changing ``--model`` / YASim /
-Gazebo / ``--xplane`` selects a different file. Unknown ids fail.
+Tables live in ``plants/{plant_id}.jsonc`` with shared top-level
+airspeed/lookahead/px4_inner and per-controller blocks under
+``controllers``. ``load_plant_gains(plant_id, controller=...)`` merges
+into a flat ``PlantGains``. JSBSim headless is ``jsbsim_rascal``;
+JSBSim+FG ``--viz`` is ``jsbsim_rascal_viz``. Unknown plant ids fail.
 """
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from fw_sitl.attitude_pid import AttitudePid
+from fw_sitl.flight_setup import DEFAULT_CONTROLLER
 
 
 KNOWN_PLANT_IDS = (
@@ -177,8 +179,14 @@ def plant_id_from_flags(
     return "jsbsim_rascal"
 
 
-def load_plant_gains(plant_id: str) -> PlantGains:
-    from fw_sitl.plant_loader import load_plant_jsonc, plant_gains_from_dict
+def load_plant_gains(
+    plant_id: str, *, controller: str = DEFAULT_CONTROLLER
+) -> PlantGains:
+    from fw_sitl.plant_loader import (
+        load_plant_jsonc,
+        merge_plant_controller,
+        plant_gains_from_dict,
+    )
 
     pid = str(plant_id)
     if pid not in KNOWN_PLANT_IDS:
@@ -186,7 +194,8 @@ def load_plant_gains(plant_id: str) -> PlantGains:
     path = Path(__file__).resolve().parent / "plants" / f"{pid}.jsonc"
     if not path.is_file():
         raise FileNotFoundError(f"plant file missing: {path}")
-    gains = plant_gains_from_dict(load_plant_jsonc(path))
+    raw = load_plant_jsonc(path)
+    gains = plant_gains_from_dict(merge_plant_controller(raw, controller))
     if str(gains.plant_id) != pid:
         raise ValueError(
             f"plant file {path.name} has plant_id {gains.plant_id!r}, expected {pid!r}"

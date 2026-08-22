@@ -25,6 +25,64 @@ class TestYasimControlContracts(unittest.TestCase):
         self.assertIn("args.spawn_fg_balloons or args.viz or args.yasim", ctl)
         self.assertIn("--viz, --gz, --yasim, and --xplane are mutually exclusive", ctl)
 
+    def test_gt_pose_z_uses_ekf_settle_datum_not_balloon_z(self) -> None:
+        """Live 094707: ~40 m phantom ΔD on visual hits.
+
+        Balloons rebase to ``z_hold_true`` (MSL vs balloon elev). Aircraft GT Z
+        must use raw ``z_hold`` at ``ac_ft_at_settle`` — using ``z_hold_true`` as
+        that datum double-counts (ac−balloon) and reports ~40 m vertical miss
+        when the plane is co-altitude with the model.
+        """
+        if str(_PYTHON_ROOT) not in sys.path:
+            sys.path.insert(0, str(_PYTHON_ROOT))
+        import run_balloon_control as ctl
+
+        z_hold = 26.6
+        z_hold_true = -12.2  # balloon0 after (ac_ft - elev_ft)*0.3048
+        ac_ft = 3000.0
+        ft = 0.3048
+        balloon_ft = ac_ft - (z_hold_true - z_hold) / ft
+        # Co-altitude with balloon → GT NED Z must equal balloon target.
+        raw = (47.46, 8.55, balloon_ft, 0.0, 0.0, 90.0)
+        pos, _att = ctl._gt_pose_from_telnet_raw(
+            raw,
+            ac_ft_at_settle=ac_ft,
+            z_ref_at_settle=z_hold,
+            ft_to_m=ft,
+        )
+        self.assertIsNotNone(pos)
+        assert pos is not None
+        self.assertAlmostEqual(pos[2], z_hold_true, places=5)
+        # Settle altitude → GT Z equals EKF z_hold (not balloon z).
+        raw_settle = (47.46, 8.55, ac_ft, 0.0, 0.0, 90.0)
+        pos_s, _ = ctl._gt_pose_from_telnet_raw(
+            raw_settle,
+            ac_ft_at_settle=ac_ft,
+            z_ref_at_settle=z_hold,
+            ft_to_m=ft,
+        )
+        assert pos_s is not None
+        self.assertAlmostEqual(pos_s[2], z_hold, places=5)
+
+    def test_gt_pose_call_sites_pass_z_hold_datum(self) -> None:
+        ctl = _CTL.read_text(encoding="utf-8")
+        self.assertIn("z_ref_at_settle=", ctl)
+        # Must not feed balloon-frame z_hold_true into the aircraft GT datum.
+        self.assertNotRegex(
+            ctl,
+            r"_gt_pose_from_telnet_raw\([^)]*z_hold_true\s*=\s*z_hold_true",
+        )
+
+    def test_fg_replace_skips_stale_elevation_delta(self) -> None:
+        """After settle re-place, balloon0 is at AC MSL — do not trust elev-ft."""
+        ctl = _CTL.read_text(encoding="utf-8")
+        # Successful re-place must force z_hold_true = z_hold.
+        self.assertIn("if placed_origin is not None:", ctl)
+        block = ctl[ctl.index("if placed_origin is not None:") :]
+        block = block[: block.index("else:")]
+        self.assertIn("z_hold_true = z_hold", block)
+        self.assertNotIn("elevation-ft", block)
+
     def test_ekf_fix_gps_is_rejected(self) -> None:
         r = subprocess.run(
             [sys.executable, str(_CTL), "--ekf-fix", "gps"],
@@ -112,7 +170,9 @@ class TestYasimRaceLauncher(unittest.TestCase):
         self.assertIn('CTL_CMD+=" --yasim', text)
         self.assertIn("--spawn-fg-balloons", text)
         self.assertIn("BALLOON_RACE_DURATION", text)
-        self.assertIn('CTL_CMD+=" --duration ${BALLOON_RACE_DURATION}"', text)
+        self.assertIn('CTL_CMD+=" --duration ${DURATION}"', text)
+        self.assertIn("resolve_race_sim", text)
+        self.assertIn("sim.platform", text)
         self.assertIn("--stop-sim-on-exit", text)
         self.assertIn("kill.sh", text)
         self.assertIn("--all", text)
@@ -133,6 +193,15 @@ class TestYasimRaceLauncher(unittest.TestCase):
             text=True,
         )
         self.assertEqual(r.returncode, 2)
+
+    def test_model_with_yasim_exit_2(self) -> None:
+        r = subprocess.run(
+            ["bash", str(_RACE), "--yasim", "--model", "rc_cessna"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(r.returncode, 2)
+        self.assertRegex(r.stderr.lower(), r"model|--model")
 
     def test_ekf_fix_gps_exit_2(self) -> None:
         r = subprocess.run(

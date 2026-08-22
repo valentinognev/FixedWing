@@ -2,111 +2,213 @@
   // Table id; must match KNOWN_PLANT_IDS / load_plant_gains("gz_advanced_plane").
   "plant_id": "gz_advanced_plane",
 
-  // Attitude PID P; lower than gz_rc_cessna.
-  "pid_kp": 0.7,
-  // Attitude PID integral gain.
-  "pid_ki": 0.10,
-  // Attitude PID derivative gain.
-  "pid_kd": 0.05,
-
-  // Path/LOS bank: heading-error P; 1.3 vs Cessna 1.4.
-  "bank_kp_heading": 1.3,
-  // Path bank: cross-track P (rad roll / m).
-  "bank_kp_cross_track": 0.003,
-  // Path: extra lookahead mixed into cross-track (m).
-  "bank_xt_lookahead_m": 200.0,
-  // Max commanded roll (rad).
-  "bank_max_roll_rad": 0.45,
-  // Path/LOS: altitude-error mix into pitch (rad / m).
-  "bank_kp_alt": 0.022,
-  // Legacy path pitch clamp used by path_kwargs (rad).
-  "bank_max_pitch_rad": 0.12,
-  // Attitude path-hold max pitch (rad).
-  "att_max_pitch_rad": 0.35,
-  // LOS / geometric chase max pitch (rad).
-  "att_los_max_pitch_rad": 0.70,
-
-  // Nominal thrust fraction at cruise.
-  "cruise_thrust": 0.50,
-  // Extra thrust per metre of altitude error (1/m).
-  "climb_thrust_per_m": 0.010,
-  // Thrust fraction floor.
-  "min_thrust": 0.20,
-  // Thrust fraction ceiling.
-  "max_thrust": 1.0,
-
-  // Cruise airspeed command (m/s); FW_AIRSPD_TRIM matches.
-  "speed_mps": 20.0,
-  // Final-approach airspeed (m/s) inside slow_range_m.
-  "approach_speed_mps": 14.0,
-  // Range (m) at which speed blends cruise → approach.
-  "slow_range_m": 160.0,
-  // Thrust P vs speed error (1 / (m/s)).
-  "speed_thrust_per_mps": 0.04,
-  // Locked-line / intercept lookahead (m).
+  // Locked-line / intercept lookahead (m); shared across controllers.
   "lookahead_m": 500.0,
 
-  // PX4 FW_AIRSPD_MIN (m/s).
+  // PX4 FW_AIRSPD_MIN (m/s); shared across controllers.
   "fw_airspd_min": 10.0,
-  // PX4 FW_AIRSPD_TRIM (m/s).
+
+  // PX4 FW_AIRSPD_TRIM (m/s); shared across controllers.
   "fw_airspd_trim": 20.0,
-  // PX4 FW_AIRSPD_MAX (m/s).
+
+  // PX4 FW_AIRSPD_MAX (m/s); shared across controllers.
   "fw_airspd_max": 35.0,
 
-  // HSV look-at altitude mix (rad/m); equals bank_kp_alt.
-  "visual_lock_kp_alt": 0.022,
-
-  /* PX4 v1.17 4008_gz_advanced_plane rate/TECS/throttle snapshot. */
-  "px4_inner": [
-    ["FW_PR_FF", 0.08], /* pitch-rate feedforward */
-    ["FW_PR_I", 0.3], /* pitch-rate I */
-    ["FW_PR_P", 0.08], /* pitch-rate P */
-    ["FW_RR_FF", 0.05], /* roll-rate feedforward */
-    ["FW_RR_I", 0.2], /* roll-rate I */
-    ["FW_RR_P", 0.03], /* roll-rate P */
-    ["FW_YR_FF", 0.3], /* yaw-rate feedforward */
-    ["FW_YR_I", 0.4], /* yaw-rate I */
-    ["FW_YR_P", 0.2], /* yaw-rate P */
-    ["FW_PSP_OFF", 2.0], /* pitch setpoint offset (deg) */
-    ["FW_P_LIM_MAX", 32.0], /* max pitch limit (deg) */
-    ["FW_P_LIM_MIN", -15.0], /* min pitch limit (deg) */
-    ["FW_THR_MIN", 0.05], /* throttle min */
-    ["FW_THR_TRIM", 0.25], /* airframe throttle trim */
-    ["FW_THR_MAX", 0.6], /* throttle max */
-    ["FW_T_CLMB_R_SP", 5.0], /* TECS climb rate setpoint (m/s) */
-    ["FW_T_CLMB_MAX", 6.0], /* TECS max climb (m/s) */
-    ["FW_T_SINK_MAX", 2.7], /* TECS max sink (m/s) */
-    ["FW_T_SINK_MIN", 2.2] /* TECS min sink (m/s) */
+  /* PX4 FW_* overlay besides airspeed (airspeed comes from fw_airspd_*). */
+  "px4_inner":
+  [
+    ["FW_PR_FF", 0.08], /* FW_PR_FF */
+    ["FW_PR_I", 0.3], /* FW_PR_I */
+    ["FW_PR_P", 0.08], /* FW_PR_P */
+    ["FW_RR_FF", 0.05], /* FW_RR_FF */
+    ["FW_RR_I", 0.2], /* FW_RR_I */
+    ["FW_RR_P", 0.03], /* FW_RR_P */
+    ["FW_YR_FF", 0.3], /* FW_YR_FF */
+    ["FW_YR_I", 0.4], /* FW_YR_I */
+    ["FW_YR_P", 0.2], /* FW_YR_P */
+    ["FW_PSP_OFF", 2.0], /* FW_PSP_OFF */
+    ["FW_P_LIM_MAX", 32.0], /* FW_P_LIM_MAX */
+    ["FW_P_LIM_MIN", -15.0], /* FW_P_LIM_MIN */
+    ["FW_THR_MIN", 0.05], /* FW_THR_MIN */
+    ["FW_THR_TRIM", 0.25], /* FW_THR_TRIM */
+    ["FW_THR_MAX", 0.6], /* FW_THR_MAX */
+    ["FW_T_CLMB_R_SP", 5.0], /* FW_T_CLMB_R_SP */
+    ["FW_T_CLMB_MAX", 6.0], /* FW_T_CLMB_MAX */
+    ["FW_T_SINK_MAX", 2.7], /* FW_T_SINK_MAX */
+    ["FW_T_SINK_MIN", 2.2] /* FW_T_SINK_MIN */
   ],
 
-  // Vehicle mass (kg).
-  "mass_kg": 12.0,
-  // Wing reference area S (m²) in D = ½ ρ V² S C_D.
-  "wing_area_m2": 0.9,
-  // Parasite drag C_D0 (dimensionless).
-  "cd0": 0.05,
-  // Induced-drag factor k_ind in C_D ≈ C_D0 + k_ind C_L².
-  "k_induced": 0.08,
-  // C_Lα per radian; used when |α| ≥ alpha_small_rad.
-  "cl_alpha": 5.0,
-  // Air density ρ (kg/m³) for dynamic pressure; sea-level seed.
-  "rho_kg_m3": 1.225,
-  // Max thrust T_max (N); PX4 fraction is T / t_max_n.
-  "t_max_n": 35.0,
-  // Stall speed (m/s); governor floors/recovers from multiples of this.
-  "v_stall_mps": 10.0,
-  // Pure-pursuit gain k in a_des = k (û − v̂).
-  "pp_gain": 2.0,
-  // Target thrust fraction when T saturates (default 0.8 T_max).
-  "thrust_target_frac": 0.8,
-  // Forbidden-speed band: recover if V < v_min_mult × V_stall.
-  "v_min_mult": 1.1,
-  // Recover / thrust-limit floor: v_recover_mult × V_stall.
-  "v_recover_mult": 1.2,
-  // Speed-up rate (m/s²) toward cruise when T < thrust_target_frac T_max.
-  "v_up_mps_s": 0.5,
-  // Accel→attitude translator: "polar" (default) or "geometric".
-  "attitude_from_accel": "polar",
-  // Small-α threshold (rad, ~5°); below this, cos α ≈ 1 and C_D small-α polar.
-  "alpha_small_rad": 0.087
+  /* Per-controller outer-loop gains. Top-level holds shared airspeed/lookahead/px4. */
+  "controllers": {
+    // Pre-PP LOS chase (race_quat); omits PP-only aero/governor fields.
+    "race_quat": {
+      // Attitude PID (quaternion error → body rates) P gain.
+      "pid_kp": 0.7,
+
+      // Attitude PID integral gain.
+      "pid_ki": 0.1,
+
+      // Attitude PID derivative gain.
+      "pid_kd": 0.05,
+
+      // Path/LOS bank: heading-error P (rad roll / rad heading).
+      "bank_kp_heading": 1.3,
+
+      // Path bank: cross-track P (rad roll / m).
+      "bank_kp_cross_track": 0.003,
+
+      // Path: extra lookahead mixed into cross-track (m).
+      "bank_xt_lookahead_m": 200.0,
+
+      // Max commanded roll (rad).
+      "bank_max_roll_rad": 0.45,
+
+      // Path/LOS: altitude-error mix into pitch (rad / m).
+      "bank_kp_alt": 0.022,
+
+      // Legacy path pitch clamp used by path_kwargs (rad).
+      "bank_max_pitch_rad": 0.12,
+
+      // Attitude path-hold max pitch (rad).
+      "att_max_pitch_rad": 0.35,
+
+      // LOS / geometric chase max pitch (rad).
+      "att_los_max_pitch_rad": 0.7,
+
+      // Nominal thrust fraction at cruise.
+      "cruise_thrust": 0.5,
+
+      // Extra thrust per metre of altitude error (1/m).
+      "climb_thrust_per_m": 0.01,
+
+      // Thrust fraction floor.
+      "min_thrust": 0.2,
+
+      // Thrust fraction ceiling.
+      "max_thrust": 1.0,
+
+      // Cruise airspeed command (m/s).
+      "speed_mps": 20.0,
+
+      // Final-approach airspeed (m/s) inside slow_range_m.
+      "approach_speed_mps": 14.0,
+
+      // Range (m) at which speed blends cruise → approach.
+      "slow_range_m": 160.0,
+
+      // Thrust P vs speed error (1 / (m/s)).
+      "speed_thrust_per_mps": 0.04,
+
+      // HSV look-at altitude mix (rad/m).
+      "visual_lock_kp_alt": 0.022
+    },
+    // Pure-pursuit a_des → attitude_from_accel → SpeedGovernor.
+    "pure_pursuit_quat": {
+      // Attitude PID (quaternion error → body rates) P gain.
+      "pid_kp": 0.7,
+
+      // Attitude PID integral gain.
+      "pid_ki": 0.1,
+
+      // Attitude PID derivative gain.
+      "pid_kd": 0.05,
+
+      // Path/LOS bank: heading-error P (rad roll / rad heading).
+      "bank_kp_heading": 1.3,
+
+      // Path bank: cross-track P (rad roll / m).
+      "bank_kp_cross_track": 0.003,
+
+      // Path: extra lookahead mixed into cross-track (m).
+      "bank_xt_lookahead_m": 200.0,
+
+      // Max commanded roll (rad).
+      "bank_max_roll_rad": 0.45,
+
+      // Path/LOS: altitude-error mix into pitch (rad / m).
+      "bank_kp_alt": 0.022,
+
+      // Legacy path pitch clamp used by path_kwargs (rad).
+      "bank_max_pitch_rad": 0.12,
+
+      // Attitude path-hold max pitch (rad).
+      "att_max_pitch_rad": 0.35,
+
+      // LOS / geometric chase max pitch (rad).
+      "att_los_max_pitch_rad": 0.7,
+
+      // Nominal thrust fraction at cruise.
+      "cruise_thrust": 0.5,
+
+      // Extra thrust per metre of altitude error (1/m).
+      "climb_thrust_per_m": 0.01,
+
+      // Thrust fraction floor.
+      "min_thrust": 0.2,
+
+      // Thrust fraction ceiling.
+      "max_thrust": 1.0,
+
+      // Cruise airspeed command (m/s).
+      "speed_mps": 20.0,
+
+      // Final-approach airspeed (m/s) inside slow_range_m.
+      "approach_speed_mps": 14.0,
+
+      // Range (m) at which speed blends cruise → approach.
+      "slow_range_m": 160.0,
+
+      // Thrust P vs speed error (1 / (m/s)).
+      "speed_thrust_per_mps": 0.04,
+
+      // HSV look-at altitude mix (rad/m).
+      "visual_lock_kp_alt": 0.022,
+
+      // Vehicle mass (kg) for T = (m a_parallel + D + mg sin γ) / cos α.
+      "mass_kg": 12.0,
+
+      // Wing reference area S (m²) in D = ½ ρ V² S C_D.
+      "wing_area_m2": 0.9,
+
+      // Parasite drag C_D0 (dimensionless).
+      "cd0": 0.05,
+
+      // Induced-drag factor k_ind in C_D ≈ C_D0 + k_ind C_L².
+      "k_induced": 0.08,
+
+      // C_Lα per radian; used when |α| ≥ alpha_small_rad.
+      "cl_alpha": 5.0,
+
+      // Air density ρ (kg/m³) for dynamic pressure; sea-level seed.
+      "rho_kg_m3": 1.225,
+
+      // Max thrust T_max (N); PX4 fraction is T / t_max_n.
+      "t_max_n": 35.0,
+
+      // Stall speed (m/s); governor floors/recovers from multiples of this.
+      "v_stall_mps": 10.0,
+
+      // Pure-pursuit gain k in a_des = k (û − v̂).
+      "pp_gain": 2.0,
+
+      // Target thrust fraction when T saturates (default 0.8 T_max).
+      "thrust_target_frac": 0.8,
+
+      // Forbidden-speed band: recover if V < v_min_mult × V_stall.
+      "v_min_mult": 1.1,
+
+      // Recover / thrust-limit floor: v_recover_mult × V_stall.
+      "v_recover_mult": 1.2,
+
+      // Speed-up rate (m/s²) toward cruise when T < thrust_target_frac T_max.
+      "v_up_mps_s": 0.5,
+
+      // Accel→attitude translator: "polar" (default) or "geometric".
+      "attitude_from_accel": "polar",
+
+      // Small-α threshold (rad, ~5°); below this, cos α ≈ 1 and C_D small-α polar.
+      "alpha_small_rad": 0.087
+    }
+  }
 }
+

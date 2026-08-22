@@ -156,6 +156,12 @@ class TestMavlinkFanoutContracts(unittest.TestCase):
         self.assertNotIn("tmux new-window", text)
         self.assertIn("select-layout -t \"${SESSION}:0\" tiled", text)
 
+    def test_plot_timeout_accepts_float_duration(self) -> None:
+        """resolve_race_sim prints 60.0; bash $((60.0+300)) is a syntax error."""
+        text = _RACE_SH.read_text(encoding="utf-8")
+        self.assertIn("DURATION%%.*", text)
+        self.assertIn("PLOT_TIMEOUT", text)
+
     def test_race_passes_no_sim_to_control_when_race_owns_sim(self) -> None:
         """Race launcher owns sim → control must attach (--no-sim), never kill/restart at start."""
         text = _RACE_SH.read_text(encoding="utf-8")

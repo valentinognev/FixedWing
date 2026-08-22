@@ -36,6 +36,8 @@ DEFAULT_STALE_TRACK_WARN_S = 10.0
 DEFAULT_LAPS = 1
 DEFAULT_DURATION_S = 60.0
 DEFAULT_CMD_MODE = "velocity"
+# Chase attitude law selected via guidance.controller (plant JSONC controllers.*).
+DEFAULT_CONTROLLER = "pure_pursuit_quat"
 # During large heading error, hold altitude instead of chasing aim Z (level turn).
 DEFAULT_ALT_PRESERVE_HEADING_ERR_DEG = 20.0
 DEFAULT_BALLOON_DIAMETER_M = 10.0
@@ -48,6 +50,40 @@ DEFAULT_SPAWN_NED = (0.0, 0.0, 0.0)
 DEFAULT_SPAWN_HEADING_DEG = 0.0
 
 _ALLOWED_CMD_MODES = frozenset({"velocity", "attitude", "rates"})
+KNOWN_CONTROLLER_IDS = frozenset({"race_quat", "pure_pursuit_quat"})
+# Race launcher plant flags (CLI --viz/--yasim/--gz/--xplane; default headless jsbsim).
+KNOWN_SIM_PLATFORMS = frozenset({"jsbsim", "viz", "yasim", "gz"})
+DEFAULT_SIM_PLATFORM = "jsbsim"
+KNOWN_GZ_MODELS = frozenset({"rc_cessna", "advanced_plane"})
+DEFAULT_GZ_MODEL = "rc_cessna"
+# Only Gazebo exposes selectable airframes; other platforms ignore sim.gz_model.
+GZ_MODELS_BY_PLATFORM: dict[str, frozenset[str]] = {
+    "gz": KNOWN_GZ_MODELS,
+}
+
+
+def gz_models_for_platform(platform: str) -> frozenset[str]:
+    """Airframe ids selectable for ``platform`` (empty if the plant has no --model)."""
+    return GZ_MODELS_BY_PLATFORM.get(str(platform).strip().lower(), frozenset())
+
+
+def validate_gz_model_for_platform(platform: str, gz_model: str) -> None:
+    """Raise ``ValueError`` with a clear message if ``gz_model`` is not usable."""
+    plat = str(platform).strip().lower()
+    model = str(gz_model).strip().lower()
+    available = gz_models_for_platform(plat)
+    if model in available:
+        return
+    if not available:
+        raise ValueError(
+            f"gz_model {model!r} is not available for platform {plat!r}; "
+            "only platform 'gz' supports sim.gz_model / --model "
+            f"(available for gz: {'|'.join(sorted(KNOWN_GZ_MODELS))})"
+        )
+    raise ValueError(
+        f"gz_model {model!r} is not available for platform {plat!r}; "
+        f"available: {'|'.join(sorted(available))}"
+    )
 
 
 @dataclass(frozen=True)
@@ -96,6 +132,8 @@ class GuidanceSpec:
     laps: int = DEFAULT_LAPS
     duration_s: float = DEFAULT_DURATION_S
     cmd_mode: str = DEFAULT_CMD_MODE
+    # Attitude chase law id (race_quat | pure_pursuit_quat).
+    controller: str = DEFAULT_CONTROLLER
     # |course−yaw| ≥ this (deg) → z_hold = current altitude during the turn.
     alt_preserve_heading_err_deg: float = DEFAULT_ALT_PRESERVE_HEADING_ERR_DEG
 
@@ -113,6 +151,16 @@ class SpawnSpec:
 
 
 @dataclass(frozen=True)
+class SimSpec:
+    """Which SITL plant the race launcher starts (overridable by CLI flags)."""
+
+    platform: str = DEFAULT_SIM_PLATFORM
+    gz_model: str = DEFAULT_GZ_MODEL
+    # Race wall-clock length; CLI --duration overrides. 0 = no time limit.
+    duration_s: float = DEFAULT_DURATION_S
+
+
+@dataclass(frozen=True)
 class VerificationSpec:
     pixel_rms_max_px: float = DEFAULT_PIXEL_RMS_MAX_PX
     pass_time_tol_s: float = DEFAULT_PASS_TIME_TOL_S
@@ -127,6 +175,7 @@ class FlightSetup:
     render_rate_hz: float = DEFAULT_RENDER_RATE_HZ
     guidance: GuidanceSpec = field(default_factory=GuidanceSpec)
     spawn: SpawnSpec = field(default_factory=SpawnSpec)
+    sim: SimSpec = field(default_factory=SimSpec)
     verification: VerificationSpec = field(default_factory=VerificationSpec)
     source_path: Path | None = None
 
@@ -291,6 +340,10 @@ def _parse_guidance(raw: Any) -> GuidanceSpec:
     cmd_mode = _as_str(
         data.get("cmd_mode", DEFAULT_CMD_MODE), "guidance.cmd_mode"
     ).lower()
+    # Absent key → default; present but unknown → hard error.
+    controller = _as_str(
+        data.get("controller", DEFAULT_CONTROLLER), "guidance.controller"
+    ).strip()
     alt_preserve_err_deg = _as_float(
         data.get(
             "alt_preserve_heading_err_deg", DEFAULT_ALT_PRESERVE_HEADING_ERR_DEG
@@ -320,6 +373,12 @@ def _parse_guidance(raw: Any) -> GuidanceSpec:
         raise ValueError(
             "guidance.cmd_mode must be one of velocity|attitude|rates"
         )
+    if controller not in KNOWN_CONTROLLER_IDS:
+        raise ValueError(
+            "guidance.controller must be one of "
+            + "|".join(sorted(KNOWN_CONTROLLER_IDS))
+            + f", got {controller!r}"
+        )
     if alt_preserve_err_deg < 0.0:
         raise ValueError("guidance.alt_preserve_heading_err_deg must be >= 0")
     return GuidanceSpec(
@@ -332,6 +391,7 @@ def _parse_guidance(raw: Any) -> GuidanceSpec:
         laps=laps,
         duration_s=duration,
         cmd_mode=cmd_mode,
+        controller=controller,
         alt_preserve_heading_err_deg=alt_preserve_err_deg,
     )
 
@@ -347,6 +407,76 @@ def _parse_spawn(raw: Any) -> SpawnSpec:
         data.get("heading_deg", DEFAULT_SPAWN_HEADING_DEG), "spawn.heading_deg"
     )
     return SpawnSpec(ned=ned, heading_deg=heading)
+
+
+def _parse_sim(raw: Any) -> SimSpec:
+    data = _require_mapping(raw if raw is not None else {}, "sim")
+    platform = _as_str(
+        data.get("platform", DEFAULT_SIM_PLATFORM), "sim.platform"
+    ).lower()
+    gz_model = _as_str(
+        data.get("gz_model", DEFAULT_GZ_MODEL), "sim.gz_model"
+    ).lower()
+    duration = _as_float(
+        data.get("duration_s", DEFAULT_DURATION_S), "sim.duration_s"
+    )
+    if platform not in KNOWN_SIM_PLATFORMS:
+        raise ValueError(
+            "sim.platform must be one of "
+            + "|".join(sorted(KNOWN_SIM_PLATFORMS))
+            + f", got {platform!r}"
+        )
+    # Non-gz platforms may still store a placeholder gz_model for when the
+    # user switches platform; only enforce the menu when platform is gz (or
+    # when resolve_race_sim sees an explicit --model for a non-gz plant).
+    if platform == "gz":
+        validate_gz_model_for_platform(platform, gz_model)
+    elif gz_model not in KNOWN_GZ_MODELS:
+        raise ValueError(
+            "sim.gz_model must be one of "
+            + "|".join(sorted(KNOWN_GZ_MODELS))
+            + f", got {gz_model!r}"
+        )
+    if duration < 0.0:
+        raise ValueError("sim.duration_s must be >= 0 (0 = no time limit)")
+    return SimSpec(platform=platform, gz_model=gz_model, duration_s=duration)
+
+
+def resolve_race_sim(
+    setup: FlightSetup,
+    *,
+    platform: str | None = None,
+    gz_model: str | None = None,
+    duration_s: float | None = None,
+) -> tuple[str, str, float]:
+    """CLI overrides for platform / gz_model / duration; None → setup values."""
+    plat = (
+        setup.sim.platform
+        if platform is None
+        else _as_str(platform, "platform").lower()
+    )
+    model_explicit = gz_model is not None
+    model = (
+        setup.sim.gz_model
+        if gz_model is None
+        else _as_str(gz_model, "gz_model").lower()
+    )
+    if plat not in KNOWN_SIM_PLATFORMS:
+        raise ValueError(
+            "platform must be one of "
+            + "|".join(sorted(KNOWN_SIM_PLATFORMS))
+            + f", got {plat!r}"
+        )
+    if plat == "gz" or model_explicit:
+        validate_gz_model_for_platform(plat, model)
+    dur = (
+        float(setup.sim.duration_s)
+        if duration_s is None
+        else float(duration_s)
+    )
+    if dur < 0.0:
+        raise ValueError("duration_s must be >= 0 (0 = no time limit)")
+    return plat, model, dur
 
 
 def _parse_verification(raw: Any) -> VerificationSpec:
@@ -380,6 +510,8 @@ def flight_setup_from_dict(
     raw: dict[str, Any], *, source_path: Path | None = None
 ) -> FlightSetup:
     """Validate a raw dict into FlightSetup (missing keys → plan defaults)."""
+    from dataclasses import replace
+
     if not isinstance(raw, dict):
         raise ValueError("flight setup root must be an object")
 
@@ -394,23 +526,40 @@ def flight_setup_from_dict(
     if render_rate <= 0.0:
         raise ValueError("render_rate_hz must be > 0")
 
+    # Race length lives under sim.duration_s; accept legacy guidance.duration_s.
+    sim_raw = raw.get("sim")
+    sim_data: dict[str, Any] = dict(sim_raw) if isinstance(sim_raw, dict) else {}
+    guidance_raw = raw.get("guidance")
+    if (
+        "duration_s" not in sim_data
+        and isinstance(guidance_raw, dict)
+        and "duration_s" in guidance_raw
+    ):
+        sim_data["duration_s"] = guidance_raw["duration_s"]
+    sim = _parse_sim(sim_data if (sim_raw is not None or sim_data) else None)
+    guidance = _parse_guidance(guidance_raw)
+    guidance = replace(guidance, duration_s=sim.duration_s)
+
     return FlightSetup(
         zmq=_parse_zmq(raw.get("zmq")),
         balloons=balloons,
         camera=_parse_camera(raw.get("camera")),
         render_rate_hz=render_rate,
-        guidance=_parse_guidance(raw.get("guidance")),
+        guidance=guidance,
         spawn=_parse_spawn(raw.get("spawn")),
+        sim=sim,
         verification=_parse_verification(raw.get("verification")),
         source_path=source_path,
     )
 
 
 def load_flight_setup(path: str | Path) -> FlightSetup:
-    """Load flightSetup.json from disk."""
+    """Load flightSetup.json from disk (JSONC: ``//`` and ``/* */`` allowed)."""
+    from fw_sitl.plant_loader import strip_jsonc
+
     setup_path = Path(path).expanduser().resolve()
-    with setup_path.open("r", encoding="utf-8") as fh:
-        raw = json.load(fh)
+    raw_text = setup_path.read_text(encoding="utf-8")
+    raw = json.loads(strip_jsonc(raw_text))
     if not isinstance(raw, dict):
         raise ValueError(f"{setup_path}: root must be a JSON object")
     return flight_setup_from_dict(raw, source_path=setup_path)

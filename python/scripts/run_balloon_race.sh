@@ -10,6 +10,7 @@ VIZ=0
 GZ=0
 YASIM=0
 XPLANE=0
+PLATFORM_CLI=0
 GZ_MODEL="rc_cessna"
 MODEL_SET=0
 NO_SIM=0
@@ -30,20 +31,22 @@ MAVLINK_IMAGE_PORT="${MAVLINK_IMAGE_PORT:-14541}"
 HEARTBEAT_TIMEOUT_S="${HEARTBEAT_TIMEOUT_S:-120}"
 
 usage() {
-  echo "Usage: $0 [--viz] [--gz] [--yasim] [--xplane] [--model rc_cessna|advanced_plane] [--setup PATH] [--session NAME] [--no-sim] [--duration SEC] [--no-plot] [--detach]"
-  echo "  --viz       FG viz sim + fg image capture (default: headless synth)"
+  echo "Usage: $0 [--viz] [--gz] [--yasim] [--model rc_cessna|advanced_plane] [--setup PATH] [--session NAME] [--no-sim] [--duration SEC] [--no-plot] [--detach]"
+  echo "  Defaults from flightSetup.json sim.platform / sim.gz_model / sim.duration_s;"
+  echo "  plant flags and --duration override those fields when passed."
+  echo "  sim.platform / flags: jsbsim (default) | viz | yasim | gz  (xplane not available)"
+  echo "  --viz       FG viz sim + fg image capture"
   echo "  --gz        Gazebo plane + onboard camera (--mode gz); exclusive with --viz"
   echo "  --yasim     YASim FG Rascal FDM + fg camera; exclusive with --viz/--gz"
-  echo "  --xplane    X-Plane 12 demo Cessna + mss camera; exclusive with --viz/--gz/--yasim"
-  echo "  --model     gz model (requires --gz); default rc_cessna"
+  echo "  --model     gz model (requires --gz or sim.platform=gz); default from setup"
   echo "  --no-sim    control connects to existing sim (do not kill docker)"
-  echo "  --duration  race length seconds (0 = no time limit; default: flightSetup.json)"
+  echo "  --duration  race length seconds (0 = no time limit; default: sim.duration_s)"
   echo "  --no-plot   skip post-race plots (PNG + desktop viewer; default: show)"
   echo "  --detach    leave tmux in the background (default: attach, control pane)"
   echo "  --ekf-fix   rebase only (--viz/--yasim). gps is disabled (see UPDATES.md 0.35.1)"
   echo "  Enables mavlink-server fan-out by default (MAVLINK_FANOUT=1);"
   echo "  aborts image/control if fan-out is not running."
-  echo "  After sim/fan-out: place FG/GZ/XP balloons, then wait for HEARTBEAT on UDP ${MAVLINK_CONTROL_PORT}"
+  echo "  After sim/fan-out: place FG/GZ balloons, then wait for HEARTBEAT on UDP ${MAVLINK_CONTROL_PORT}"
   echo "  (timeout HEARTBEAT_TIMEOUT_S=${HEARTBEAT_TIMEOUT_S}s, fail if none)."
   echo "  Timed end: host matplotlib window (zoom/pan, shared time axis)."
   exit 0
@@ -129,10 +132,13 @@ PY
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --viz) VIZ=1; MODE="fg" ;;
-    --gz) GZ=1; MODE="gz" ;;
-    --yasim) YASIM=1; MODE="fg" ;;
-    --xplane) XPLANE=1; MODE="xp" ;;
+    --viz) VIZ=1; MODE="fg"; PLATFORM_CLI=1 ;;
+    --gz) GZ=1; MODE="gz"; PLATFORM_CLI=1 ;;
+    --yasim) YASIM=1; MODE="fg"; PLATFORM_CLI=1 ;;
+    --xplane)
+      echo "Error: platform xplane is not available (use jsbsim|viz|yasim|gz)" >&2
+      exit 2
+      ;;
     --model) MODEL_SET=1; GZ_MODEL="$2"; shift ;;
     --no-sim) NO_SIM=1 ;;
     --no-plot) NO_PLOT=1 ;;
@@ -171,7 +177,7 @@ if [[ "${XPLANE}" -eq 1 && "${YASIM}" -eq 1 ]]; then
   echo "Error: --xplane and --yasim are mutually exclusive" >&2
   exit 2
 fi
-if [[ "${MODEL_SET}" -eq 1 && "${GZ}" -eq 0 ]]; then
+if [[ "${MODEL_SET}" -eq 1 && "${PLATFORM_CLI}" -eq 1 && "${GZ}" -eq 0 ]]; then
   echo "Error: --model requires --gz" >&2
   exit 2
 fi
@@ -225,6 +231,80 @@ if ! "${PYTHON}" -c "import cv2, numpy, zmq, pymavlink, matplotlib" >/dev/null 2
   exit 1
 fi
 
+export PYTHONPATH="${PYTHON_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
+
+CLI_PLATFORM=""
+if [[ "${PLATFORM_CLI}" -eq 1 ]]; then
+  if [[ "${VIZ}" -eq 1 ]]; then
+    CLI_PLATFORM="viz"
+  elif [[ "${GZ}" -eq 1 ]]; then
+    CLI_PLATFORM="gz"
+  elif [[ "${YASIM}" -eq 1 ]]; then
+    CLI_PLATFORM="yasim"
+  elif [[ "${XPLANE}" -eq 1 ]]; then
+    CLI_PLATFORM="xplane"
+  else
+    CLI_PLATFORM="jsbsim"
+  fi
+fi
+CLI_MODEL=""
+if [[ "${MODEL_SET}" -eq 1 ]]; then
+  CLI_MODEL="${GZ_MODEL}"
+fi
+CLI_DURATION="${DURATION}"
+if [[ -z "${CLI_DURATION}" && -n "${BALLOON_RACE_DURATION:-}" ]]; then
+  CLI_DURATION="${BALLOON_RACE_DURATION}"
+fi
+
+read -r RESOLVED_PLATFORM RESOLVED_GZ_MODEL RESOLVED_DURATION < <(
+  SETUP_PATH="${SETUP}" \
+  CLI_PLATFORM="${CLI_PLATFORM}" \
+  CLI_MODEL="${CLI_MODEL}" \
+  CLI_DURATION="${CLI_DURATION}" \
+  "${PYTHON}" - <<'PY'
+import os
+import sys
+from pathlib import Path
+
+from fw_sitl.flight_setup import load_flight_setup, resolve_race_sim
+
+setup = load_flight_setup(Path(os.environ["SETUP_PATH"]))
+plat = os.environ.get("CLI_PLATFORM") or None
+model = os.environ.get("CLI_MODEL") or None
+dur_raw = os.environ.get("CLI_DURATION") or ""
+dur = float(dur_raw) if dur_raw.strip() else None
+try:
+    p, m, d = resolve_race_sim(
+        setup, platform=plat, gz_model=model, duration_s=dur
+    )
+except ValueError as exc:
+    print(f"Error: {exc}", file=sys.stderr)
+    sys.exit(2)
+print(p, m, d)
+PY
+) || exit $?
+
+VIZ=0
+GZ=0
+YASIM=0
+XPLANE=0
+MODE="synth"
+case "${RESOLVED_PLATFORM}" in
+  jsbsim) ;;
+  viz) VIZ=1; MODE="fg" ;;
+  gz) GZ=1; MODE="gz" ;;
+  yasim) YASIM=1; MODE="fg" ;;
+  xplane) XPLANE=1; MODE="xp" ;;
+  *)
+    echo "Error: unknown resolved platform '${RESOLVED_PLATFORM}'" >&2
+    exit 2
+    ;;
+esac
+GZ_MODEL="${RESOLVED_GZ_MODEL}"
+DURATION="${RESOLVED_DURATION}"
+
+echo "Race sim: platform=${RESOLVED_PLATFORM} gz_model=${GZ_MODEL} duration_s=${DURATION}"
+
 RACE_CSV="${BALLOON_RACE_CSV:-/tmp/balloon_race_$(date +%Y%m%d_%H%M%S).csv}"
 
 # Quiet when no tmux server yet (fresh machine / after kill-server).
@@ -269,12 +349,8 @@ if [[ "${NO_PLOT}" -eq 1 ]]; then
   CTL_CMD+=" --no-plot"
 fi
 CTL_CMD+=" --csv ${RACE_CSV}"
-if [[ -n "${DURATION}" ]]; then
-  CTL_CMD+=" --duration ${DURATION}"
-elif [[ -n "${BALLOON_RACE_DURATION:-}" ]]; then
-  CTL_CMD+=" --duration ${BALLOON_RACE_DURATION}"
-fi
-# MAVLink ports with mavlink-server fan-out (started by runSimJsbsimRascal.sh):
+CTL_CMD+=" --duration ${DURATION}"
+# MAVLINK ports with mavlink-server fan-out (started by runSimJsbsimRascal.sh):
 #   14550 GCS/QGC, 14540 control, 14541 image-source
 # Control always attaches: race owns sim, or user passed --no-sim for an existing sim.
 CTL_CMD+=" --no-sim"
@@ -387,7 +463,8 @@ if [[ "${NO_PLOT}" -eq 0 ]]; then
     rm -f /tmp/balloon_race_plot_waiter.pid
   fi
   if [[ -n "${DURATION}" && "${DURATION}" != "0" ]]; then
-    PLOT_TIMEOUT=$(( DURATION + 300 ))
+    # resolve_race_sim prints floats (e.g. 60.0); bash $(( )) only accepts ints.
+    PLOT_TIMEOUT=$(( ${DURATION%%.*} + 300 ))
   else
     PLOT_TIMEOUT=3600
   fi

@@ -70,7 +70,7 @@ class TestAttitudeChaseController(unittest.TestCase):
         ctrl = AttitudeChaseController(bridge, speed_mps=30.0)
         q_act = from_rpy(0.0, 0.0, 0.0)
         with patch(
-            "fw_sitl.body_cmd_controllers.send_attitude_target", create=True
+            "fw_sitl.controllers.pure_pursuit_quat.send_attitude_target", create=True
         ) as send:
             ctrl.send_chase_setpoint(
                 MagicMock(),
@@ -95,7 +95,7 @@ class TestAttitudeChaseController(unittest.TestCase):
         )
         q_act = from_rpy(0.0, 0.0, 0.0)
         with patch(
-            "fw_sitl.body_cmd_controllers.send_attitude_target", create=True
+            "fw_sitl.controllers.pure_pursuit_quat.send_attitude_target", create=True
         ) as send:
             ctrl.send_chase_setpoint(
                 MagicMock(),
@@ -124,7 +124,7 @@ class TestAttitudeChaseController(unittest.TestCase):
         az = 0.35
         dir_ned = (math.cos(az), math.sin(az), 0.0)
         with patch(
-            "fw_sitl.body_cmd_controllers.send_attitude_target", create=True
+            "fw_sitl.controllers.pure_pursuit_quat.send_attitude_target", create=True
         ) as send:
             ctrl.send_chase_setpoint(
                 MagicMock(),
@@ -154,7 +154,7 @@ class TestAttitudeChaseController(unittest.TestCase):
         az = 0.35
         dir_ned = (math.cos(az), math.sin(az), 0.0)
         with patch(
-            "fw_sitl.body_cmd_controllers.send_attitude_target", create=True
+            "fw_sitl.controllers.pure_pursuit_quat.send_attitude_target", create=True
         ) as send:
             ctrl.send_chase_setpoint(
                 MagicMock(),
@@ -180,7 +180,7 @@ class TestAttitudeChaseController(unittest.TestCase):
         )
         track = math.radians(18.0)
         with patch(
-            "fw_sitl.body_cmd_controllers.send_attitude_target", create=True
+            "fw_sitl.controllers.pure_pursuit_quat.send_attitude_target", create=True
         ) as send:
             ctrl.send_chase_setpoint(
                 MagicMock(),
@@ -209,7 +209,7 @@ class TestAttitudeChaseController(unittest.TestCase):
         az = math.radians(18.0)
         dir_ned = (math.cos(az), math.sin(az), 0.0)
         with patch(
-            "fw_sitl.body_cmd_controllers.send_attitude_target", create=True
+            "fw_sitl.controllers.pure_pursuit_quat.send_attitude_target", create=True
         ) as send:
             ctrl.send_chase_setpoint(
                 MagicMock(),
@@ -237,7 +237,7 @@ class TestAttitudeChaseController(unittest.TestCase):
         bridge.chase_geometry = MagicMock(  # type: ignore[method-assign]
             side_effect=AssertionError("in_view must not call chase_geometry")
         )
-        with patch("fw_sitl.body_cmd_controllers.send_attitude_target", create=True):
+        with patch("fw_sitl.controllers.pure_pursuit_quat.send_attitude_target", create=True):
             ctrl.send_chase_setpoint(
                 MagicMock(),
                 (0.0, 0.0, -10.0),
@@ -264,7 +264,7 @@ class TestAttitudeChaseController(unittest.TestCase):
         az = math.radians(-100.0)
         dir_ned = (math.cos(az), math.sin(az), 0.0)
         q_act = from_rpy(math.radians(-26.0), math.radians(25.0), 0.0)
-        with patch("fw_sitl.body_cmd_controllers.send_attitude_target", create=True):
+        with patch("fw_sitl.controllers.pure_pursuit_quat.send_attitude_target", create=True):
             ctrl.send_chase_setpoint(
                 MagicMock(),
                 (0.0, 0.0, -10.0),
@@ -292,7 +292,7 @@ class TestAttitudeChaseController(unittest.TestCase):
             bridge, speed_mps=30.0, pid=AttitudePid(kp=1.0, ki=0.0, kd=0.0)
         )
         q_north = from_rpy(0.0, 0.0, 0.0)
-        with patch("fw_sitl.body_cmd_controllers.send_attitude_target", create=True):
+        with patch("fw_sitl.controllers.pure_pursuit_quat.send_attitude_target", create=True):
             ctrl.send_chase_setpoint(
                 MagicMock(),
                 (0.0, 0.0, -10.0),
@@ -335,7 +335,7 @@ class TestAttitudeChaseController(unittest.TestCase):
         )
         el = math.radians(15.0)
         dir_ned = (math.cos(el), 0.0, -math.sin(el))
-        with patch("fw_sitl.body_cmd_controllers.send_attitude_target", create=True):
+        with patch("fw_sitl.controllers.pure_pursuit_quat.send_attitude_target", create=True):
             ctrl.send_chase_setpoint(
                 MagicMock(),
                 (0.0, 0.0, -10.0),
@@ -358,7 +358,7 @@ class TestAttitudeChaseController(unittest.TestCase):
         bridge = BodyCmdBridge(lookahead_m=500.0, speed_mps=30.0)
         ctrl = AttitudeChaseController(bridge, speed_mps=30.0, plant=plant)
         with patch(
-            "fw_sitl.body_cmd_controllers.send_attitude_target", create=True
+            "fw_sitl.controllers.pure_pursuit_quat.send_attitude_target", create=True
         ) as send:
             ctrl.send_chase_setpoint(
                 MagicMock(),
@@ -388,7 +388,7 @@ class TestAttitudeChaseController(unittest.TestCase):
         bridge = BodyCmdBridge(lookahead_m=500.0, speed_mps=18.0)
         ctrl = AttitudeChaseController(bridge, speed_mps=18.0, plant=plant)
         with patch(
-            "fw_sitl.body_cmd_controllers.send_attitude_target", create=True
+            "fw_sitl.controllers.pure_pursuit_quat.send_attitude_target", create=True
         ) as send:
             ctrl.send_chase_setpoint(
                 MagicMock(),
@@ -413,7 +413,7 @@ class TestAttitudeChaseController(unittest.TestCase):
         bridge = BodyCmdBridge(lookahead_m=500.0, speed_mps=30.0)
         ctrl = AttitudeChaseController(bridge, speed_mps=30.0, plant=plant)
         with patch(
-            "fw_sitl.body_cmd_controllers.send_attitude_target", create=True
+            "fw_sitl.controllers.pure_pursuit_quat.send_attitude_target", create=True
         ) as send:
             ctrl.send_chase_setpoint(
                 MagicMock(),
@@ -437,7 +437,7 @@ class TestAttitudeChaseController(unittest.TestCase):
         bridge = BodyCmdBridge(lookahead_m=500.0, speed_mps=16.0)
         ctrl = AttitudeChaseController(bridge, speed_mps=16.0, plant=plant)
         with patch(
-            "fw_sitl.body_cmd_controllers.send_attitude_target", create=True
+            "fw_sitl.controllers.pure_pursuit_quat.send_attitude_target", create=True
         ) as send:
             ctrl.send_chase_setpoint(
                 MagicMock(),
@@ -464,7 +464,7 @@ class TestAttitudeChaseController(unittest.TestCase):
         el = math.radians(44.0)
         dir_ned = (math.cos(el), 0.0, -math.sin(el))
         with patch(
-            "fw_sitl.body_cmd_controllers.send_attitude_target", create=True
+            "fw_sitl.controllers.pure_pursuit_quat.send_attitude_target", create=True
         ) as send:
             ctrl.send_chase_setpoint(
                 MagicMock(),
@@ -487,7 +487,7 @@ class TestAttitudeChaseController(unittest.TestCase):
         bridge = BodyCmdBridge(lookahead_m=500.0, speed_mps=28.0)
         ctrl = AttitudeChaseController(bridge, speed_mps=28.0, plant=plant)
         with patch(
-            "fw_sitl.body_cmd_controllers.send_attitude_target", create=True
+            "fw_sitl.controllers.pure_pursuit_quat.send_attitude_target", create=True
         ) as send:
             ctrl.send_chase_setpoint(
                 MagicMock(),
@@ -512,7 +512,7 @@ class TestAttitudeChaseController(unittest.TestCase):
         bridge = BodyCmdBridge(lookahead_m=500.0, speed_mps=30.0)
         ctrl = AttitudeChaseController(bridge, speed_mps=30.0, plant=plant)
         with patch(
-            "fw_sitl.body_cmd_controllers.send_attitude_target", create=True
+            "fw_sitl.controllers.pure_pursuit_quat.send_attitude_target", create=True
         ) as send:
             ctrl.send_chase_setpoint(
                 MagicMock(),
@@ -536,11 +536,11 @@ class TestAttitudeChaseController(unittest.TestCase):
             bridge, speed_mps=18.0, plant=load_plant_gains("jsbsim_rascal")
         )
         with patch(
-            "fw_sitl.body_cmd_controllers.attitude_from_accel",
+            "fw_sitl.controllers.pure_pursuit_quat.attitude_from_accel",
             wraps=attitude_from_accel,
         ) as afa:
             with patch(
-                "fw_sitl.body_cmd_controllers.send_attitude_target", create=True
+                "fw_sitl.controllers.pure_pursuit_quat.send_attitude_target", create=True
             ):
                 ctrl.send_chase_setpoint(
                     MagicMock(),
@@ -568,11 +568,11 @@ class TestAttitudeChaseController(unittest.TestCase):
         )
         yaw_act = math.pi / 2
         with patch(
-            "fw_sitl.body_cmd_controllers.attitude_from_accel",
+            "fw_sitl.controllers.pure_pursuit_quat.attitude_from_accel",
             wraps=attitude_from_accel,
         ) as afa:
             with patch(
-                "fw_sitl.body_cmd_controllers.send_attitude_target", create=True
+                "fw_sitl.controllers.pure_pursuit_quat.send_attitude_target", create=True
             ):
                 ctrl.send_chase_setpoint(
                     MagicMock(),
@@ -609,11 +609,11 @@ class TestAttitudeChaseController(unittest.TestCase):
             z_target=-10.0,
         )
         with patch(
-            "fw_sitl.body_cmd_controllers.pure_pursuit_accel",
+            "fw_sitl.controllers.pure_pursuit_quat.pure_pursuit_accel",
             wraps=pure_pursuit_accel,
         ) as pp:
             with patch(
-                "fw_sitl.body_cmd_controllers.send_attitude_target", create=True
+                "fw_sitl.controllers.pure_pursuit_quat.send_attitude_target", create=True
             ):
                 ctrl.send_chase_setpoint(
                     MagicMock(), **kwargs, vx=0.0, vy=18.0, vz=0.0
@@ -642,11 +642,11 @@ class TestAttitudeChaseController(unittest.TestCase):
         )
         east = (0.0, 1.0, 0.0)
         with patch(
-            "fw_sitl.body_cmd_controllers.pure_pursuit_accel",
+            "fw_sitl.controllers.pure_pursuit_quat.pure_pursuit_accel",
             wraps=pure_pursuit_accel,
         ) as pp:
             with patch(
-                "fw_sitl.body_cmd_controllers.send_attitude_target", create=True
+                "fw_sitl.controllers.pure_pursuit_quat.send_attitude_target", create=True
             ) as send:
                 ctrl.send_chase_setpoint(
                     MagicMock(),
@@ -694,11 +694,11 @@ class TestAttitudeChaseController(unittest.TestCase):
         )
         yaw_act = math.pi / 2
         with patch(
-            "fw_sitl.body_cmd_controllers.pure_pursuit_accel",
+            "fw_sitl.controllers.pure_pursuit_quat.pure_pursuit_accel",
             wraps=pure_pursuit_accel,
         ) as pp:
             with patch(
-                "fw_sitl.body_cmd_controllers.send_attitude_target", create=True
+                "fw_sitl.controllers.pure_pursuit_quat.send_attitude_target", create=True
             ):
                 ctrl.send_chase_setpoint(
                     MagicMock(),
@@ -738,10 +738,10 @@ class TestQExecFrame(unittest.TestCase):
             in_view=True,
             z_target=0.0,
         )
-        with patch("fw_sitl.body_cmd_controllers.send_attitude_target") as send:
+        with patch("fw_sitl.controllers.pure_pursuit_quat.send_attitude_target") as send:
             ctrl.send_chase_setpoint(MagicMock(), **kwargs)
             a = send.call_args[0][1:4]
-        with patch("fw_sitl.body_cmd_controllers.send_attitude_target") as send:
+        with patch("fw_sitl.controllers.pure_pursuit_quat.send_attitude_target") as send:
             ctrl.send_chase_setpoint(MagicMock(), **kwargs, q_exec=q_act)
             b = send.call_args[0][1:4]
         for x, y in zip(a, b):
@@ -753,7 +753,7 @@ class TestQExecFrame(unittest.TestCase):
         ctrl = AttitudeChaseController(bridge, speed_mps=30.0)
         q_fg = from_rpy(0.0, 0.0, 0.0)
         q_ekf = from_rpy(0.0, 0.0, math.pi / 2)
-        with patch("fw_sitl.body_cmd_controllers.send_attitude_target") as send:
+        with patch("fw_sitl.controllers.pure_pursuit_quat.send_attitude_target") as send:
             ctrl.send_chase_setpoint(
                 MagicMock(),
                 (0.0, 0.0, 0.0),
@@ -781,7 +781,7 @@ class TestLosRollSlew(unittest.TestCase):
         right = (math.cos(0.5), math.sin(0.5), 0.0)
         left = (math.cos(-0.5), math.sin(-0.5), 0.0)
         with patch(
-            "fw_sitl.body_cmd_controllers.send_attitude_target", create=True
+            "fw_sitl.controllers.pure_pursuit_quat.send_attitude_target", create=True
         ) as send:
             ctrl.send_chase_setpoint(
                 MagicMock(),
@@ -831,7 +831,7 @@ class TestLosRollSlew(unittest.TestCase):
             groundspeed=18.0,
         )
         with patch(
-            "fw_sitl.body_cmd_controllers.send_attitude_target", create=True
+            "fw_sitl.controllers.pure_pursuit_quat.send_attitude_target", create=True
         ) as send:
             ctrl.send_chase_setpoint(MagicMock(), dir_ned=right, in_view=True, **kwargs)
             roll_los = send.call_args[0][1]
@@ -849,7 +849,7 @@ class TestChaseSpeedOnAllPlants(unittest.TestCase):
         bridge = BodyCmdBridge(lookahead_m=500.0, speed_mps=plant.speed_mps)
         ctrl = AttitudeChaseController(bridge, speed_mps=plant.speed_mps, plant=plant)
         q_act = from_rpy(0.0, 0.0, 0.0)
-        with patch("fw_sitl.body_cmd_controllers.send_attitude_target", create=True) as send:
+        with patch("fw_sitl.controllers.pure_pursuit_quat.send_attitude_target", create=True) as send:
             ctrl.send_chase_setpoint(
                 MagicMock(),
                 (0.0, 0.0, 0.0),
@@ -894,7 +894,7 @@ class TestChaseSpeedOnAllPlants(unittest.TestCase):
                     z_target=-10.0,
                 )
                 with patch(
-                    "fw_sitl.body_cmd_controllers.send_attitude_target"
+                    "fw_sitl.controllers.pure_pursuit_quat.send_attitude_target"
                 ) as send:
                     ctrl.send_chase_setpoint(
                         MagicMock(),

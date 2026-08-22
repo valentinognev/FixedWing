@@ -13,6 +13,15 @@
     "ned": [0, 0, 0],
     "heading_deg": 0
   },
+  // Race launcher plant + length (CLI flags override)
+  "sim": {
+    // jsbsim (headless default) | viz | yasim | gz
+    "platform": "yasim",
+    // only used when platform=gz (or CLI --gz): rc_cessna | advanced_plane
+    "gz_model": "rc_cessna",
+    // 0 = no time limit; >0 = stop after that many seconds (CLI --duration overrides)
+    "duration_s": 75
+  },
   "camera": {
     "hfov_deg": 90, "vfov_deg": 70,
     "azimuth_deg": 0, "elevation_deg": 0,
@@ -21,16 +30,19 @@
     "fg_window_pattern": "FlightGear|fgfs"
   },
   "render_rate_hz": 20,
-    "guidance": {
+  "guidance": {
     "control_rate_hz": 20,
     "speed_mps": 30,
     "pass_radius_m": 50,
     "lookahead_m": 500,
     "assisted_print_period_s": 5,
     "stale_track_warn_s": 10,
+    // 0 = keep cycling balloons until sim.duration_s (or Ctrl+C); N>0 = end after N full circuits
     "laps": 1,
-    "duration_s": 75,
+    // velocity = locked-line TECS path setpoints; attitude = quaternion chase (uses controller); rates = stub (not implemented)
     "cmd_mode": "velocity",
+    // pure_pursuit_quat = PP a_des→attitude→governor (default); race_quat = pre-PP LOS q_des_from_los chase
+    "controller": "pure_pursuit_quat",
     "alt_preserve_heading_err_deg": 20
   },
   "verification": {
