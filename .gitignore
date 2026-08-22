@@ -20,6 +20,9 @@ Thumbs.db
 .idea/
 *.code-workspace
 
+# Git worktrees (local checkouts)
+.worktrees/
+
 # Logs / temp
 *.log
 *.tmp

@@ -1,5 +1,13 @@
 # Updates
 
+## 0.47.0 - Control calibration chirp SID
+- `controlCallibration.stepresponse`: Wiener deconvolution `step_calc` / `step_stats` / `default_min_input` (20% of |A|; no Betaflight 0.25–20 clip; no LOWESS).
+- `controlCallibration.analyze`: CSV → Wiener step PNG, Welch Bode PNG, `hints.json`; `main_analyze` CLI (`--layer`, `--inject`, `--response gt|px4`).
+- `controlCallibration.__main__`: `python -m controlCallibration run|analyze`. `run` extends `parse_run_args` with `--dry-run`/`--out-dir`/`--no-sim`/`--udp`; missing `--inject` on `accel_z`/`vel_z` exits 2 (argparse, before any sim/MAVLink touch).
+- `controlCallibration.runner.run_offline_demo` (`--dry-run`): 50 Hz synthetic schedule (`iter_schedule` + `axis_command`) → CSV → `analyze_log`. Never imports Docker/MAVLink — the agent-safe / test-gating path. Default trim zeros + thrust 0.62.
+- `controlCallibration.runner.run_sitl` (live): connect/engage/path-hold copied from `fw_sitl.straight_flight_core.run_locked_line_hold` (JSBSim only, `--no-sim`/`--udp`); path-hold between axes, `send_attitude_rates`/`send_attitude_target` from `AxisCommand` during chirp/settle; envelope abort recaptures path hold, flushes CSV, analyzes with `aborted=True`. `--inject` on `rates`/`attitude` is dropped with a one-line note (`overlay.axis_command` rejects it there).
+- Host unittest `tests.test_calibration_step`, `tests.test_calibration_analyze`, `tests.test_calibration_cli`.
+
 ## 0.44.0 - Log chirp and Welch FRF
 - `python/controlCallibration/` (spelling locked): `log_chirp` / `inv_log_chirp` (log-sine phase) and Welch `estimate_freq_response` (PIDToolBox copy, no pidbox import).
 - Host unittest `tests.test_calibration_chirp`.
