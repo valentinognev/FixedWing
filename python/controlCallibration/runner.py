@@ -14,6 +14,7 @@ from controlCallibration.analyze import analyze_log
 from controlCallibration.chirp import inv_log_chirp, log_chirp
 from controlCallibration.log_io import COLUMNS, write_csv
 from controlCallibration.overlay import AxisCommand, Trim, axis_command, channels_for
+from controlCallibration.plant import resolve_calibration_sim
 from controlCallibration.procedure import amplitude_map, load_procedure
 
 _PROCEDURE = load_procedure()
@@ -118,7 +119,7 @@ def parse_run_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--no-sim",
         action="store_true",
-        help="Do not start the JSBSim sim runner (already running)",
+        help="Do not start the sim runner (already running)",
     )
     parser.add_argument("--udp", type=int, default=14540)
     parser.add_argument(
@@ -126,10 +127,44 @@ def parse_run_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Save PNGs only; skip the interactive matplotlib window",
     )
+    parser.add_argument(
+        "--setup",
+        type=Path,
+        default=Path(__file__).resolve().parents[1] / "flightSetup.json",
+        help="flightSetup.json to read the sim platform/gz_model from",
+    )
+    plant_group = parser.add_mutually_exclusive_group()
+    plant_group.add_argument(
+        "--jsbsim", action="store_true", help="Headless JSBSim (overrides flightSetup.json)"
+    )
+    plant_group.add_argument(
+        "--viz", action="store_true", help="JSBSim + FlightGear viz"
+    )
+    plant_group.add_argument("--yasim", action="store_true", help="YASim + FlightGear")
+    plant_group.add_argument("--gz", action="store_true", help="Gazebo")
+    parser.add_argument(
+        "--model",
+        default=None,
+        choices=("rc_cessna", "advanced_plane"),
+        help="Gazebo airframe (only with --gz or flightSetup platform=gz)",
+    )
     args = parser.parse_args(argv)
     if args.layer in _Z_LAYERS and args.inject is None:
         parser.error("--inject is required for accel_z and vel_z")
     return args
+
+
+def platform_from_flags(args: argparse.Namespace) -> str | None:
+    """``None`` means "let flightSetup.json's ``sim.platform`` decide"."""
+    if args.gz:
+        return "gz"
+    if args.yasim:
+        return "yasim"
+    if args.viz:
+        return "viz"
+    if args.jsbsim:
+        return "jsbsim"
+    return None
 
 
 DEFAULT_TRIM = Trim(roll=0.0, pitch=0.0, yaw=0.0, p=0.0, q=0.0, r=0.0, thrust=0.62)
@@ -326,7 +361,7 @@ def run_sitl(args: argparse.Namespace) -> int:
     )
     from fw_sitl.path_geometry import ned_velocity_from_course
     from fw_sitl.plant_gains import load_plant_gains
-    from fw_sitl.sim_lifecycle import SCRIPTS_DIR, kill_sim, start_sim
+    from fw_sitl.sim_lifecycle import kill_docker, kill_sim, start_sim
     from fw_sitl.straight_flight_core import (
         EngageError,
         engage_offboard_with_retries,
@@ -339,8 +374,13 @@ def run_sitl(args: argparse.Namespace) -> int:
     rate_hz = RATE_HZ
     period = 1.0 / rate_hz
 
-    sim_script = SCRIPTS_DIR / "runSimJsbsimRascal.sh"
-    plant = load_plant_gains("jsbsim_rascal")
+    sim = resolve_calibration_sim(
+        setup_path=args.setup,
+        platform=platform_from_flags(args),
+        gz_model=args.model,
+    )
+    sim_script = sim.sim_script
+    plant = load_plant_gains(sim.plant_id)
     speed_mps = plant.speed_mps
     airspd_min = plant.fw_airspd_min
     along_advance_m = plant.lookahead_m
@@ -356,7 +396,8 @@ def run_sitl(args: argparse.Namespace) -> int:
         kill_sim(sim_script)
 
     if not args.no_sim:
-        start_sim(sim_script)
+        kill_docker(target=sim.kill_target)
+        start_sim(sim_script, extra_args=list(sim.extra_args))
         sim_owned = True
 
     try:

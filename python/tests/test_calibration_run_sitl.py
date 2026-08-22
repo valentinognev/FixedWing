@@ -65,6 +65,12 @@ def _args(layer: str, out_dir: Path, inject: str | None = None) -> argparse.Name
         no_sim=True,
         udp=14540,
         no_plot=True,
+        setup=_PYTHON_ROOT / "flightSetup.json",
+        jsbsim=False,
+        viz=False,
+        yasim=False,
+        gz=False,
+        model=None,
     )
 
 
