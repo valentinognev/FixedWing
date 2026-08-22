@@ -6,6 +6,11 @@ from dataclasses import dataclass
 
 G_MPS2 = 9.81
 W_TO_PITCH = 0.05  # rad / (m/s)
+# Widest range across the shipped plants; callers that know the plant should
+# pass its own ``min_thrust``/``max_thrust``. Clipping here (not only in the
+# runner) keeps ``--dry-run`` from logging a thrust no airframe can accept.
+DEFAULT_MIN_THRUST = 0.22
+DEFAULT_MAX_THRUST = 1.0
 
 _CHANNELS: dict[str, tuple[str, ...]] = {
     "rates": ("p", "q", "r"),
@@ -52,6 +57,9 @@ def axis_command(
     inject: str | None,
     trim: Trim,
     value: float,
+    *,
+    min_thrust: float = DEFAULT_MIN_THRUST,
+    max_thrust: float = DEFAULT_MAX_THRUST,
 ) -> AxisCommand:
     if layer not in _CHANNELS:
         raise ValueError(f"unknown layer: {layer}")
@@ -67,7 +75,7 @@ def axis_command(
         raise ValueError(f"inject must be 'pitch' or 'thrust' for layer {layer!r}")
     if inject == "pitch":
         return _z_pitch_command(layer, trim, value)
-    return _z_thrust_command(trim, value)
+    return _z_thrust_command(trim, value, min_thrust, max_thrust)
 
 
 def _rates_command(channel: str, trim: Trim, value: float) -> AxisCommand:
@@ -91,13 +99,22 @@ def _rates_command(channel: str, trim: Trim, value: float) -> AxisCommand:
 
 
 def _attitude_command(channel: str, trim: Trim, value: float) -> AxisCommand:
+    """``cmd = trim + A·sin(φ)`` on the chirped axis; others stay at trim.
+
+    ``cmd`` is the scalar actually sent on that channel, so it shares the
+    trim offset with the measured ``gt`` Euler angle it is deconvolved
+    against.
+    """
     roll, pitch, yaw = trim.roll, trim.pitch, trim.yaw
     if channel == "roll":
-        roll = value
+        roll += value
+        sent = roll
     elif channel == "pitch":
-        pitch = value
+        pitch += value
+        sent = pitch
     else:
-        yaw = value
+        yaw += value
+        sent = yaw
     return AxisCommand(
         roll=roll,
         pitch=pitch,
@@ -106,7 +123,7 @@ def _attitude_command(channel: str, trim: Trim, value: float) -> AxisCommand:
         q=0.0,
         r=0.0,
         thrust=trim.thrust,
-        cmd=value,
+        cmd=sent,
     )
 
 
@@ -127,8 +144,10 @@ def _z_pitch_command(layer: str, trim: Trim, value: float) -> AxisCommand:
     )
 
 
-def _z_thrust_command(trim: Trim, value: float) -> AxisCommand:
-    cmd = trim.thrust + value
+def _z_thrust_command(
+    trim: Trim, value: float, min_thrust: float, max_thrust: float
+) -> AxisCommand:
+    cmd = min(max(trim.thrust + value, min_thrust), max_thrust)
     return AxisCommand(
         roll=trim.roll,
         pitch=trim.pitch,

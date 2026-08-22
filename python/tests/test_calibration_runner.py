@@ -12,16 +12,32 @@ if str(_PYTHON_ROOT) not in sys.path:
 
 from controlCallibration.log_io import COLUMNS
 from controlCallibration.runner import (
+    HOLD_QUIET_S,
+    HOLD_TIMEOUT_S,
     EnvelopeLimits,
     append_row,
+    capture_trim,
     chirp_value,
     envelope_ok,
+    hold_until_quiet,
     iter_schedule,
     layer_amplitude,
     layer_freqs,
     measured_channel,
     parse_run_args,
 )
+
+
+class _Telemetry:
+    """Minimal stand-in for the ``FlightHistory`` fields trim capture reads."""
+
+    def __init__(
+        self,
+        att: tuple[float, float, float] | None = None,
+        pqr: tuple[float, float, float] | None = None,
+    ) -> None:
+        self.last_att_rad = att
+        self.last_pqr = pqr
 
 
 class TestEnvelopeOk(unittest.TestCase):
@@ -162,6 +178,76 @@ class TestAppendRow(unittest.TestCase):
             if col in ("t", "channel", "segment", "cmd"):
                 continue
             self.assertEqual(row[col], 0.0)
+
+
+class TestCaptureTrim(unittest.TestCase):
+    """Live attitude chirps must be centered on measured cruise attitude.
+
+    Chirping around roll=pitch=yaw=0 commands a wings-level, due-north
+    attitude step the moment OFFBOARD attitude takes over.
+    """
+
+    def test_uses_measured_attitude_rates_and_cruise_thrust(self) -> None:
+        hist = _Telemetry(att=(0.05, 0.03, 1.2), pqr=(0.01, -0.02, 0.03))
+        trim = capture_trim(hist, 0.62)
+        self.assertAlmostEqual(trim.roll, 0.05)
+        self.assertAlmostEqual(trim.pitch, 0.03)
+        self.assertAlmostEqual(trim.yaw, 1.2)
+        self.assertAlmostEqual(trim.p, 0.01)
+        self.assertAlmostEqual(trim.q, -0.02)
+        self.assertAlmostEqual(trim.r, 0.03)
+        self.assertAlmostEqual(trim.thrust, 0.62)
+
+    def test_falls_back_to_zeros_before_first_telemetry(self) -> None:
+        trim = capture_trim(_Telemetry(), 0.8)
+        self.assertEqual(
+            (trim.roll, trim.pitch, trim.yaw, trim.p, trim.q, trim.r),
+            (0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+        )
+        self.assertAlmostEqual(trim.thrust, 0.8)
+
+
+class TestHoldUntilQuiet(unittest.TestCase):
+    """Inter-axis recapture holds until the envelope is quiet, not 2 s flat."""
+
+    PERIOD = 0.02
+
+    def test_returns_after_one_second_of_consecutive_ok(self) -> None:
+        calls = {"n": 0}
+
+        def tick() -> bool:
+            calls["n"] += 1
+            return True
+
+        self.assertTrue(hold_until_quiet(tick, period=self.PERIOD))
+        self.assertEqual(calls["n"], round(HOLD_QUIET_S / self.PERIOD))
+
+    def test_a_single_bad_sample_restarts_the_quiet_run(self) -> None:
+        quiet_ticks = round(HOLD_QUIET_S / self.PERIOD)
+        pattern = [True] * (quiet_ticks - 1) + [False] + [True] * quiet_ticks
+        seq = iter(pattern)
+        calls = {"n": 0}
+
+        def tick() -> bool:
+            calls["n"] += 1
+            return next(seq)
+
+        self.assertTrue(hold_until_quiet(tick, period=self.PERIOD))
+        self.assertEqual(calls["n"], len(pattern))
+
+    def test_gives_up_after_timeout(self) -> None:
+        calls = {"n": 0}
+
+        def tick() -> bool:
+            calls["n"] += 1
+            return False
+
+        self.assertFalse(hold_until_quiet(tick, period=self.PERIOD))
+        self.assertEqual(calls["n"], round(HOLD_TIMEOUT_S / self.PERIOD))
+
+    def test_spec_defaults(self) -> None:
+        self.assertEqual(HOLD_QUIET_S, 1.0)
+        self.assertEqual(HOLD_TIMEOUT_S, 15.0)
 
 
 if __name__ == "__main__":

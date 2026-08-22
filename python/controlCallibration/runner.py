@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -136,6 +137,59 @@ def parse_run_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 DEFAULT_TRIM = Trim(roll=0.0, pitch=0.0, yaw=0.0, p=0.0, q=0.0, r=0.0, thrust=0.62)
 RATE_HZ = 50.0
+# Inter-axis path-hold recapture: hold until the envelope has been inside
+# limits this long without interruption, then give up and warn.
+HOLD_QUIET_S = 1.0
+HOLD_TIMEOUT_S = 15.0
+
+
+def capture_trim(telemetry: object, cruise_thrust: float) -> Trim:
+    """Cruise trim from live telemetry (``FlightHistory``) plus plant thrust.
+
+    A chirp is an *overlay*: without this the live attitude layer commanded
+    roll=pitch=yaw=0, i.e. a wings-level due-north attitude step the moment
+    OFFBOARD attitude took over.
+    """
+    roll, pitch, yaw = getattr(telemetry, "last_att_rad", None) or (0.0, 0.0, 0.0)
+    p, q, r = getattr(telemetry, "last_pqr", None) or (0.0, 0.0, 0.0)
+    return Trim(
+        roll=float(roll),
+        pitch=float(pitch),
+        yaw=float(yaw),
+        p=float(p),
+        q=float(q),
+        r=float(r),
+        thrust=float(cruise_thrust),
+    )
+
+
+def hold_until_quiet(
+    tick: Callable[[], bool],
+    *,
+    period: float,
+    quiet_s: float = HOLD_QUIET_S,
+    timeout_s: float = HOLD_TIMEOUT_S,
+) -> bool:
+    """Path-hold until ``quiet_s`` of uninterrupted in-envelope samples.
+
+    ``tick`` runs one hold cycle and reports whether the envelope is inside
+    limits. ``False`` means the timeout won.
+
+    A fixed 2 s recapture could hand the next axis an aircraft still rolling
+    or off altitude from the previous one, which shows up as an envelope
+    abort a few hundred ms into the next chirp.
+    """
+    quiet_needed = max(1, round(quiet_s / period))
+    max_ticks = max(quiet_needed, round(timeout_s / period))
+    quiet = 0
+    for _ in range(max_ticks):
+        if tick():
+            quiet += 1
+            if quiet >= quiet_needed:
+                return True
+        else:
+            quiet = 0
+    return False
 
 
 def effective_inject(layer: str, inject: str | None) -> str | None:
@@ -284,13 +338,13 @@ def run_sitl(args: argparse.Namespace) -> int:
     layer = args.layer
     inject = effective_inject(layer, args.inject)
     f0, f1 = layer_freqs(layer)
-    trim = DEFAULT_TRIM
     rate_hz = RATE_HZ
     period = 1.0 / rate_hz
 
     sim_script = SCRIPTS_DIR / "runSimJsbsimRascal.sh"
     plant = load_plant_gains("jsbsim_rascal")
     speed_mps = plant.speed_mps
+    airspd_min = plant.fw_airspd_min
     along_advance_m = plant.lookahead_m
     frame = local_ned_frame()
 
@@ -368,39 +422,68 @@ def run_sitl(args: argparse.Namespace) -> int:
             mavutil.mavlink.MAV_TYPE_GCS, mavutil.mavlink.MAV_AUTOPILOT_INVALID, 0, 0, 0
         )
 
+    next_tick = time.time()
+
+    def _pace() -> None:
+        nonlocal next_tick
+        next_tick += period
+        sleep_for = next_tick - time.time()
+        if sleep_for > 0:
+            time.sleep(sleep_for)
+        else:
+            next_tick = time.time()
+
+    def _hold_tick() -> bool:
+        """One path-hold cycle; ``True`` while inside the flight envelope."""
+        got = history.poll(master)
+        z_now = z_hold
+        if got is not None:
+            xy[0], xy[1] = got[0], got[1]
+            z_now = got[2]
+        send_path_setpoint(
+            master, (xy[0], xy[1]), z_hold, origin_xy, course_rad, along_advance_m, vx, vy, vz, frame
+        )
+        _gcs_heartbeat()
+        roll_hold, pitch_hold, _yaw_hold = history.last_att_rad or (0.0, 0.0, 0.0)
+        airspeed = history.last_airspeed or history.last_groundspeed or speed_mps
+        ok = envelope_ok(roll_hold, pitch_hold, z_now, z_hold, airspeed, airspd_min)
+        _pace()
+        return ok
+
     def _hold_ticks(seconds: float) -> None:
-        t_end = time.time() + seconds
-        next_t = time.time()
-        while time.time() < t_end:
-            got = history.poll(master)
-            if got is not None:
-                xy[0], xy[1] = got[0], got[1]
-            send_path_setpoint(
-                master, (xy[0], xy[1]), z_hold, origin_xy, course_rad, along_advance_m, vx, vy, vz, frame
-            )
-            _gcs_heartbeat()
-            next_t += period
-            sleep_for = next_t - time.time()
-            if sleep_for > 0:
-                time.sleep(sleep_for)
-            else:
-                next_t = time.time()
+        for _ in range(max(1, round(seconds / period))):
+            _hold_tick()
 
     rows: list[dict] = []
     aborted = False
     aborted_channel: str | None = None
-    airspd_min = plant.fw_airspd_min
+    trim = capture_trim(history, plant.cruise_thrust)
 
     try:
         for channel in channels_for(layer):
-            _hold_ticks(2.0)
+            if not hold_until_quiet(_hold_tick, period=period):
+                print(
+                    f"Warning: envelope not quiet within {HOLD_TIMEOUT_S:.0f} s "
+                    f"before {channel}; chirping anyway",
+                    file=sys.stderr,
+                )
+            # Re-center on what the aircraft is actually flying after the
+            # recapture: the chirp is an overlay on cruise, not on zero.
+            trim = capture_trim(history, plant.cruise_thrust)
             amplitude = layer_amplitude(layer, channel, inject)
             for phase, duration in PHASES:
                 n_steps = max(1, round(duration * rate_hz))
-                next_t = time.time()
                 for i in range(n_steps):
                     value = chirp_value(phase, i * period, duration, f0, f1, amplitude)
-                    cmd = axis_command(layer, channel, inject, trim, value)
+                    cmd = axis_command(
+                        layer,
+                        channel,
+                        inject,
+                        trim,
+                        value,
+                        min_thrust=plant.min_thrust,
+                        max_thrust=plant.max_thrust,
+                    )
 
                     got = history.poll(master)
                     z_now = z_hold
@@ -454,12 +537,7 @@ def run_sitl(args: argparse.Namespace) -> int:
                         aborted_channel = channel
                         raise _EnvelopeAbort()
 
-                    next_t += period
-                    sleep_for = next_t - time.time()
-                    if sleep_for > 0:
-                        time.sleep(sleep_for)
-                    else:
-                        next_t = time.time()
+                    _pace()
             _hold_ticks(1.0)
     except _EnvelopeAbort:
         print(f"Envelope abort during {aborted_channel} — recapturing path hold", file=sys.stderr)

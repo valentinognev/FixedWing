@@ -81,16 +81,68 @@ class TestVelZ(unittest.TestCase):
 
 
 class TestAttitude(unittest.TestCase):
-    def test_pitch_value_radians_other_euler_trim_rates_zero(self) -> None:
+    """Spec waveform is ``cmd = trim + A·sin(φ)``.
+
+    Replacing the axis with the raw excitation chirped around roll=pitch=
+    yaw=0 instead of around measured cruise attitude, and made the logged
+    ``cmd`` incomparable with the absolute ``gt`` Euler angle.
+    """
+
+    def test_chirped_axis_adds_to_trim_others_stay_at_trim(self) -> None:
         out = axis_command("attitude", "pitch", None, _trim(), 0.087)
         self.assertEqual(out.roll, 0.1)
-        self.assertEqual(out.pitch, 0.087)
+        self.assertAlmostEqual(out.pitch, 0.2 + 0.087)
         self.assertEqual(out.yaw, 0.3)
         self.assertEqual(out.p, 0.0)
         self.assertEqual(out.q, 0.0)
         self.assertEqual(out.r, 0.0)
         self.assertEqual(out.thrust, 0.6)
-        self.assertEqual(out.cmd, 0.087)
+        self.assertAlmostEqual(out.cmd, 0.2 + 0.087)
+
+    def test_roll_chirp_keeps_measured_yaw_not_zero(self) -> None:
+        out = axis_command("attitude", "roll", None, _trim(), -0.05)
+        self.assertAlmostEqual(out.roll, 0.1 - 0.05)
+        self.assertEqual(out.pitch, 0.2)
+        self.assertEqual(out.yaw, 0.3)
+        self.assertAlmostEqual(out.cmd, 0.1 - 0.05)
+
+    def test_yaw_chirp_adds_to_trim_yaw(self) -> None:
+        out = axis_command("attitude", "yaw", None, _trim(), 0.14)
+        self.assertAlmostEqual(out.yaw, 0.3 + 0.14)
+        self.assertEqual(out.roll, 0.1)
+        self.assertEqual(out.pitch, 0.2)
+        self.assertAlmostEqual(out.cmd, 0.3 + 0.14)
+
+
+class TestThrustClip(unittest.TestCase):
+    """Spec: ``thrust = clip(cruise + chirp, min_thrust, max_thrust)``."""
+
+    def test_clips_at_max(self) -> None:
+        trim = Trim(roll=0.0, pitch=0.0, yaw=0.0, p=0.0, q=0.0, r=0.0, thrust=0.97)
+        out = axis_command("accel_z", "az", "thrust", trim, 0.08)
+        self.assertAlmostEqual(out.thrust, 1.0)
+        self.assertAlmostEqual(out.cmd, 1.0)
+
+    def test_clips_at_min(self) -> None:
+        trim = Trim(roll=0.0, pitch=0.0, yaw=0.0, p=0.0, q=0.0, r=0.0, thrust=0.25)
+        out = axis_command("vel_z", "w", "thrust", trim, -0.08)
+        self.assertAlmostEqual(out.thrust, 0.22)
+        self.assertAlmostEqual(out.cmd, 0.22)
+
+    def test_plant_limits_override_defaults(self) -> None:
+        trim = Trim(roll=0.0, pitch=0.0, yaw=0.0, p=0.0, q=0.0, r=0.0, thrust=0.55)
+        out = axis_command(
+            "accel_z", "az", "thrust", trim, 0.08, min_thrust=0.5, max_thrust=0.6
+        )
+        self.assertAlmostEqual(out.thrust, 0.6)
+        out = axis_command(
+            "accel_z", "az", "thrust", trim, -0.08, min_thrust=0.5, max_thrust=0.6
+        )
+        self.assertAlmostEqual(out.thrust, 0.5)
+
+    def test_in_range_is_untouched(self) -> None:
+        out = axis_command("accel_z", "az", "thrust", _trim(), 0.08)
+        self.assertAlmostEqual(out.thrust, 0.68)
 
 
 class TestChannelsFor(unittest.TestCase):

@@ -1,5 +1,16 @@
 # Updates
 
+## 0.47.1 - Control calibration review fixes
+- `stepresponse.step_calc` scale fix: relative Wiener regularizer (`|H|² + eps·mean|H|²`), each segment normalized by `max|sp_seg|`, and `resp / mean_steady` instead of the partial `resp * (2 - mean_steady)`. Reconstructed DC gain of a unity-DC plant went 0.79 → 1.00, so `overshoot` can fire at all: a ζ=0.15 ringer at the rates operating point reads `peak_mean` 0.97 → 1.29 (was verdict `weak` → "raise P" on a ringing airframe). Spec thresholds 0.85 / 1.25 kept. Regression: `tests.test_calibration_step.TestZetaSweepAtRatesOperatingPoint`.
+- Peak estimation still *compresses* large overshoots (ζ=0.3 at 3 Hz reads ~1.17 against a true 1.37): a 0.5 s window plus 2 s Wiener segments cannot resolve the full first peak. Treat `peak_mean` as "does it ring", not as a calibrated overshoot percentage. Because `y_correction` normalizes DC to 1, `weak` (<0.85) now essentially cannot fire on a real log — a sluggish loop shows up as `slow` (latency), not `weak`.
+- `runner.capture_trim`: live attitude/rates trim is measured (`FlightHistory.last_att_rad` / `last_pqr` + plant `cruise_thrust`), captured after engage and re-captured per axis. `run_sitl` no longer chirps around the hardcoded `DEFAULT_TRIM` roll=pitch=yaw=0 (a wings-level, due-north attitude step the instant OFFBOARD attitude took over). `--dry-run` keeps the zero trim.
+- `overlay._attitude_command` adds to trim (`axis = trim.axis + value`, spec `cmd = trim + A·sin(φ)`) instead of replacing it; non-chirped Euler stay at trim (a roll chirp no longer commands yaw=0). Logged `cmd` is the sent channel scalar, so it carries the same trim offset as the `gt` Euler angle it is deconvolved against.
+- `overlay.axis_command` clips thrust: `clip(cruise + chirp, min_thrust, max_thrust)`, defaults 0.22 / 1.0, overridable per plant (`run_sitl` passes the loaded plant's limits). `--dry-run` can no longer log an out-of-range thrust.
+- `runner.hold_until_quiet`: inter-axis recapture holds until `envelope_ok` has been true for 1.0 s consecutive (timeout 15 s, warn and continue) instead of a fixed 2 s that could hand the next axis a still-rolling aircraft.
+- `hints`: `overshoot` on a channel with no P/FF key (`yaw`, `az`/`w` + `pitch`, `az`/`w` + `thrust`) fell through to `hints: []`. Now falls back to the first key with the sense inverted from weak/slow (`down` on a gain, `up` on a `*_tc`).
+- Live-path caveat: `gt` and `px4` are the **same** MAVLink ATTITUDE sample (plan v1 is JSBSim single-source), so `gt` is *not* FDM truth and `--response px4` cannot differ from `--response gt` on a live log. Only offline CSVs with a genuinely separate GT source can.
+- `run_sitl` now has host tests (`tests.test_calibration_run_sitl`): trim/send wiring, recapture-per-axis, and envelope abort → CSV flush + `aborted: true`, all on fakes (no Docker, no MAVLink). Dry-run `accel_z`/`vel_z` are pinned too.
+
 ## 0.47.0 - Control calibration chirp SID
 - `controlCallibration.stepresponse`: Wiener deconvolution `step_calc` / `step_stats` / `default_min_input` (20% of |A|; no Betaflight 0.25–20 clip; no LOWESS).
 - `controlCallibration.analyze`: CSV → Wiener step PNG, Welch Bode PNG, `hints.json`; `main_analyze` CLI (`--layer`, `--inject`, `--response gt|px4`).
