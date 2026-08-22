@@ -64,6 +64,7 @@ def _args(layer: str, out_dir: Path, inject: str | None = None) -> argparse.Name
         out_dir=out_dir,
         no_sim=True,
         udp=14540,
+        no_plot=True,
     )
 
 

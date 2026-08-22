@@ -84,7 +84,33 @@ class TestAnalyzeLog(unittest.TestCase):
             self.assertIsInstance(payload["channels"]["p"]["n"], int)
             self.assertIsInstance(report["channels"]["p"]["n"], int)
             self.assertTrue((tmp_path / "sid_p_step.png").is_file())
-            self.assertTrue((tmp_path / "sid_p_bode.png").is_file())
+            self.assertTrue((tmp_path / "sid_p_fft.png").is_file())
+
+    def test_synthetic_p_writes_history_fft_step(self) -> None:
+        rows = _p_chirp_rows()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            csv_path = tmp_path / "sid.csv"
+            write_csv(csv_path, rows)
+            with patch("matplotlib.pyplot.show") as show:
+                report = analyze_log(csv_path, layer="rates", out_dir=tmp_path, show=False)
+            show.assert_not_called()
+            self.assertTrue((tmp_path / "sid_p_history.png").is_file())
+            self.assertTrue((tmp_path / "sid_p_fft.png").is_file())
+            self.assertTrue((tmp_path / "sid_p_step.png").is_file())
+            self.assertFalse((tmp_path / "sid_p_bode.png").is_file())
+            self.assertIn("peak_std", report["channels"]["p"])
+            self.assertIn("latency_std_ms", report["channels"]["p"])
+
+    def test_show_true_calls_plt_show(self) -> None:
+        rows = _p_chirp_rows()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            csv_path = tmp_path / "sid.csv"
+            write_csv(csv_path, rows)
+            with patch("matplotlib.pyplot.show") as show:
+                analyze_log(csv_path, layer="rates", out_dir=tmp_path, show=True)
+            show.assert_called_once()
 
     def test_missing_gt_column_raises_value_error(self) -> None:
         rows = _p_chirp_rows()[:20]

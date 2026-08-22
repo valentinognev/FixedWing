@@ -121,6 +121,11 @@ def parse_run_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Do not start the JSBSim sim runner (already running)",
     )
     parser.add_argument("--udp", type=int, default=14540)
+    parser.add_argument(
+        "--no-plot",
+        action="store_true",
+        help="Save PNGs only; skip the interactive matplotlib window",
+    )
     args = parser.parse_args(argv)
     if args.layer in _Z_LAYERS and args.inject is None:
         parser.error("--inject is required for accel_z and vel_z")
@@ -284,6 +289,7 @@ def run_offline_demo(args: argparse.Namespace) -> int:
         layer=layer,
         inject=inject,
         out_dir=out_dir,
+        show=not args.no_plot,
     )
     return 0
 
@@ -551,6 +557,7 @@ def run_sitl(args: argparse.Namespace) -> int:
         inject=inject,
         aborted=aborted,
         out_dir=out_dir,
+        show=not args.no_plot,
     )
     return 0
 

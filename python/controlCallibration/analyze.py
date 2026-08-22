@@ -1,4 +1,4 @@
-"""Offline chirp-log analysis: step/Bode plots and hints.json."""
+"""Offline chirp-log analysis: history/FFT/step plots, metrics, hints.json."""
 
 from __future__ import annotations
 
@@ -7,9 +7,6 @@ import json
 import sys
 from pathlib import Path
 
-import matplotlib
-
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -64,24 +61,71 @@ def _welch_too_short(n: int, fs: float) -> bool:
     return n_seg < 1
 
 
-def _plot_step(path: Path, time_ms: np.ndarray, stack: np.ndarray) -> None:
-    fig, ax = plt.subplots()
+def _draw_history(
+    ax: plt.Axes, t: np.ndarray, cmd: np.ndarray, resp: np.ndarray, response: str
+) -> None:
+    ax.plot(t, cmd, label="cmd")
+    ax.plot(t, resp, label=response)
+    ax.set_xlabel("t (s)")
+    ax.set_ylabel("value")
+    ax.set_title("history")
+    ax.legend(loc="upper right", fontsize="small")
+
+
+def _draw_fft(ax: plt.Axes, freq: np.ndarray, gain: np.ndarray, coh: np.ndarray) -> None:
+    ax_coh = ax.twinx()
+    ax.plot(freq, np.abs(gain), color="tab:blue", label="|G|")
+    ax_coh.plot(freq, coh, color="tab:orange", label="coherence")
+    ax.set_xlabel("freq (Hz)")
+    ax.set_ylabel("|G|", color="tab:blue")
+    ax_coh.set_ylabel("coherence", color="tab:orange")
+    ax.set_title("fft")
+
+
+def _draw_step(
+    ax: plt.Axes, time_ms: np.ndarray, stack: np.ndarray, hint: dict
+) -> None:
     if stack.ndim == 2 and stack.shape[0] > 0:
         mean = np.mean(stack, axis=0)
-        ax.plot(time_ms[: len(mean)], mean)
+        tt = time_ms[: len(mean)]
+        ax.plot(tt, mean)
+        peak_idx = int(np.argmax(mean))
+        ax.plot(tt[peak_idx], mean[peak_idx], "ro")
+    latency = hint.get("latency_mean_ms")
+    if latency:
+        ax.axvline(float(latency), color="gray", linestyle="--")
+    peak_mean = hint.get("peak_mean") or 0.0
+    latency_mean_ms = hint.get("latency_mean_ms") or 0.0
+    text = (
+        f"n={hint.get('n')}  peak={peak_mean:.3f}  "
+        f"lat={latency_mean_ms:.1f}ms  verdict={hint.get('verdict')}"
+    )
+    ax.text(
+        0.02,
+        0.95,
+        text,
+        transform=ax.transAxes,
+        va="top",
+        fontsize="small",
+        bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.8},
+    )
     ax.set_xlabel("time_ms")
     ax.set_ylabel("step")
-    fig.savefig(path)
-    plt.close(fig)
+    ax.set_title("step")
 
 
-def _plot_bode(path: Path, freq: np.ndarray, gain: np.ndarray) -> None:
-    fig, ax = plt.subplots()
-    ax.plot(freq, np.abs(gain))
-    ax.set_xlabel("freq")
-    ax.set_ylabel("|G|")
-    fig.savefig(path)
-    plt.close(fig)
+def print_metrics(report: dict) -> str:
+    """One line per channel: ``p  n=8  peak=1.023  lat=90.0ms  verdict=ok``."""
+    lines = []
+    for channel, data in report["channels"].items():
+        peak = data.get("peak_mean") or 0.0
+        latency = data.get("latency_mean_ms") or 0.0
+        n = data.get("n") or 0
+        lines.append(
+            f"{channel}  n={n}  peak={peak:.3f}  lat={latency:.1f}ms  "
+            f"verdict={data.get('verdict')}"
+        )
+    return "\n".join(lines)
 
 
 def analyze_log(
@@ -92,6 +136,7 @@ def analyze_log(
     inject: str | None = None,
     aborted: bool = False,
     out_dir: Path | None = None,
+    show: bool = False,
 ) -> dict:
     path = Path(path)
     dest = Path(out_dir) if out_dir is not None else path.parent
@@ -113,11 +158,35 @@ def analyze_log(
         )
         stats = step_stats(stack, time_ms)
         channel_stats[ch] = stats
-        hints_for_channel(ch, inject, stats)
-        _plot_step(dest / f"{stem}_{ch}_step.png", time_ms, stack)
-        if not _welch_too_short(len(cmd), fs):
-            gain, _coh, freq = estimate_freq_response(cmd, resp, fs)
-            _plot_bode(dest / f"{stem}_{ch}_bode.png", freq, gain)
+        hint = hints_for_channel(ch, inject, stats)
+
+        fig, axs = plt.subplots(3, 1, figsize=(8, 10))
+        fig.suptitle(f"{stem} — {ch}")
+
+        _draw_history(axs[0], t, cmd, resp, response)
+        hist_fig, hist_ax = plt.subplots()
+        _draw_history(hist_ax, t, cmd, resp, response)
+        hist_fig.savefig(dest / f"{stem}_{ch}_history.png")
+        plt.close(hist_fig)
+
+        if _welch_too_short(len(cmd), fs):
+            axs[1].set_title("fft (insufficient samples)")
+        else:
+            gain, coh, freq = estimate_freq_response(cmd, resp, fs)
+            _draw_fft(axs[1], freq, gain, coh)
+            fft_fig, fft_ax = plt.subplots()
+            _draw_fft(fft_ax, freq, gain, coh)
+            fft_fig.savefig(dest / f"{stem}_{ch}_fft.png")
+            plt.close(fft_fig)
+
+        _draw_step(axs[2], time_ms, stack, hint)
+        step_fig, step_ax = plt.subplots()
+        _draw_step(step_ax, time_ms, stack, hint)
+        step_fig.savefig(dest / f"{stem}_{ch}_step.png")
+        plt.close(step_fig)
+
+        fig.tight_layout()
+
     report = build_report(
         layer=layer,
         inject=inject,
@@ -128,6 +197,12 @@ def analyze_log(
     (dest / f"{stem}_hints.json").write_text(
         json.dumps(report, indent=2) + "\n", encoding="utf-8"
     )
+    print(print_metrics(report))
+
+    if show:
+        plt.show(block=True)
+    else:
+        plt.close("all")
     return report
 
 
@@ -138,6 +213,11 @@ def main_analyze(argv: list[str] | None = None) -> int:
     parser.add_argument("--inject", default=None)
     parser.add_argument("--response", default="gt", choices=("gt", "px4"))
     parser.add_argument("--out-dir", type=Path, default=None)
+    parser.add_argument(
+        "--no-plot",
+        action="store_true",
+        help="Save PNGs only; skip the interactive matplotlib window",
+    )
     args = parser.parse_args(argv)
     try:
         analyze_log(
@@ -146,6 +226,7 @@ def main_analyze(argv: list[str] | None = None) -> int:
             layer=args.layer,
             inject=args.inject,
             out_dir=args.out_dir,
+            show=not args.no_plot,
         )
     except ValueError as exc:
         print(exc, file=sys.stderr)

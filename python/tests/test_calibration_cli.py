@@ -27,7 +27,15 @@ class TestRunDryRun(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             out_dir = Path(tmp)
             rc = main(
-                ["run", "--dry-run", "--layer", "rates", "--out-dir", str(out_dir)]
+                [
+                    "run",
+                    "--dry-run",
+                    "--layer",
+                    "rates",
+                    "--out-dir",
+                    str(out_dir),
+                    "--no-plot",
+                ]
             )
             self.assertEqual(rc, 0)
             csvs = list(out_dir.glob("*.csv"))
@@ -47,6 +55,7 @@ class TestRunDryRun(unittest.TestCase):
                         "attitude",
                         "--out-dir",
                         str(out_dir),
+                        "--no-plot",
                     ]
                 )
             self.assertEqual(rc, 0)

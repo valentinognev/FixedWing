@@ -121,7 +121,9 @@ def hints_for_channel(channel: str, inject: str | None, stats: dict) -> dict:
         hints = _hint_items(channel, inject, stats, kind)
     return {
         "peak_mean": stats.get("peak_mean"),
+        "peak_std": stats.get("peak_std", 0),
         "latency_mean_ms": stats.get("latency_mean_ms"),
+        "latency_std_ms": stats.get("latency_std_ms", 0),
         "n": stats.get("n"),
         "verdict": kind,
         "hints": hints,
