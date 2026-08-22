@@ -284,6 +284,9 @@ class FlightHistory:
 
     _last_att_deg: tuple[float, float, float] | None = field(default=None, repr=False)
     last_att_rad: tuple[float, float, float] | None = field(default=None, repr=False)
+    # Body rates from ATTITUDE.{rollspeed,pitchspeed,yawspeed} (rad/s). Not a
+    # time series (no plot uses it yet) — live rates-layer chirp SID GT.
+    last_pqr: tuple[float, float, float] | None = field(default=None, repr=False)
     last_q: Quat | None = field(default=None, repr=False)
     last_pos: tuple[float, float, float] | None = field(default=None, repr=False)
     # Raw EKF from the last LOCAL_POSITION_NED. ``last_pos`` is overwritten
@@ -449,6 +452,11 @@ class FlightHistory:
                 pitch = float(msg.pitch)
                 yaw = float(msg.yaw)
                 self.last_att_rad = (roll, pitch, yaw)
+                self.last_pqr = (
+                    float(msg.rollspeed),
+                    float(msg.pitchspeed),
+                    float(msg.yawspeed),
+                )
                 self.last_q = from_rpy(roll, pitch, yaw)
                 self._last_att_deg = (
                     math.degrees(roll),

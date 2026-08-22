@@ -8,7 +8,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 _PYTHON_ROOT = Path(__file__).resolve().parents[1]
 if str(_PYTHON_ROOT) not in sys.path:
@@ -289,6 +290,33 @@ class TestFlightHistoryTargetSeries(unittest.TestCase):
         h.apply_target_to_last(start)
         self.assertEqual(h.tgt_x[1:], [0.0, 0.0])
         self.assertEqual(h.tgt_y[1:], [50.0, 50.0])
+
+
+class TestPollCachesBodyRates(unittest.TestCase):
+    """Live rates-layer chirp SID needs p/q/r GT; ATTITUDE already carries
+    rollspeed/pitchspeed/yawspeed, but poll() used to cache only Euler."""
+
+    def test_attitude_message_caches_last_pqr(self) -> None:
+        h = FlightHistory()
+        self.assertIsNone(h.last_pqr)
+
+        att = SimpleNamespace(
+            roll=0.05,
+            pitch=-0.02,
+            yaw=0.1,
+            rollspeed=0.15,
+            pitchspeed=-0.05,
+            yawspeed=0.02,
+            get_srcSystem=lambda: 1,
+            get_type=lambda: "ATTITUDE",
+        )
+        master = MagicMock()
+        master.target_system = 1
+        master.recv_match.side_effect = [att, None]
+
+        h.poll(master)
+
+        self.assertEqual(h.last_pqr, (0.15, -0.05, 0.02))
 
 
 class TestOverwritePositionsFrom(unittest.TestCase):

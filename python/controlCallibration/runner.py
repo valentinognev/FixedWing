@@ -383,7 +383,7 @@ def run_sitl(args: argparse.Namespace) -> int:
                         xy[0], xy[1] = got[0], got[1]
                         z_now = got[2]
                     roll_gt, pitch_gt, yaw_gt = history.last_att_rad or (0.0, 0.0, 0.0)
-                    p_gt = q_gt = r_gt = 0.0
+                    p_gt, q_gt, r_gt = history.last_pqr or (0.0, 0.0, 0.0)
 
                     if layer == "rates":
                         send_attitude_rates(master, cmd.p, cmd.q, cmd.r, cmd.thrust)
