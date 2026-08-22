@@ -60,12 +60,25 @@ class TestGzPoseBridge(unittest.TestCase):
         self.assertEqual(names[0], "rc_cessna_0")
         self.assertIn("rc_cessna", names)
 
-    def test_run_gz_pose_publisher_via_docker_wiring(self) -> None:
+    def test_pose_callback_does_not_block_or_spam_physics_rate(self) -> None:
+        text = (
+            _PYTHON_ROOT / "fw_sitl" / "platforms" / "gz" / "gz_pose_bridge.py"
+        ).read_text(encoding="utf-8")
+        src = text[text.index("def run_bridge") : text.index("def run_gz_pose_publisher_via_docker")]
+        self.assertIn("zmq.NOBLOCK", src)
+        self.assertIn("min_dt", src)
         text = (_PYTHON_ROOT / "fw_sitl" / "platforms" / "gz" / "gz_pose_bridge.py").read_text(encoding="utf-8")
         src = text[text.index("def run_gz_pose_publisher_via_docker") :]
         self.assertIn("PYTHONUNBUFFERED=1", src)
         self.assertIn("-u", src)
         self.assertIn("setup.zmq.pose", src)
+        self.assertIn(
+            "/opt/fixedwing/python/fw_sitl/platforms/gz/gz_pose_bridge.py", src
+        )
+        self.assertNotIn(
+            '"/opt/fixedwing/python/fw_sitl/gz_pose_bridge.py"',
+            src,
+        )
 
 
 if __name__ == "__main__":

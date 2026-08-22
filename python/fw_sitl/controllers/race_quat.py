@@ -18,15 +18,24 @@ from fw_sitl.controllers._chase_common import (
     LOS_ROLL_LPF_TAU_S,
     LOS_ROLL_SLEW_RAD_S,
     _commanded_chase_speed,
+    chase_dir_body,
 )
-from fw_sitl.mavlink_io import send_attitude_target
+from fw_sitl.flight_setup import DEFAULT_ATTITUDE_FORMAT
+from fw_sitl.mavlink_io import send_attitude_quat, send_attitude_rates, send_attitude_target
 from fw_sitl.path_geometry import coordinated_heading_rad, ned_velocity_from_course, wrap_pi
 from fw_sitl.plant_gains import PlantGains
+from fw_sitl.px4_att_cascade import Px4FwAttCascade
 from fw_sitl.quat import conjugate, from_rpy, mul, rpy_from_quat
 
 
 class RaceQuatController:
-    """OFFBOARD SET_ATTITUDE_TARGET chase: LOS look-at in view, path-hold otherwise."""
+    """OFFBOARD SET_ATTITUDE_TARGET chase: LOS look-at in view, path-hold otherwise.
+
+    In-view attitude uses body-FRD LOS (camera→body mount, no balloon Z).
+    ``visual_lock`` is accepted for protocol compatibility but unused.
+    """
+
+    _close_in_view_euler: bool = False
 
     def __init__(
         self,
@@ -35,16 +44,29 @@ class RaceQuatController:
         speed_mps: float,
         pid: AttitudePid | None = None,
         plant: PlantGains | None = None,
+        cascade: Px4FwAttCascade | None = None,
+        cmd_mode: str = "attitude",
+        attitude_format: str = DEFAULT_ATTITUDE_FORMAT,
     ) -> None:
         self._bridge = bridge
         self._speed_mps = float(speed_mps)
         self._plant = plant
-        if pid is not None:
-            self._pid = pid
+        self._cmd_mode = str(cmd_mode)
+        self._attitude_format = str(attitude_format)
+        if cascade is not None:
+            self._cascade = cascade
+        elif pid is not None:
+            self._cascade = Px4FwAttCascade(
+                kp=pid.kp,
+                ki=pid.ki,
+                kd=pid.kd,
+                roll_tc=plant.roll_tc if plant is not None else 0.4,
+                pitch_tc=plant.pitch_tc if plant is not None else 0.4,
+            )
         elif plant is not None:
-            self._pid = plant.make_pid()
+            self._cascade = plant.make_cascade()
         else:
-            self._pid = AttitudePid()
+            self._cascade = Px4FwAttCascade()
         self.last_q_cmd: tuple[float, float, float, float] | None = None
         self.last_q_des: tuple[float, float, float, float] | None = None
         self.last_thrust: float | None = None
@@ -124,10 +146,14 @@ class RaceQuatController:
         visual_lock: bool = False,
         q_exec: tuple[float, float, float, float] | None = None,
         range_m: float | None = None,
+        dir_body: tuple[float, float, float] | None = None,
     ) -> tuple[float, float, float]:
-        _ = (frame, heading_rad, vz)
+        _ = (frame, heading_rad, vz, visual_lock)
         course = math.atan2(float(dir_ned[1]), float(dir_ned[0]))
-        if z_target is not None:
+        if in_view:
+            # Homing uses LOS elevation only — never balloon bookkeeping Z.
+            z_hold = float(pos_ned[2])
+        elif z_target is not None:
             z_hold = float(z_target)
         else:
             _aim, _course, z_hold = self._bridge.chase_geometry(
@@ -141,37 +167,22 @@ class RaceQuatController:
             self._path_lock = None
             self.last_law = "los"
             los_kw = dict(self._plant.los_kwargs()) if self._plant is not None else {}
-            if visual_lock:
-                # HSV elevation is the on-screen error; still mix bookkeeping-Z
-                # so a 10 m sag is not flown through while the blob is centered.
-                los_kw["kp_alt"] = (
-                    float(self._plant.visual_lock_kp_alt)
-                    if self._plant is not None
-                    else 0.0
-                )
-            elif self._plant is not None:
-                # No real vision: geometric LOS can demand a large sustained
-                # climb. Cap to path-hold ceiling unless already close with ΔZ open.
-                los_kw["max_pitch"] = self._plant.att_max_pitch_rad
-                dz = abs(float(pos_ned[2]) - z_hold)
-                if (
-                    range_m is not None
-                    and float(range_m) < 120.0
-                    and dz > 6.0
-                ):
-                    los_kw["max_pitch"] = self._plant.att_los_max_pitch_rad
+            los_body = chase_dir_body(dir_ned, q_act=q_act, dir_body=dir_body)
             q_des = q_des_from_los(
-                dir_ned,
+                los_body,
                 yaw_rad=yaw_act,
                 q_act=q_act,
-                heading_rad=yaw_act,
-                z_ned=pos_ned[2],
-                z_hold=z_hold,
-                range_m=range_m,
                 **los_kw,
             )
-            self._pid.reset()
-            q_cmd = q_des
+            cascade_out = self._cascade.command(q_des, q_act, dt, groundspeed=groundspeed)
+            if self._close_in_view_euler:
+                q_cmd = cascade_out.q_cmd
+            else:
+                # Stage 2 is stateless; command first with this tick's rates,
+                # then reset so path-hold's next tick starts with _e_prev is
+                # None (no in-view I-state leak into path-hold).
+                self._cascade.reset()
+                q_cmd = q_des
         else:
             heading_ref = coordinated_heading_rad(yaw_act, vx, vy)
             token = path_lock_token
@@ -194,12 +205,15 @@ class RaceQuatController:
                 heading_rad=heading_ref,
                 **path_kw,
             )
-            q_cmd = self._pid.command(q_des, q_act, dt)
+            # Rates dispatch always uses cascade stage-2 of this unsmoothed
+            # q_des vs q_act — never the LPF/slew output below.
+            cascade_out = self._cascade.command(q_des, q_act, dt, groundspeed=groundspeed)
+            q_cmd = cascade_out.q_cmd
         roll, pitch, yaw = rpy_from_quat(q_cmd)
         roll = self._smooth_roll(roll, dt)
         pitch = self._smooth_pitch(pitch, dt)
         q_cmd = from_rpy(roll, pitch, yaw)
-        if self.last_law == "los":
+        if self.last_law == "los" and not self._close_in_view_euler:
             q_des = q_cmd
         roll_des = rpy_from_quat(q_des)[0]
         heading_err = wrap_pi(course - yaw_act)
@@ -222,7 +236,12 @@ class RaceQuatController:
         if q_exec is not None:
             q_cmd = mul(q_exec, mul(conjugate(q_act), q_cmd))
             roll, pitch, yaw = rpy_from_quat(q_cmd)
-        send_attitude_target(master, roll, pitch, yaw, thrust)
+        if self._cmd_mode == "rates":
+            send_attitude_rates(master, *cascade_out.body_rates, thrust)
+        elif self._cmd_mode == "attitude" and self._attitude_format == "quat":
+            send_attitude_quat(master, q_cmd, thrust)
+        else:
+            send_attitude_target(master, roll, pitch, yaw, thrust)
         self.last_q_des = q_des
         self.last_q_cmd = q_cmd
         self.last_thrust = thrust

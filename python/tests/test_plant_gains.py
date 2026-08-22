@@ -101,7 +101,8 @@ class TestPlantGainsRegistry(unittest.TestCase):
         self.assertAlmostEqual(p.bank_max_roll_rad, 0.40)
         self.assertAlmostEqual(p.slow_range_m, 280.0)
         self.assertAlmostEqual(p.cruise_thrust, 0.60)
-        self.assertAlmostEqual(p.visual_lock_kp_alt, 0.028)
+        self.assertAlmostEqual(p.roll_tc, 1.5)
+        self.assertAlmostEqual(p.pitch_tc, 0.55)
 
     def test_jsbsim_rascal_race_snapshot(self) -> None:
         p = load_plant_gains("jsbsim_rascal")
@@ -109,6 +110,8 @@ class TestPlantGainsRegistry(unittest.TestCase):
         self.assertAlmostEqual(p.pid_kp, 0.8)
         self.assertAlmostEqual(p.pid_ki, 0.12)
         self.assertAlmostEqual(p.pid_kd, 0.04)
+        self.assertAlmostEqual(p.roll_tc, 0.45)
+        self.assertAlmostEqual(p.pitch_tc, 0.4)
         self.assertAlmostEqual(p.bank_kp_heading, 1.0)
         self.assertAlmostEqual(p.bank_kp_cross_track, 0.003)
         self.assertAlmostEqual(p.bank_xt_lookahead_m, 180.0)
@@ -130,21 +133,33 @@ class TestPlantGainsRegistry(unittest.TestCase):
         self.assertAlmostEqual(p.fw_airspd_trim, 18.0)
         self.assertAlmostEqual(p.fw_airspd_max, 40.0)
         self.assertAlmostEqual(p.los_kwargs()["kp_heading"], 1.0)
-        self.assertAlmostEqual(p.los_kwargs()["kp_alt"], 0.028)
+        self.assertNotIn("kp_alt", p.los_kwargs())
         self.assertAlmostEqual(p.los_kwargs()["max_roll"], 0.62)
-        self.assertAlmostEqual(p.visual_lock_kp_alt, 0.020)
 
-    def test_jsbsim_rascal_viz_mixes_alt_on_hsv(self) -> None:
-        """--viz XY was 2–6 m; 3D miss was 8–11 m ΔD because HSV look-at
-        zeroed kp_alt. Same FDM as headless, but keep altitude mix on blob."""
-        p = load_plant_gains("jsbsim_rascal_viz")
+    def test_jsbsim_race_quat_leads_body_az(self) -> None:
+        """JSBSim 131011: kp=2 + 12 m/s @ 220 m crawled (~15 m/s) and over-banked
+        (1 pass, XY 18.5 m, 26 m high). Keep lead, restore speed, cap bank."""
+        p = load_plant_gains("jsbsim_rascal", controller="race_quat")
+        self.assertAlmostEqual(p.bank_kp_heading, 1.5)
+        self.assertAlmostEqual(p.bank_max_roll_rad, 0.70)
+        self.assertAlmostEqual(p.approach_speed_mps, 16.0)
+        self.assertAlmostEqual(p.slow_range_m, 140.0)
+        self.assertAlmostEqual(p.los_kwargs()["kp_heading"], 1.5)
+        self.assertAlmostEqual(p.los_kwargs()["max_roll"], 0.70)
+        self.assertNotIn("kp_alt", p.los_kwargs())
+
+    def test_jsbsim_rascal_viz_shares_fdm_with_headless(self) -> None:
+        viz = load_plant_gains("jsbsim_rascal_viz")
         jsb = load_plant_gains("jsbsim_rascal")
-        self.assertEqual(p.plant_id, "jsbsim_rascal_viz")
-        self.assertAlmostEqual(p.speed_mps, jsb.speed_mps)
-        self.assertAlmostEqual(p.approach_speed_mps, jsb.approach_speed_mps)
-        self.assertAlmostEqual(p.bank_max_roll_rad, jsb.bank_max_roll_rad)
-        self.assertAlmostEqual(p.visual_lock_kp_alt, p.bank_kp_alt)
-        self.assertGreater(p.visual_lock_kp_alt, jsb.visual_lock_kp_alt)
+        self.assertEqual(viz.plant_id, "jsbsim_rascal_viz")
+        self.assertAlmostEqual(viz.speed_mps, jsb.speed_mps)
+        self.assertAlmostEqual(viz.approach_speed_mps, jsb.approach_speed_mps)
+        self.assertAlmostEqual(viz.bank_max_roll_rad, jsb.bank_max_roll_rad)
+        race_viz = load_plant_gains("jsbsim_rascal_viz", controller="race_quat")
+        race_jsb = load_plant_gains("jsbsim_rascal", controller="race_quat")
+        self.assertAlmostEqual(race_viz.bank_kp_heading, race_jsb.bank_kp_heading)
+        self.assertAlmostEqual(race_viz.bank_max_roll_rad, race_jsb.bank_max_roll_rad)
+        self.assertAlmostEqual(race_viz.approach_speed_mps, race_jsb.approach_speed_mps)
 
     def test_every_plant_has_aero_and_pp(self) -> None:
         for pid in _PLANTS:
@@ -167,11 +182,26 @@ class TestPlantGainsRegistry(unittest.TestCase):
                 self.assertGreater(p.speed_thrust_per_mps, 0.0)
                 self.assertIn("speed_gain", p.thrust_kwargs())
 
+    def test_make_cascade_uses_roll_pitch_tc(self) -> None:
+        from fw_sitl.px4_att_cascade import Px4FwAttCascade
+
+        p = load_plant_gains("jsbsim_rascal")
+        cas = p.make_cascade()
+        self.assertIsInstance(cas, Px4FwAttCascade)
+        self.assertAlmostEqual(cas.kp, p.pid_kp)
+        self.assertAlmostEqual(cas.ki, p.pid_ki)
+        self.assertAlmostEqual(cas.kd, p.pid_kd)
+        self.assertAlmostEqual(cas.roll_tc, p.roll_tc)
+        self.assertAlmostEqual(cas.pitch_tc, p.pitch_tc)
+
     def test_tables_differ_pairwise(self) -> None:
         loaded = {pid: load_plant_gains(pid) for pid in _PLANTS}
         ids = list(_PLANTS)
+        shared_fdm = {frozenset({"jsbsim_rascal", "jsbsim_rascal_viz"})}
         for i, a in enumerate(ids):
             for b in ids[i + 1 :]:
+                if frozenset({a, b}) in shared_fdm:
+                    continue
                 self.assertNotEqual(
                     loaded[a].fingerprint(),
                     loaded[b].fingerprint(),
@@ -197,10 +227,11 @@ class TestPlantGainsRegistry(unittest.TestCase):
         self.assertAlmostEqual(p.pid_kp, 0.45)
         self.assertAlmostEqual(p.pid_kd, 0.10)
         self.assertAlmostEqual(p.bank_kp_alt, 0.032)
-        self.assertAlmostEqual(p.visual_lock_kp_alt, 0.032)
         self.assertAlmostEqual(p.climb_thrust_per_m, 0.028)
         self.assertAlmostEqual(p.min_thrust, 0.18)
         self.assertAlmostEqual(p.speed_thrust_per_mps, 0.06)
+        self.assertAlmostEqual(p.roll_tc, 0.80)
+        self.assertAlmostEqual(p.pitch_tc, 0.4)
 
     def test_gz_cessna_is_smaller_faster_than_jsbsim(self) -> None:
         jsb = load_plant_gains("jsbsim_rascal")
@@ -209,14 +240,32 @@ class TestPlantGainsRegistry(unittest.TestCase):
         self.assertAlmostEqual(gz.fw_airspd_trim, 16.0)
         self.assertAlmostEqual(gz.approach_speed_mps, 12.0)
         self.assertAlmostEqual(gz.slow_range_m, 180.0)
-        self.assertAlmostEqual(gz.cruise_thrust, 0.62)
+        self.assertAlmostEqual(gz.cruise_thrust, 0.80)
+        self.assertAlmostEqual(gz.min_thrust, 0.50)
         self.assertAlmostEqual(gz.speed_thrust_per_mps, 0.07)
         self.assertAlmostEqual(gz.bank_max_roll_rad, 0.55)
+        self.assertAlmostEqual(gz.roll_tc, 0.4)
+        self.assertAlmostEqual(gz.pitch_tc, 0.4)
         self.assertGreater(gz.bank_kp_heading, jsb.bank_kp_heading)
         self.assertAlmostEqual(gz.bank_kp_heading, 1.4)
         self.assertLessEqual(gz.bank_max_roll_rad, jsb.bank_max_roll_rad)
         self.assertGreater(gz.pid_kp, jsb.pid_kp)
-        self.assertAlmostEqual(gz.visual_lock_kp_alt, gz.bank_kp_alt)
+
+    def test_gz_race_quat_lookat_pitch_fits_cessna(self) -> None:
+        """Live 135412: in-view 40° look-at bled GS 14→8 m/s then departed at t=25."""
+        from fw_sitl.attitude_pid import q_des_from_los
+        from fw_sitl.quat import rpy_from_quat
+
+        p = load_plant_gains("gz_rc_cessna", controller="race_quat")
+        self.assertAlmostEqual(p.att_los_max_pitch_rad, 0.26)
+        self.assertAlmostEqual(p.min_thrust, 0.50)
+        self.assertAlmostEqual(p.cruise_thrust, 0.80)
+        steep = q_des_from_los(
+            (0.2, 0.0, -1.0),
+            yaw_rad=0.0,
+            **p.los_kwargs(),
+        )
+        self.assertLessEqual(rpy_from_quat(steep)[1], 0.26 + 1e-6)
 
     def test_gz_advanced_plane_differs_from_cessna(self) -> None:
         cessna = load_plant_gains("gz_rc_cessna")
@@ -225,10 +274,13 @@ class TestPlantGainsRegistry(unittest.TestCase):
         self.assertAlmostEqual(adv.fw_airspd_trim, 20.0)
         self.assertLess(adv.bank_kp_heading, cessna.bank_kp_heading)
         self.assertLess(adv.pid_kp, cessna.pid_kp)
+        self.assertAlmostEqual(adv.roll_tc, 0.4)
+        self.assertAlmostEqual(adv.pitch_tc, 0.4)
 
     def test_px4_inner_jsbsim_snapshot(self) -> None:
         inner = dict(load_plant_gains("jsbsim_rascal").px4_inner)
-        self.assertAlmostEqual(inner["FW_PR_P"], 0.05)
+        self.assertAlmostEqual(inner["FW_PR_P"], 0.10)
+        self.assertAlmostEqual(inner["FW_PR_FF"], 0.55)
         self.assertAlmostEqual(inner["FW_RR_FF"], 0.50)
         self.assertAlmostEqual(inner["FW_RR_I"], 0.18)
         self.assertAlmostEqual(inner["FW_RR_P"], 0.15)
@@ -250,6 +302,7 @@ class TestPlantGainsRegistry(unittest.TestCase):
         self.assertAlmostEqual(inner["FW_PR_P"], 0.9)
         self.assertAlmostEqual(inner["FW_RR_P"], 0.4)
         self.assertAlmostEqual(inner["FW_YR_P"], 1.3)
+        self.assertAlmostEqual(inner["FW_P_LIM_MAX"], 15.0)
 
     def test_px4_inner_gz_advanced_snapshot(self) -> None:
         inner = dict(load_plant_gains("gz_advanced_plane").px4_inner)
@@ -390,8 +443,8 @@ class TestMakeBodyCmdControllerUsesPlant(unittest.TestCase):
             speed_mps=plant.speed_mps,
             plant=plant,
         )
-        self.assertAlmostEqual(ctrl._pid.kp, plant.pid_kp)
-        self.assertAlmostEqual(ctrl._pid.kd, plant.pid_kd)
+        self.assertAlmostEqual(ctrl._cascade.kp, plant.pid_kp)
+        self.assertAlmostEqual(ctrl._cascade.kd, plant.pid_kd)
         self.assertIs(ctrl._plant, plant)
 
 

@@ -36,6 +36,7 @@ DEFAULT_STALE_TRACK_WARN_S = 10.0
 DEFAULT_LAPS = 1
 DEFAULT_DURATION_S = 60.0
 DEFAULT_CMD_MODE = "velocity"
+DEFAULT_ATTITUDE_FORMAT = "euler"
 # Chase attitude law selected via guidance.controller (plant JSONC controllers.*).
 DEFAULT_CONTROLLER = "pure_pursuit_quat"
 # During large heading error, hold altitude instead of chasing aim Z (level turn).
@@ -50,7 +51,8 @@ DEFAULT_SPAWN_NED = (0.0, 0.0, 0.0)
 DEFAULT_SPAWN_HEADING_DEG = 0.0
 
 _ALLOWED_CMD_MODES = frozenset({"velocity", "attitude", "rates"})
-KNOWN_CONTROLLER_IDS = frozenset({"race_quat", "pure_pursuit_quat"})
+_ALLOWED_ATTITUDE_FORMATS = frozenset({"quat", "euler"})
+KNOWN_CONTROLLER_IDS = frozenset({"race_quat", "pure_pursuit_quat", "race_euler"})
 # Race launcher plant flags (CLI --viz/--yasim/--gz/--xplane; default headless jsbsim).
 KNOWN_SIM_PLATFORMS = frozenset({"jsbsim", "viz", "yasim", "gz"})
 DEFAULT_SIM_PLATFORM = "jsbsim"
@@ -107,6 +109,7 @@ class BalloonSpec:
 class CameraSpec:
     hfov_deg: float = DEFAULT_HFOV_DEG
     vfov_deg: float = DEFAULT_VFOV_DEG
+    # Seeker mount vs body +X (future gimbal). +azimuth right, +elevation up.
     azimuth_deg: float = DEFAULT_AZIMUTH_DEG
     elevation_deg: float = DEFAULT_ELEVATION_DEG
     width_px: int = DEFAULT_WIDTH_PX
@@ -132,7 +135,9 @@ class GuidanceSpec:
     laps: int = DEFAULT_LAPS
     duration_s: float = DEFAULT_DURATION_S
     cmd_mode: str = DEFAULT_CMD_MODE
-    # Attitude chase law id (race_quat | pure_pursuit_quat).
+    # SET_ATTITUDE_TARGET packing when cmd_mode=attitude (quat | euler).
+    attitude_format: str = DEFAULT_ATTITUDE_FORMAT
+    # Attitude chase law id (race_quat | pure_pursuit_quat | race_euler).
     controller: str = DEFAULT_CONTROLLER
     # |course−yaw| ≥ this (deg) → z_hold = current altitude during the turn.
     alt_preserve_heading_err_deg: float = DEFAULT_ALT_PRESERVE_HEADING_ERR_DEG
@@ -340,6 +345,10 @@ def _parse_guidance(raw: Any) -> GuidanceSpec:
     cmd_mode = _as_str(
         data.get("cmd_mode", DEFAULT_CMD_MODE), "guidance.cmd_mode"
     ).lower()
+    attitude_format = _as_str(
+        data.get("attitude_format", DEFAULT_ATTITUDE_FORMAT),
+        "guidance.attitude_format",
+    ).lower()
     # Absent key → default; present but unknown → hard error.
     controller = _as_str(
         data.get("controller", DEFAULT_CONTROLLER), "guidance.controller"
@@ -373,6 +382,10 @@ def _parse_guidance(raw: Any) -> GuidanceSpec:
         raise ValueError(
             "guidance.cmd_mode must be one of velocity|attitude|rates"
         )
+    if attitude_format not in _ALLOWED_ATTITUDE_FORMATS:
+        raise ValueError(
+            "guidance.attitude_format must be one of quat|euler"
+        )
     if controller not in KNOWN_CONTROLLER_IDS:
         raise ValueError(
             "guidance.controller must be one of "
@@ -391,6 +404,7 @@ def _parse_guidance(raw: Any) -> GuidanceSpec:
         laps=laps,
         duration_s=duration,
         cmd_mode=cmd_mode,
+        attitude_format=attitude_format,
         controller=controller,
         alt_preserve_heading_err_deg=alt_preserve_err_deg,
     )

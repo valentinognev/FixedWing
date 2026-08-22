@@ -29,6 +29,7 @@
     ["FW_YR_I", 0.7], /* FW_YR_I */
     ["FW_PSP_OFF", 0.0], /* FW_PSP_OFF */
     ["FW_P_LIM_MIN", -15.0], /* FW_P_LIM_MIN */
+    ["FW_P_LIM_MAX", 15.0], /* FW_P_LIM_MAX */
     ["FW_T_CLMB_MAX", 5.0], /* FW_T_CLMB_MAX */
     ["FW_T_SINK_MAX", 3.5], /* FW_T_SINK_MAX */
     ["FW_T_SINK_MIN", 3.0], /* FW_T_SINK_MIN */
@@ -48,6 +49,12 @@
       // Attitude PID derivative gain.
       "pid_kd": 0.03,
 
+      // Stage-2 (Px4FwAttCascade) roll time constant (s). Neither in px4_inner → PX4 default.
+      "roll_tc": 0.4,
+
+      // Stage-2 pitch time constant (s). Neither in px4_inner → PX4 default.
+      "pitch_tc": 0.4,
+
       // Path/LOS bank: heading-error P (rad roll / rad heading).
       "bank_kp_heading": 1.4,
 
@@ -67,19 +74,19 @@
       "bank_max_pitch_rad": 0.12,
 
       // Attitude path-hold max pitch (rad).
-      "att_max_pitch_rad": 0.35,
+      "att_max_pitch_rad": 0.26,
 
-      // LOS / geometric chase max pitch (rad).
-      "att_los_max_pitch_rad": 0.7,
+      // LOS / geometric chase max pitch (rad). Cessna stalls at 40° (live 135412).
+      "att_los_max_pitch_rad": 0.26,
 
       // Nominal thrust fraction at cruise.
-      "cruise_thrust": 0.62,
+      "cruise_thrust": 0.80,
 
       // Extra thrust per metre of altitude error (1/m).
       "climb_thrust_per_m": 0.018,
 
       // Thrust fraction floor.
-      "min_thrust": 0.22,
+      "min_thrust": 0.50,
 
       // Thrust fraction ceiling.
       "max_thrust": 1.0,
@@ -94,10 +101,72 @@
       "slow_range_m": 180.0,
 
       // Thrust P vs speed error (1 / (m/s)).
-      "speed_thrust_per_mps": 0.07,
+      "speed_thrust_per_mps": 0.07
+    },
+    // LOS Euler-error close (race_euler); outer gains copied from race_quat; omits PP-only aero/governor fields.
+    "race_euler": {
+      // Attitude PID (quaternion error → body rates) P gain.
+      "pid_kp": 1.0,
 
-      // HSV look-at altitude mix (rad/m).
-      "visual_lock_kp_alt": 0.03
+      // Attitude PID integral gain.
+      "pid_ki": 0.1,
+
+      // Attitude PID derivative gain.
+      "pid_kd": 0.03,
+
+      // Stage-2 (Px4FwAttCascade) roll time constant (s). Neither in px4_inner → PX4 default.
+      "roll_tc": 0.4,
+
+      // Stage-2 pitch time constant (s). Neither in px4_inner → PX4 default.
+      "pitch_tc": 0.4,
+
+      // Path/LOS bank: heading-error P (rad roll / rad heading).
+      "bank_kp_heading": 1.4,
+
+      // Path bank: cross-track P (rad roll / m).
+      "bank_kp_cross_track": 0.003,
+
+      // Path: extra lookahead mixed into cross-track (m).
+      "bank_xt_lookahead_m": 150.0,
+
+      // Max commanded roll (rad).
+      "bank_max_roll_rad": 0.55,
+
+      // Path/LOS: altitude-error mix into pitch (rad / m).
+      "bank_kp_alt": 0.03,
+
+      // Legacy path pitch clamp used by path_kwargs (rad).
+      "bank_max_pitch_rad": 0.12,
+
+      // Attitude path-hold max pitch (rad).
+      "att_max_pitch_rad": 0.26,
+
+      // LOS / geometric chase max pitch (rad). Cessna stalls at 40° (live 135412).
+      "att_los_max_pitch_rad": 0.26,
+
+      // Nominal thrust fraction at cruise.
+      "cruise_thrust": 0.80,
+
+      // Extra thrust per metre of altitude error (1/m).
+      "climb_thrust_per_m": 0.018,
+
+      // Thrust fraction floor.
+      "min_thrust": 0.50,
+
+      // Thrust fraction ceiling.
+      "max_thrust": 1.0,
+
+      // Cruise airspeed command (m/s).
+      "speed_mps": 16.0,
+
+      // Final-approach airspeed (m/s) inside slow_range_m.
+      "approach_speed_mps": 12.0,
+
+      // Range (m) at which speed blends cruise → approach.
+      "slow_range_m": 180.0,
+
+      // Thrust P vs speed error (1 / (m/s)).
+      "speed_thrust_per_mps": 0.07
     },
     // Pure-pursuit a_des → attitude_from_accel → SpeedGovernor.
     "pure_pursuit_quat": {
@@ -110,6 +179,12 @@
       // Attitude PID derivative gain.
       "pid_kd": 0.03,
 
+      // Stage-2 (Px4FwAttCascade) roll time constant (s). Neither in px4_inner → PX4 default.
+      "roll_tc": 0.4,
+
+      // Stage-2 pitch time constant (s). Neither in px4_inner → PX4 default.
+      "pitch_tc": 0.4,
+
       // Path/LOS bank: heading-error P (rad roll / rad heading).
       "bank_kp_heading": 1.4,
 
@@ -129,19 +204,19 @@
       "bank_max_pitch_rad": 0.12,
 
       // Attitude path-hold max pitch (rad).
-      "att_max_pitch_rad": 0.35,
+      "att_max_pitch_rad": 0.26,
 
-      // LOS / geometric chase max pitch (rad).
-      "att_los_max_pitch_rad": 0.7,
+      // LOS / geometric chase max pitch (rad). Cessna stalls at 40° (live 135412).
+      "att_los_max_pitch_rad": 0.26,
 
       // Nominal thrust fraction at cruise.
-      "cruise_thrust": 0.62,
+      "cruise_thrust": 0.80,
 
       // Extra thrust per metre of altitude error (1/m).
       "climb_thrust_per_m": 0.018,
 
       // Thrust fraction floor.
-      "min_thrust": 0.22,
+      "min_thrust": 0.50,
 
       // Thrust fraction ceiling.
       "max_thrust": 1.0,
@@ -157,9 +232,6 @@
 
       // Thrust P vs speed error (1 / (m/s)).
       "speed_thrust_per_mps": 0.07,
-
-      // HSV look-at altitude mix (rad/m).
-      "visual_lock_kp_alt": 0.03,
 
       // Vehicle mass (kg) for T = (m a_parallel + D + mg sin γ) / cos α.
       "mass_kg": 10.0,

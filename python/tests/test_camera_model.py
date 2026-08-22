@@ -15,10 +15,13 @@ if str(_PYTHON_ROOT) not in sys.path:
 from fw_sitl.camera_model import (
     CameraModel,
     _matvec3,
+    body_az_el_rad,
     body_to_ned_rotation,
+    dir_body_to_ned,
     dir_cam_az_el_deg,
     dir_cam_to_ned,
     dir_cam_to_pixel,
+    dir_ned_to_body,
     offset_on_screen,
     pixel_to_dir_cam,
     project_ned_offset_to_pixel,
@@ -161,6 +164,65 @@ class TestOffsetOnScreen(unittest.TestCase):
         self.assertFalse(
             offset_on_screen((-50.0, 0.0, 0.0), self._model(), 0.0, 0.0, 0.0)
         )
+
+
+class TestSeekerMountBodyLos(unittest.TestCase):
+    """Camera az/el from flightSetup are the seeker mount (future gimbal)."""
+
+    def test_setup_elevation_pitches_boresight_up_in_body(self) -> None:
+        spec = CameraSpec(
+            hfov_deg=90.0,
+            vfov_deg=70.0,
+            azimuth_deg=0.0,
+            elevation_deg=10.0,
+            width_px=640,
+            height_px=480,
+            rate_hz=10.0,
+        )
+        model = CameraModel.from_spec(spec)
+        _az, el = body_az_el_rad(model.dir_cam_to_body((0.0, 0.0, 1.0)))
+        self.assertAlmostEqual(el, math.radians(10.0), places=5)
+
+    def test_setup_azimuth_yaws_boresight_right_in_body(self) -> None:
+        model = CameraModel(
+            hfov_deg=90.0,
+            vfov_deg=70.0,
+            width_px=640,
+            height_px=480,
+            azimuth_deg=15.0,
+            elevation_deg=0.0,
+        )
+        az, el = body_az_el_rad(model.dir_cam_to_body((0.0, 0.0, 1.0)))
+        self.assertAlmostEqual(az, math.radians(15.0), places=5)
+        self.assertAlmostEqual(el, 0.0, places=5)
+
+    def test_blob_above_center_is_body_up_with_zero_mount(self) -> None:
+        model = CameraModel(
+            hfov_deg=90.0, vfov_deg=70.0, width_px=640, height_px=480
+        )
+        dir_cam = pixel_to_dir_cam(model.cx, model.cy - 80.0, model)
+        _az, el = body_az_el_rad(model.dir_cam_to_body(dir_cam))
+        self.assertGreater(el, math.radians(10.0))
+
+    def test_ned_to_body_roundtrip(self) -> None:
+        att = (0.1, -0.2, 0.7)
+        v = (0.8, 0.4, -0.3)
+        n = math.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2)
+        v = (v[0] / n, v[1] / n, v[2] / n)
+        body = dir_ned_to_body(v, *att)
+        back = dir_body_to_ned(body, *att)
+        self.assertAlmostEqual(back[0], v[0], places=6)
+        self.assertAlmostEqual(back[1], v[1], places=6)
+        self.assertAlmostEqual(back[2], v[2], places=6)
+
+    def test_with_mount_is_gimbal_ready(self) -> None:
+        model = CameraModel(
+            hfov_deg=90.0, vfov_deg=70.0, width_px=640, height_px=480
+        )
+        moved = model.with_mount(azimuth_deg=5.0, elevation_deg=-3.0)
+        self.assertAlmostEqual(moved.azimuth_deg, 5.0)
+        self.assertAlmostEqual(moved.elevation_deg, -3.0)
+        self.assertAlmostEqual(model.azimuth_deg, 0.0)
 
 
 if __name__ == "__main__":

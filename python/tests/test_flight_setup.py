@@ -15,6 +15,7 @@ if str(_PYTHON_ROOT) not in sys.path:
 
 from fw_sitl.flight_setup import (
     DEFAULT_ALT_PRESERVE_HEADING_ERR_DEG,
+    DEFAULT_ATTITUDE_FORMAT,
     DEFAULT_CMD_MODE,
     DEFAULT_CONTROLLER,
     DEFAULT_DURATION_S,
@@ -50,6 +51,7 @@ class TestFlightSetupDefaults(unittest.TestCase):
         self.assertEqual(setup.guidance.duration_s, DEFAULT_DURATION_S)
         self.assertEqual(setup.sim.duration_s, DEFAULT_DURATION_S)
         self.assertEqual(setup.guidance.cmd_mode, DEFAULT_CMD_MODE)
+        self.assertEqual(setup.guidance.attitude_format, DEFAULT_ATTITUDE_FORMAT)
         self.assertEqual(setup.guidance.controller, DEFAULT_CONTROLLER)
         self.assertEqual(setup.sim.platform, DEFAULT_SIM_PLATFORM)
         self.assertEqual(setup.sim.gz_model, DEFAULT_GZ_MODEL)
@@ -148,7 +150,10 @@ class TestFlightSetupDefaults(unittest.TestCase):
 
     def test_guidance_controller_defaults_to_pure_pursuit(self) -> None:
         self.assertEqual(DEFAULT_CONTROLLER, "pure_pursuit_quat")
-        self.assertEqual(KNOWN_CONTROLLER_IDS, frozenset({"race_quat", "pure_pursuit_quat"}))
+        self.assertEqual(
+            KNOWN_CONTROLLER_IDS,
+            frozenset({"race_quat", "pure_pursuit_quat", "race_euler"}),
+        )
         setup = flight_setup_from_dict({"guidance": {}})
         self.assertEqual(setup.guidance.controller, "pure_pursuit_quat")
         self.assertEqual(GuidanceSpec().controller, "pure_pursuit_quat")
@@ -158,6 +163,12 @@ class TestFlightSetupDefaults(unittest.TestCase):
             {"guidance": {"controller": "race_quat"}}
         )
         self.assertEqual(setup.guidance.controller, "race_quat")
+
+    def test_guidance_controller_race_euler_accepted(self) -> None:
+        setup = flight_setup_from_dict(
+            {"guidance": {"controller": "race_euler"}}
+        )
+        self.assertEqual(setup.guidance.controller, "race_euler")
 
     def test_guidance_controller_unknown_rejected(self) -> None:
         with self.assertRaises(ValueError) as ctx:
@@ -180,6 +191,7 @@ class TestFlightSetupDefaults(unittest.TestCase):
         self.assertEqual(g.laps, 1)
         self.assertEqual(g.duration_s, 60.0)
         self.assertEqual(g.cmd_mode, "velocity")
+        self.assertEqual(g.attitude_format, "euler")
         self.assertEqual(g.controller, "pure_pursuit_quat")
         self.assertEqual(g.alt_preserve_heading_err_deg, 20.0)
         self.assertEqual(v.pixel_rms_max_px, 15.0)
@@ -243,21 +255,49 @@ class TestFlightSetupDefaults(unittest.TestCase):
         with self.assertRaises(ValueError):
             flight_setup_from_dict({"guidance": {"cmd_mode": "hover"}})
 
+    def test_guidance_attitude_format_defaults_to_euler(self) -> None:
+        self.assertEqual(DEFAULT_ATTITUDE_FORMAT, "euler")
+        setup = flight_setup_from_dict({"guidance": {}})
+        self.assertEqual(setup.guidance.attitude_format, "euler")
+        self.assertEqual(GuidanceSpec().attitude_format, "euler")
+
+    def test_guidance_attitude_format_quat_accepted_case_insensitive(self) -> None:
+        setup = flight_setup_from_dict(
+            {"guidance": {"attitude_format": "QUAT"}}
+        )
+        self.assertEqual(setup.guidance.attitude_format, "quat")
+
+    def test_guidance_attitude_format_euler_accepted(self) -> None:
+        setup = flight_setup_from_dict(
+            {"guidance": {"attitude_format": "euler"}}
+        )
+        self.assertEqual(setup.guidance.attitude_format, "euler")
+
+    def test_guidance_attitude_format_unknown_rejected(self) -> None:
+        for bad in ("rates", "rpy"):
+            with self.subTest(attitude_format=bad):
+                with self.assertRaises(ValueError) as ctx:
+                    flight_setup_from_dict(
+                        {"guidance": {"attitude_format": bad}}
+                    )
+                self.assertIn("quat|euler", str(ctx.exception))
+
     def test_load_shipped_flight_setup_json(self) -> None:
         path = _PYTHON_ROOT / "flightSetup.json"
         setup = load_flight_setup(path)
         self.assertEqual(len(setup.balloons), 3)
-        self.assertEqual(setup.balloons[0].ned, (500.0, 0.0, -10.0))
-        self.assertEqual(setup.balloons[1].ned, (500.0, 200.0, -10.0))
-        self.assertEqual(setup.balloons[2].ned, (300.0, 200.0, -10.0))
+        self.assertEqual(setup.balloons[0].ned, (500.0, 0.0, 0.0))
+        self.assertEqual(setup.balloons[1].ned, (500.0, 200.0, -20.0))
+        self.assertEqual(setup.balloons[2].ned, (300.0, 200.0, 20.0))
         self.assertEqual(setup.balloons[2].color, (0, 0, 255))
         self.assertEqual(setup.camera.fg_window_pattern, "FlightGear|fgfs")
         self.assertEqual(setup.guidance.cmd_mode, "attitude")
-        self.assertEqual(setup.guidance.controller, "pure_pursuit_quat")
+        self.assertEqual(setup.guidance.attitude_format, "euler")
+        self.assertEqual(setup.guidance.controller, "race_euler")
         self.assertEqual(setup.guidance.alt_preserve_heading_err_deg, 20.0)
         self.assertEqual(setup.guidance.laps, 0)
         self.assertEqual(setup.guidance.duration_s, 60.0)
-        self.assertEqual(setup.sim.platform, "jsbsim")
+        self.assertEqual(setup.sim.platform, "gz")
         self.assertEqual(setup.sim.gz_model, "rc_cessna")
         self.assertEqual(setup.sim.duration_s, 60.0)
         self.assertEqual(setup.guidance.stale_track_warn_s, 10.0)
@@ -270,6 +310,7 @@ class TestFlightSetupDefaults(unittest.TestCase):
         text = path.read_text(encoding="utf-8")
         self.assertIn("//", text)
         self.assertIn("cmd_mode", text)
+        self.assertIn("attitude_format", text)
         self.assertIn("controller", text)
 
     def test_load_flight_setup_accepts_jsonc_comments(self) -> None:

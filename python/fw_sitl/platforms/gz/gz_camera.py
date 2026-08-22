@@ -7,9 +7,10 @@ import time
 from pathlib import Path
 
 import numpy as np
+import zmq
 
-# Allow `python3 /opt/fixedwing/python/fw_sitl/gz_camera.py` with PYTHONPATH=.../python
-_PYTHON_ROOT = Path(__file__).resolve().parent.parent.parent
+# Allow `python3 .../platforms/gz/gz_camera.py` with PYTHONPATH=.../python
+_PYTHON_ROOT = Path(__file__).resolve().parents[3]
 if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
@@ -38,11 +39,14 @@ def gz_image_to_rgb(
     fmt = (pixel_format or "RGB_INT8").upper()
     if fmt.isdigit():
         fmt = _GZ_PIXEL_FORMAT_INT.get(int(fmt), fmt)
-    arr = np.frombuffer(data, dtype=np.uint8)
+    need = width * height * 3
     if fmt in {"RGB_INT8", "R8G8B8", "RGB8"}:
-        if arr.size < width * height * 3:
+        if len(data) < need:
             raise ValueError("short RGB buffer")
-        return bytes(arr[: width * height * 3])
+        if len(data) == need and isinstance(data, bytes):
+            return data
+        return bytes(data[:need])
+    arr = np.frombuffer(data, dtype=np.uint8)
     if fmt in {"BGR_INT8", "B8G8R8", "BGR8"}:
         img = arr[: width * height * 3].reshape((height, width, 3))
         return np.ascontiguousarray(img[:, :, ::-1]).tobytes()
@@ -133,20 +137,23 @@ def run_bridge(*, endpoint: str, sensor: str, timeout_s: float) -> int:
     got = {"n": 0}
 
     def _cb(msg: Image) -> None:
-        rgb = gz_image_to_rgb(
-            int(msg.width),
-            int(msg.height),
-            int(getattr(msg, "step", 0) or 0),
-            bytes(msg.data),
-            _pixel_format_name(msg),
-        )
-        frame = ImageFrame(
-            stamp=time.time(),
-            width=int(msg.width),
-            height=int(msg.height),
-            rgb=rgb,
-        )
-        pub.publish(frame)
+        try:
+            rgb = gz_image_to_rgb(
+                int(msg.width),
+                int(msg.height),
+                int(getattr(msg, "step", 0) or 0),
+                msg.data,
+                _pixel_format_name(msg),
+            )
+            frame = ImageFrame(
+                stamp=time.time(),
+                width=int(msg.width),
+                height=int(msg.height),
+                rgb=rgb,
+            )
+            pub.publish(frame, flags=zmq.NOBLOCK)
+        except zmq.Again:
+            return
         got["n"] += 1
 
     if not _subscribe_image(node, Image, topic, _cb):
@@ -178,7 +185,7 @@ def run_gz_publisher_via_docker(
         "PYTHONUNBUFFERED=1",
         "python3",
         "-u",
-        "/opt/fixedwing/python/fw_sitl/gz_camera.py",
+        "/opt/fixedwing/python/fw_sitl/platforms/gz/gz_camera.py",
         "--endpoint",
         setup.zmq.image,
         "--sensor",

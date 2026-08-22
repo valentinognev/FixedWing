@@ -47,7 +47,8 @@ class TestGzGuiFollow(unittest.TestCase):
         out = patch_gui_config(_STOCK_GUI, cam)
         self.assertIn(f"<camera_pose>{cam}</camera_pose>", out)
         self.assertNotIn("<camera_pose>-6 0 6 0 0.5 0</camera_pose>", out)
-        self.assertIn("<far>25000</far>", out)
+        self.assertIn("<far>4000</far>", out)
+        self.assertNotIn("<far>25000</far>", out)
         self.assertIn("CameraTracking", out)
 
     def test_camera_track_protobuf_follows_model(self) -> None:

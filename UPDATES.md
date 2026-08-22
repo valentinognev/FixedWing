@@ -1,5 +1,55 @@
 # Updates
 
+## 0.43.0 - race_euler controller
+- Selectable `guidance.controller=race_euler`: same LOS/path as `race_quat`, closes wrap(φ_des−φ)/wrap(θ_des−θ) every tick including in-view (no cascade reset).
+- Plant JSONC `controllers.race_euler` copies `race_quat` outer gains; PP-only still filled from sibling `pure_pursuit_quat`.
+- `cmd_mode=rates` is identical between `race_euler` and `race_quat`: `send_attitude_rates` dispatches `cascade_out.body_rates`, derived from `(q_des, q_act, roll_tc/pitch_tc, groundspeed)` — never `q_cmd`, never cascade I-state. The in-view behavior difference between the two controllers only shows up under `cmd_mode=attitude` (cascade `q_cmd`, I-state kept, vs `race_quat`'s open-loop `q_des` + `reset()`). Regression test: `tests.test_controllers_registry.TestRaceEulerLos.test_cmd_mode_rates_race_euler_matches_race_quat`.
+- Host-tests-only / unflown: no live SITL race has exercised `race_euler` yet (same caveat as 0.42.0's cascade). Copied `race_quat` outer gains are a tuning starting point, not a verified-in-flight set.
+
+## 0.42.0 - PX4 Euler attitude cascade
+- Inner stepper is PX4-style Euler PID (`px4_att_cascade`); outer chase unchanged.
+- `guidance.attitude_format` quat|euler.
+- `cmd_mode=rates` sends body rates from Euler φ̇θ̇ψ̇.
+- Host-tests-only / unflown: no live SITL race has exercised this cascade yet.
+- Plant controller blocks now require `roll_tc`/`pitch_tc` (used by `Px4FwAttCascade` coordinated-turn rates).
+
+## 0.41.6 - GZ Cessna look-at no longer stalls
+- Cause (live `135412`): in-view `race_quat` capped pitch at 40° (`att_los_max_pitch=0.7`). Blob-high look-at bled GS 14→8 m/s by t=24; lock drop at t=25 spun west to z=+94. 12 s pre-arm health wait also put them ~200 m west (course 242°).
+- `gz_rc_cessna`: look-at/path pitch 15° (`0.26`), `FW_P_LIM_MAX=15`, cruise thrust 0.62→0.80, `min_thrust` 0.22→0.50.
+- Verify `--gz` 60 s `/tmp/balloon_race_20260822_140003.csv`: 1 pass (balloon 0, XY 0.9 m at t=50), mean GS 18 m/s, max 8 s sink 11 m (was stall to z=+94 on `135412`). Ended 43 m from balloon 1.
+
+## 0.41.5 - GZ race_cam no longer stalls realtime
+- Cause (`133939`): after 0.41.4 actually subscribed `race_cam`, gz-sim rendered 640×480 with default 4× MSAA + GUI frustum, 25 km GUI far clip, and blocking ZMQ copies on the gz.transport thread. 60 s wall covered ~160 m (~3 m/s vs 16 m/s cruise).
+- `race_cam`: `visualize=false`, `anti_aliasing=0`, far 5 km→2 km. GUI follow far 25 km→4 km. Camera/pose bridges drop on `ZMQ NOBLOCK`; RGB passthrough skips a numpy copy; pose PUB capped at 20 Hz.
+- Verify `--gz` 60 s `/tmp/balloon_race_20260822_134733.csv`: net 496 m, GS ~16 m/s after settle (was 163 m / crash z=133 on `133939`); end XY 83 m from balloon 0, still climbing. No pass in 60 s (spawned ~500 m SW, heading lock 247°).
+
+## 0.41.4 - GZ camera/pose docker paths after platforms/ move
+- `--gz` image pane died: `docker exec` still ran `/opt/fixedwing/python/fw_sitl/gz_camera.py` (and `gz_pose_bridge.py`); 0.40.0 moved them to `platforms/gz/`. Camera ZMQ never published → balloon_camera stayed on "waiting for image".
+
+## 0.41.3 - JSBSim race_quat 3-cycle miss/speed tune
+- Baseline `131011` (0.41.2): 1 pass / 60 s, XY 18.5 m, ΔD −26 m, ~15 m/s (kp=2, 45° bank, approach 12 @ 220 m crawled and over-banked).
+- Cycle 1 `131644` (kept): kp 2.0→1.5, max_roll 0.79→0.70, approach 12→16, slow_range 220→140. 3 passes, mean XY 7.1 m, ~18 m/s (final 21 m/s). Balloon 2 still ~30 m high.
+- Cycle 2 `132038` (reverted): look-at `kp_elev=1.4` → 0 passes, flew off NE. Cycle 3 `132342`: milder load-pitch 0.18, 3 passes but worse than cycle 1 (mean XY 9.1 m) → restore `LOS_LOAD_PITCH_RAD=0.35`.
+
+## 0.41.2 - JSBSim look-at lead + wipe NED alt mix
+- Cause (JSBSim `125350`): `kp_heading=1` made roll≈body az so ~9° residual never closed (balloon 0 XY 6.9 m, ΔD +7.2 m); balloon-1 intercept sat at 35° bank (XY 17.8 m). Inner `FW_PR_P=0.05` left pitch_cmd 25° vs meas ~7°.
+- `jsbsim_rascal` / `_viz` `race_quat`: `bank_kp_heading` 1.0→2.0, `max_roll` 0.62→0.79 (~45°), approach 15→12 m/s, `slow_range` 180→220 m. Shared inner `FW_PR_P` 0.05→0.10, `FW_PR_FF` 0.4→0.55.
+- Body LOS: vertical (horiz≈0) azimuth is 0, not NED yaw. Drop unused look-at `kp_alt`/`z_ned` mix, `los_kwargs.kp_alt` pop, and dead `visual_lock_kp_alt` plant field.
+
+## 0.41.1 - Body seeker keeps residual azimuth
+- Cause (JSBSim `124324`): 5° LOS heading deadband zeroed roll at cam_az≈−4° and subtracted 5° from larger errors (20° blob → 15° bank); XY miss 18.9 m.
+- `q_des_from_los` default deadband 0 (optional db still zeros below threshold, no subtract).
+
+## 0.41.0 - Body-frame seeker homing
+- In-view chase for `race_quat` and `pure_pursuit_quat`: `dir_cam` → body via `camera.azimuth_deg`/`elevation_deg` (`CameraModel.with_mount` for a later gimbal); geometric LOS is NED→body by attitude.
+- `q_des_from_los` banks/pitches vs body +X (not NED elevation). PP `û`/`v̂` in body, `a_des` rotated back to NED for `attitude_from_accel`.
+- `flightSetup.json` mount comments; control passes `dir_body`.
+
+## 0.40.1 - In-view race_quat ignores balloon Z
+- Unassisted / in-view `race_quat`: attitude from LOS elevation only — no `z_target`, `kp_alt` / `visual_lock_kp_alt`, or ΔZ pitch-cap branch.
+- Control passes `z_target=None` when `use_lookat`; thrust hold stays at current plane Z while in view.
+- Path-hold and assisted geometric LOS unchanged (still use balloon NED).
+
 ## 0.40.0 - Platform folders under fw_sitl/platforms
 - Move plant JSONC + backend modules into `platforms/{jsbsim,yasim,gz,xplane}/` (drop top-level `plants/`); `fg_camera` under `yasim/`.
 - `load_plant_gains` resolves `platforms/<family>/{plant_id}.jsonc` via plant-id prefix; imports updated across runners/tests/scripts.

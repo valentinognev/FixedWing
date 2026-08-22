@@ -28,7 +28,7 @@ focal lengths from horizontal/vertical FOV.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from fw_sitl.flight_setup import CameraSpec
 
@@ -159,6 +159,14 @@ class CameraModel:
         cy = r[0][1] * x + r[1][1] * y + r[2][1] * z
         cz = r[0][2] * x + r[1][2] * y + r[2][2] * z
         return _normalize(cx, cy, cz)
+
+    def with_mount(self, *, azimuth_deg: float, elevation_deg: float) -> CameraModel:
+        """Return a copy with new seeker mount angles (gimbal set-point)."""
+        return replace(
+            self,
+            azimuth_deg=float(azimuth_deg),
+            elevation_deg=float(elevation_deg),
+        )
 
 
 def _matmul3(
@@ -335,9 +343,45 @@ def dir_body_to_ned(
     pitch: float,
     yaw: float,
 ) -> tuple[float, float, float]:
-    r = body_to_ned_rotation(roll, pitch, yaw)
-    x, y, z = float(dir_body[0]), float(dir_body[1]), float(dir_body[2])
-    nx = r[0][0] * x + r[0][1] * y + r[0][2] * z
-    ny = r[1][0] * x + r[1][1] * y + r[1][2] * z
-    nz = r[2][0] * x + r[2][1] * y + r[2][2] * z
-    return _normalize(nx, ny, nz)
+    return _normalize(*rotate_body_to_ned(dir_body, roll, pitch, yaw))
+
+
+def dir_ned_to_body(
+    dir_ned: tuple[float, float, float],
+    roll: float,
+    pitch: float,
+    yaw: float,
+) -> tuple[float, float, float]:
+    """Unit NED direction → unit body FRD (same Euler as ATTITUDE)."""
+    return _normalize(*rotate_ned_to_body(dir_ned, roll, pitch, yaw))
+
+
+def rotate_ned_to_body(
+    vec: tuple[float, float, float],
+    roll: float,
+    pitch: float,
+    yaw: float,
+) -> tuple[float, float, float]:
+    """Rotate a free vector NED → body (does not renormalize)."""
+    return _matvec3(ned_to_body_rotation(roll, pitch, yaw), vec)
+
+
+def rotate_body_to_ned(
+    vec: tuple[float, float, float],
+    roll: float,
+    pitch: float,
+    yaw: float,
+) -> tuple[float, float, float]:
+    """Rotate a free vector body → NED (does not renormalize)."""
+    return _matvec3(body_to_ned_rotation(roll, pitch, yaw), vec)
+
+
+def body_az_el_rad(
+    dir_body: tuple[float, float, float],
+) -> tuple[float, float]:
+    """Body-FRD LOS → azimuth (right of +X) and elevation (up of +X), radians."""
+    dx, dy, dz = (float(dir_body[0]), float(dir_body[1]), float(dir_body[2]))
+    horiz = math.hypot(dx, dy)
+    az = math.atan2(dy, dx) if horiz > 1e-9 or abs(dx) > 1e-12 else 0.0
+    el = math.atan2(-dz, horiz) if horiz > 1e-9 or abs(dz) > 1e-12 else 0.0
+    return az, el

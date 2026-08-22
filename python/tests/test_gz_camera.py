@@ -26,6 +26,16 @@ class TestGzCamera(unittest.TestCase):
         rgb = bytes([255, 0, 0, 0, 255, 0])
         out = gz_image_to_rgb(2, 1, 6, rgb, "RGB_INT8")
         self.assertEqual(out, rgb)
+        self.assertIs(out, rgb)
+
+    def test_bridge_drops_when_zmq_would_block_gz_thread(self) -> None:
+        text = (_PYTHON_ROOT / "fw_sitl" / "platforms" / "gz" / "gz_camera.py").read_text(
+            encoding="utf-8"
+        )
+        src = text[text.index("def run_bridge") : text.index("def run_gz_publisher_via_docker")]
+        self.assertIn("zmq.NOBLOCK", src)
+        self.assertIn("zmq.Again", src)
+        self.assertNotIn("bytes(msg.data)", src)
 
     def test_image_source_mode_gz(self) -> None:
         text = (_PYTHON_ROOT / "run_balloon_image_source.py").read_text(encoding="utf-8")
@@ -47,6 +57,11 @@ class TestGzCamera(unittest.TestCase):
         src = text[text.index("def run_gz_publisher_via_docker") :]
         self.assertIn("PYTHONUNBUFFERED=1", src)
         self.assertIn("-u", src)
+        self.assertIn("/opt/fixedwing/python/fw_sitl/platforms/gz/gz_camera.py", src)
+        self.assertNotIn(
+            '"/opt/fixedwing/python/fw_sitl/gz_camera.py"',
+            src,
+        )
 
 
 if __name__ == "__main__":

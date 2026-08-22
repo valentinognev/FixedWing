@@ -13,6 +13,7 @@ from pathlib import Path
 
 from fw_sitl.attitude_pid import AttitudePid
 from fw_sitl.flight_setup import DEFAULT_CONTROLLER
+from fw_sitl.px4_att_cascade import Px4FwAttCascade
 
 
 KNOWN_PLANT_IDS = (
@@ -57,6 +58,9 @@ class PlantGains:
     pid_kp: float
     pid_ki: float
     pid_kd: float
+    # Stage-2 (Px4FwAttCascade) coordinated-rate time constants (s).
+    roll_tc: float
+    pitch_tc: float
     bank_kp_heading: float
     bank_kp_cross_track: float
     bank_xt_lookahead_m: float
@@ -77,7 +81,6 @@ class PlantGains:
     fw_airspd_min: float
     fw_airspd_trim: float
     fw_airspd_max: float
-    visual_lock_kp_alt: float
     px4_inner: tuple[tuple[str, float], ...]
     mass_kg: float
     wing_area_m2: float
@@ -100,6 +103,8 @@ class PlantGains:
             self.pid_kp,
             self.pid_ki,
             self.pid_kd,
+            self.roll_tc,
+            self.pitch_tc,
             self.bank_kp_heading,
             self.bank_kp_cross_track,
             self.bank_xt_lookahead_m,
@@ -120,7 +125,6 @@ class PlantGains:
             self.fw_airspd_min,
             self.fw_airspd_trim,
             self.fw_airspd_max,
-            self.visual_lock_kp_alt,
             self.px4_inner,
             self.mass_kg,
             self.wing_area_m2,
@@ -142,6 +146,15 @@ class PlantGains:
     def make_pid(self) -> AttitudePid:
         return AttitudePid(kp=self.pid_kp, ki=self.pid_ki, kd=self.pid_kd)
 
+    def make_cascade(self) -> Px4FwAttCascade:
+        return Px4FwAttCascade(
+            kp=self.pid_kp,
+            ki=self.pid_ki,
+            kd=self.pid_kd,
+            roll_tc=self.roll_tc,
+            pitch_tc=self.pitch_tc,
+        )
+
     def path_kwargs(self) -> dict[str, float]:
         return {
             "kp_heading": self.bank_kp_heading,
@@ -157,7 +170,6 @@ class PlantGains:
             "kp_heading": self.bank_kp_heading,
             "max_roll": self.bank_max_roll_rad,
             "max_pitch": self.att_los_max_pitch_rad,
-            "kp_alt": self.bank_kp_alt,
         }
 
     def thrust_kwargs(self) -> dict[str, float]:

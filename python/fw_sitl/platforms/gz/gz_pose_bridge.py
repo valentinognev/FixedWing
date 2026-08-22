@@ -20,7 +20,9 @@ import sys
 import time
 from pathlib import Path
 
-_PYTHON_ROOT = Path(__file__).resolve().parent.parent.parent
+import zmq
+
+_PYTHON_ROOT = Path(__file__).resolve().parents[3]
 if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
@@ -57,14 +59,25 @@ def run_bridge(*, endpoint: str, model: str, timeout_s: float) -> int:
     names = model_name_candidates(model)
     node = Node()
     pub = PosePublisher(endpoint)
-    got = {"n": 0}
+    got = {"n": 0, "last": 0.0}
     deadline = time.time() + timeout_s
+    min_dt = 1.0 / 20.0
 
     def _cb(msg: Pose_V) -> None:
+        now = time.time()
+        if got["n"] and (now - got["last"]) < min_dt:
+            return
         xyz = extract_named_pose(msg, names)
         if xyz is None:
             return
-        pub.publish(PoseSample(stamp=time.time(), x=xyz[0], y=xyz[1], z=xyz[2]))
+        try:
+            pub.publish(
+                PoseSample(stamp=now, x=xyz[0], y=xyz[1], z=xyz[2]),
+                flags=zmq.NOBLOCK,
+            )
+        except zmq.Again:
+            return
+        got["last"] = now
         got["n"] += 1
 
     if not node.subscribe(Pose_V, DYNAMIC_POSE_TOPIC, _cb):
@@ -100,7 +113,7 @@ def run_gz_pose_publisher_via_docker(
         "PYTHONUNBUFFERED=1",
         "python3",
         "-u",
-        "/opt/fixedwing/python/fw_sitl/gz_pose_bridge.py",
+        "/opt/fixedwing/python/fw_sitl/platforms/gz/gz_pose_bridge.py",
         "--endpoint",
         setup.zmq.pose,
         "--model",

@@ -145,10 +145,10 @@ def connect_sub(
     return sock
 
 
-def send_image(sock: zmq.Socket, frame: ImageFrame) -> None:
+def send_image(sock: zmq.Socket, frame: ImageFrame, flags: int = 0) -> None:
     """PUB multipart: topic | stamp,f64 + width,u32 + height,u32 | rgb bytes."""
     meta = struct.pack("<dII", float(frame.stamp), int(frame.width), int(frame.height))
-    sock.send_multipart([TOPIC_IMAGE, meta, frame.rgb], copy=False)
+    sock.send_multipart([TOPIC_IMAGE, meta, frame.rgb], flags=flags, copy=False)
 
 
 def recv_image(sock: zmq.Socket, flags: int = 0) -> ImageFrame | None:
@@ -279,7 +279,7 @@ def recv_track(sock: zmq.Socket, flags: int = 0) -> TrackMessage | None:
     )
 
 
-def send_pose(sock: zmq.Socket, sample: PoseSample) -> None:
+def send_pose(sock: zmq.Socket, sample: PoseSample, flags: int = 0) -> None:
     """PUB multipart: topic | JSON {stamp,x,y,z}."""
     payload = {
         "stamp": float(sample.stamp),
@@ -287,7 +287,10 @@ def send_pose(sock: zmq.Socket, sample: PoseSample) -> None:
         "y": float(sample.y),
         "z": float(sample.z),
     }
-    sock.send_multipart([TOPIC_POSE, json.dumps(payload, separators=(",", ":")).encode("utf-8")])
+    sock.send_multipart(
+        [TOPIC_POSE, json.dumps(payload, separators=(",", ":")).encode("utf-8")],
+        flags=flags,
+    )
 
 
 def recv_pose(sock: zmq.Socket, flags: int = 0) -> PoseSample | None:
@@ -313,11 +316,19 @@ class ImagePublisher:
     def __init__(self, endpoint: str, context: zmq.Context | None = None) -> None:
         self._sock = bind_pub(endpoint, context)
 
-    def publish(self, frame: ImageFrame | np.ndarray, stamp: float | None = None) -> None:
+    def publish(
+        self,
+        frame: ImageFrame | np.ndarray,
+        stamp: float | None = None,
+        *,
+        flags: int = 0,
+    ) -> None:
         if isinstance(frame, ImageFrame):
-            send_image(self._sock, frame)
+            send_image(self._sock, frame, flags=flags)
         else:
-            send_image(self._sock, ImageFrame.from_numpy(frame, stamp=stamp))
+            send_image(
+                self._sock, ImageFrame.from_numpy(frame, stamp=stamp), flags=flags
+            )
 
     def close(self) -> None:
         self._sock.close(linger=0)
@@ -447,8 +458,8 @@ class PosePublisher:
     def __init__(self, endpoint: str, context: zmq.Context | None = None) -> None:
         self._sock = bind_pub(endpoint, context)
 
-    def publish(self, sample: PoseSample) -> None:
-        send_pose(self._sock, sample)
+    def publish(self, sample: PoseSample, *, flags: int = 0) -> None:
+        send_pose(self._sock, sample, flags=flags)
 
     def close(self) -> None:
         self._sock.close(linger=0)

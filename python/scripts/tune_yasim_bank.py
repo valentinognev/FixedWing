@@ -19,7 +19,7 @@ _RACE = _ROOT / "python/scripts/run_balloon_race.sh"
 _KILL = _ROOT / "python/scripts/kill.sh"
 _LOG = Path("/tmp/yasim_bank_tune_log.jsonl")
 
-# Keys applied to both race_quat and pure_pursuit_quat (plus px4_inner).
+# Keys applied to race_quat, pure_pursuit_quat, and race_euler (plus px4_inner).
 OUTER_KEYS = (
     "pid_kp",
     "pid_ki",
@@ -27,7 +27,6 @@ OUTER_KEYS = (
     "bank_kp_heading",
     "bank_max_roll_rad",
     "bank_kp_alt",
-    "visual_lock_kp_alt",
     "climb_thrust_per_m",
     "approach_speed_mps",
 )
@@ -63,7 +62,7 @@ def apply_gains(gains: dict) -> None:
         if k in gains:
             inner[k] = float(gains[k])
     data["px4_inner"] = [[k, inner[k]] for k in inner]
-    for cname in ("race_quat", "pure_pursuit_quat"):
+    for cname in ("race_quat", "pure_pursuit_quat", "race_euler"):
         block = data["controllers"][cname]
         for k in OUTER_KEYS:
             if k in gains:
@@ -253,7 +252,6 @@ def main() -> int:
         {
             "note": "c1 alt+soft bank",
             "bank_kp_alt": 0.032,
-            "visual_lock_kp_alt": 0.032,
             "climb_thrust_per_m": 0.028,
             "bank_kp_heading": 0.78,
             "bank_max_roll_rad": 0.36,
@@ -279,7 +277,6 @@ def main() -> int:
         {
             "note": "c6 alt nudge",
             "bank_kp_alt": 0.034,
-            "visual_lock_kp_alt": 0.034,
             "climb_thrust_per_m": 0.030,
             "approach_speed_mps": 23.0,
         },
@@ -296,7 +293,6 @@ def main() -> int:
             "bank_kp_heading": 0.75,
             "bank_max_roll_rad": 0.35,
             "bank_kp_alt": 0.036,
-            "visual_lock_kp_alt": 0.036,
             "climb_thrust_per_m": 0.030,
         },
         {
@@ -314,7 +310,6 @@ def main() -> int:
             "FW_RR_P": 0.095,
             "FW_R_TC": 0.80,
             "bank_kp_alt": 0.034,
-            "visual_lock_kp_alt": 0.034,
             "climb_thrust_per_m": 0.029,
             "approach_speed_mps": 23.0,
         },

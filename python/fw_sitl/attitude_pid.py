@@ -74,12 +74,11 @@ def q_des_from_path(
     return from_rpy(roll, pitch, yaw_rad)
 
 
-# Ignore sub-deadband bearing noise so straight homing does not bang roll.
-LOS_HEADING_DEADBAND_RAD = math.radians(5.0)
-# Far-field bookkeeping-Z fills in tiny los_el; close-in los_el *is* the
-# vertical homing error (double-counting stalled YASim). Extra nose-up in
-# a bank offsets the lift lost to load factor (live sag ~10 m under).
-LOS_ALT_BLEND_RANGE_M = 100.0
+# Body-frame seeker: null residual azimuth. A 5° deadband zeroed roll on
+# JSBSim 124324 while cam_az stayed ~−4° and XY miss grew to ~19 m.
+LOS_HEADING_DEADBAND_RAD = 0.0
+# Extra nose-up in a bank offsets lift lost to load factor. Cycle 3 tried
+# 0.18 (JSBSim 132342) but 0.35 matched the better cycle-1 passes (131644).
 LOS_LOAD_PITCH_RAD = 0.35
 
 
@@ -92,27 +91,25 @@ def q_des_from_los(
     max_roll: float = ATT_MAX_ROLL_RAD,
     max_pitch: float = ATT_LOS_MAX_PITCH_RAD,
     heading_rad: float | None = None,
-    z_ned: float | None = None,
-    z_hold: float | None = None,
-    kp_alt: float = 0.0,
     deadband_rad: float = LOS_HEADING_DEADBAND_RAD,
-    range_m: float | None = None,
+    kp_elev: float = 1.0,
 ) -> Quat:
     """Gazebo FW look-at: bank onto LOS azimuth vs body +X, pitch to elevation.
 
     Same contract as ``send_bank_hold``: PX4 FW tracks roll/pitch/thrust;
-    yaw in the quaternion stays current. Roll uses ``heading_rad`` if given,
-    otherwise actual yaw, vs LOS azimuth so the balloon sits in front of the
-    nose (body +X). Used only while on screen.
+    yaw in the quaternion stays current. ``dir_ned`` is **body FRD** LOS
+    (camera→body via mount az/el, or NED LOS rotated by attitude). Roll is
+    bearing vs body +X; pitch is elevation vs body +X. Used only while on
+    screen.
 
-    ``kp_alt`` mixes the path altitude loop into pitch when still far
-    (geometric ``los_el`` is only a few degrees hundreds of metres out).
-    ``range_m`` fades that mix out on final so LOS elevation is not
-    double-counted. Banked flight adds ``LOS_LOAD_PITCH_RAD`` nose-up so
-    the plane does not sag ~10 m under the balloon in the intercept turn.
+    Banked flight adds ``LOS_LOAD_PITCH_RAD`` nose-up so the plane does not
+    sag under the balloon in the intercept turn. ``kp_elev`` scales body
+    elevation (1 = match blob; >1 dives/climbs harder because in-view
+    thrust holds current Z).
 
-    ``deadband_rad`` zeros (then softens) small heading error so HSV/geom
-    jitter under ~5° does not command saturated bank on a straight run.
+    ``deadband_rad`` optionally zeros bearing below a threshold (default 0:
+    body seeker must keep banking on a few degrees of blob offset).
+    ``heading_rad`` is an optional extra bearing offset (default 0 = body +X).
     """
     dx, dy, dz = (float(dir_ned[0]), float(dir_ned[1]), float(dir_ned[2]))
     horiz = math.hypot(dx, dy)
@@ -120,23 +117,16 @@ def q_des_from_los(
         yaw_act = float(yaw_rad)
     else:
         yaw_act = rpy_from_quat(q_act)[2]
-    los_az = math.atan2(dy, dx) if horiz > 1e-9 else yaw_act
-    los_el = math.atan2(-dz, horiz) if horiz > 1e-9 else 0.0
-    heading_ref = float(heading_rad) if heading_rad is not None else yaw_act
+    # Body FRD: no horizontal component → azimuth 0 (not NED yaw).
+    los_az = math.atan2(dy, dx) if horiz > 1e-9 else 0.0
+    los_el = math.atan2(-dz, horiz)
+    heading_ref = float(heading_rad) if heading_rad is not None else 0.0
     heading_err = wrap_pi(los_az - heading_ref)
     db = max(0.0, float(deadband_rad))
     if abs(heading_err) <= db:
         heading_err = 0.0
-    else:
-        heading_err = math.copysign(abs(heading_err) - db, heading_err)
     roll = max(-max_roll, min(max_roll, kp_heading * heading_err))
-    pitch = los_el
-    if z_ned is not None and z_hold is not None:
-        alt_err = float(z_ned) - float(z_hold)
-        far = 1.0
-        if range_m is not None and math.isfinite(float(range_m)):
-            far = min(1.0, max(0.0, float(range_m) / LOS_ALT_BLEND_RANGE_M))
-        pitch += float(kp_alt) * far * alt_err
+    pitch = float(kp_elev) * los_el
     cphi = math.cos(max(-1.2, min(1.2, roll)))
     pitch += LOS_LOAD_PITCH_RAD * (1.0 / max(0.35, abs(cphi)) - 1.0)
     pitch = max(-max_pitch, min(max_pitch, pitch))

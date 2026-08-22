@@ -3,8 +3,8 @@
 Comments (``//``, ``/* */``) are stripped outside of strings, then
 ``json.loads``. Top-level shared keys merge with ``controllers.<id>``.
 PP-only aero/governor fields are required under ``pure_pursuit_quat``;
-``race_quat`` may omit them and inherits those keys from the sibling
-``controllers.pure_pursuit_quat`` block in the same file.
+``race_quat``/``race_euler`` may omit them and inherit those keys from
+the sibling ``controllers.pure_pursuit_quat`` block in the same file.
 """
 from __future__ import annotations
 
@@ -112,10 +112,10 @@ def merge_plant_controller(
 
     Missing controller block → ``KeyError``. Unknown controller id →
     ``ValueError``. Controller blocks must not redefine top-level keys.
-    For ``race_quat``, omitted PP-only keys are taken from the sibling
-    ``controllers.pure_pursuit_quat`` block (hard error if that sibling
-    is missing a required PP key). For ``pure_pursuit_quat``, PP-only
-    keys are required in-block.
+    For ``race_quat``/``race_euler``, omitted PP-only keys are taken from
+    the sibling ``controllers.pure_pursuit_quat`` block (hard error if
+    that sibling is missing a required PP key). For ``pure_pursuit_quat``,
+    PP-only keys are required in-block.
     """
     cid = str(controller).strip()
     if cid not in KNOWN_CONTROLLER_IDS:
@@ -156,12 +156,12 @@ def merge_plant_controller(
         merged[key] = data[key]
     merged.update(block)
 
-    if cid == "race_quat":
+    if cid in ("race_quat", "race_euler"):
         sibling = controllers.get("pure_pursuit_quat")
         if not isinstance(sibling, dict):
             raise KeyError(
                 "plant JSONC missing controllers.pure_pursuit_quat "
-                "(required to fill race_quat PP-only fields)"
+                f"(required to fill {cid} PP-only fields)"
             )
         for key in _PP_ONLY_KEYS:
             if key in merged:
@@ -169,7 +169,7 @@ def merge_plant_controller(
             if key not in sibling:
                 raise KeyError(
                     "controllers.pure_pursuit_quat missing required PP field "
-                    f"{key!r} (needed to fill race_quat)"
+                    f"{key!r} (needed to fill {cid})"
                 )
             merged[key] = sibling[key]
     else:

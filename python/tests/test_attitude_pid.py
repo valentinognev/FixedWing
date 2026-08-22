@@ -83,7 +83,7 @@ class TestQDesFromLos(unittest.TestCase):
         self.assertLess(pitch, math.radians(5.0))
 
     def test_los_heading_deadband_zeros_small_bank(self) -> None:
-        # Straight homing: ~2° bearing noise must not bang roll ±max.
+        # Optional deadband still available; 2° noise with 3° db → no bank.
         az = math.radians(2.0)
         dir_ned = (math.cos(az), math.sin(az), 0.0)
         q_des = q_des_from_los(
@@ -92,12 +92,14 @@ class TestQDesFromLos(unittest.TestCase):
         roll, _p, _y = rpy_from_quat(q_des)
         self.assertAlmostEqual(roll, 0.0, places=5)
 
-    def test_los_default_deadband_ignores_four_deg_bearing_noise(self) -> None:
+    def test_los_default_banks_on_four_deg_body_az(self) -> None:
+        """JSBSim 124324: 5° default deadband zeroed roll while cam_az≈−4°."""
         az = math.radians(4.0)
-        dir_ned = (math.cos(az), math.sin(az), 0.0)
-        q_des = q_des_from_los(dir_ned, yaw_rad=0.0, kp_heading=2.0)
+        dir_body = (math.cos(az), math.sin(az), 0.0)
+        q_des = q_des_from_los(dir_body, yaw_rad=0.0, kp_heading=1.0)
         roll, _p, _y = rpy_from_quat(q_des)
-        self.assertAlmostEqual(roll, 0.0, places=5)
+        self.assertGreater(roll, math.radians(3.0))
+        self.assertAlmostEqual(roll, az, places=2)
 
     def test_los_above_pitches_up(self) -> None:
         el = math.radians(15.0)
@@ -130,22 +132,16 @@ class TestQDesFromLos(unittest.TestCase):
         _r, pitch, _y = rpy_from_quat(q_des)
         self.assertAlmostEqual(pitch, el, places=2)
 
-    def test_los_high_pitches_down_beyond_elevation(self) -> None:
-        # Co-alt balloon, plane 10 m high: los_el is only a couple degrees,
-        # not enough to descend. Altitude term must add nose-down.
-        dir_ned = (1.0, 0.0, 0.0)
-        q_level = q_des_from_los(dir_ned, yaw_rad=0.0, z_ned=-10.0, z_hold=0.0)
-        q_high = q_des_from_los(
-            dir_ned,
-            yaw_rad=0.0,
-            z_ned=-10.0,
-            z_hold=0.0,
-            kp_alt=0.025,
+    def test_elev_lead_dives_past_los_el(self) -> None:
+        """JSBSim 131644 balloon 2: XY 1.7 m but 30 m high; pitch=el never dives."""
+        el = math.radians(-20.0)
+        dir_body = (math.cos(el), 0.0, math.sin(-el))
+        q_des = q_des_from_los(
+            dir_body, yaw_rad=0.0, kp_heading=0.0, kp_elev=1.4
         )
-        _r0, p_level, _y0 = rpy_from_quat(q_level)
-        _r1, p_high, _y1 = rpy_from_quat(q_high)
-        self.assertAlmostEqual(p_level, 0.0, places=2)
-        self.assertLess(p_high, p_level - math.radians(8.0))
+        _r, pitch, _y = rpy_from_quat(q_des)
+        self.assertLess(pitch, el - math.radians(6.0))
+        self.assertAlmostEqual(pitch, 1.4 * el, places=2)
 
     def test_los_bank_adds_nose_up_against_load_factor(self) -> None:
         """23° intercept bank drops lift; without extra pitch they sag ~10 m."""
@@ -156,20 +152,7 @@ class TestQDesFromLos(unittest.TestCase):
         _r0, p_level, _ = rpy_from_quat(q_level)
         _r1, p_bank, _ = rpy_from_quat(q_bank)
         self.assertGreater(abs(_r1), math.radians(15.0))
-        self.assertGreater(p_bank, p_level + math.radians(1.5))
-
-    def test_close_range_shrinks_bookkeeping_alt_mix(self) -> None:
-        """Near the balloon los_el already is the vertical error; adding full
-        kp_alt double-counted and stalled (YASim 195358 ±20° pitch)."""
-        dir_ned = (1.0, 0.0, 0.0)
-        kwargs = dict(yaw_rad=0.0, z_ned=10.0, z_hold=0.0, kp_alt=0.028)
-        _r0, p_far, _ = rpy_from_quat(
-            q_des_from_los(dir_ned, range_m=200.0, **kwargs)
-        )
-        _r1, p_near, _ = rpy_from_quat(
-            q_des_from_los(dir_ned, range_m=15.0, **kwargs)
-        )
-        self.assertGreater(p_far, p_near + math.radians(5.0))
+        self.assertGreater(p_bank - p_level, math.radians(1.5))
 
     def test_los_on_body_x_zero_roll(self) -> None:
         """Balloon along body +X: no bank, even if a track kwarg is omitted."""
@@ -177,7 +160,43 @@ class TestQDesFromLos(unittest.TestCase):
         q_des = q_des_from_los(dir_ned, yaw_rad=0.0)
         roll, _p, yaw = rpy_from_quat(q_des)
         self.assertAlmostEqual(roll, 0.0, places=2)
-        self.assertAlmostEqual(yaw, 0.0, places=2)
+
+    def test_body_los_elevation_ignores_yaw(self) -> None:
+        """Homing is vs body +X; yaw must not be subtracted from body bearing."""
+        el = math.radians(15.0)
+        dir_body = (math.cos(el), 0.0, -math.sin(el))
+        yaw = math.radians(40.0)
+        q_des = q_des_from_los(
+            dir_body, yaw_rad=yaw, q_act=from_rpy(0.0, 0.0, yaw)
+        )
+        roll, pitch, yaw_out = rpy_from_quat(q_des)
+        self.assertAlmostEqual(yaw_out, yaw, places=2)
+        self.assertAlmostEqual(roll, 0.0, places=2)
+        self.assertAlmostEqual(pitch, el, places=2)
+
+    def test_body_vertical_los_does_not_bank_from_yaw(self) -> None:
+        """NED leftover used yaw as azimuth when horiz≈0 → banked on heading."""
+        yaw = math.radians(40.0)
+        q_des = q_des_from_los(
+            (0.0, 0.0, -1.0),
+            yaw_rad=yaw,
+            q_act=from_rpy(0.0, 0.0, yaw),
+            max_pitch=0.70,
+        )
+        roll, pitch, yaw_out = rpy_from_quat(q_des)
+        self.assertAlmostEqual(yaw_out, yaw, places=2)
+        self.assertAlmostEqual(roll, 0.0, places=2)
+        self.assertGreater(pitch, math.radians(35.0))
+
+    def test_nine_deg_az_with_kp_two_leads_bank(self) -> None:
+        """JSBSim 125350: kp=1 left cam_az stuck ~9° (roll≈az, no heading close)."""
+        az = math.radians(9.0)
+        dir_body = (math.cos(az), math.sin(az), 0.0)
+        q_des = q_des_from_los(
+            dir_body, yaw_rad=0.0, kp_heading=2.0, max_roll=0.79
+        )
+        roll, _p, _y = rpy_from_quat(q_des)
+        self.assertAlmostEqual(roll, 2.0 * az, places=2)
 
 
 class TestAttitudePid(unittest.TestCase):

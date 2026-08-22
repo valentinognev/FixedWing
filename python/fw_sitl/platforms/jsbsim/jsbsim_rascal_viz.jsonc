@@ -17,9 +17,9 @@
   /* PX4 FW_* overlay besides airspeed (airspeed comes from fw_airspd_*). */
   "px4_inner":
   [
-    ["FW_PR_FF", 0.4], /* FW_PR_FF */
+    ["FW_PR_FF", 0.55], /* FW_PR_FF */
     ["FW_PR_I", 0.05], /* FW_PR_I */
-    ["FW_PR_P", 0.05], /* FW_PR_P */
+    ["FW_PR_P", 0.10], /* FW_PR_P */
     ["FW_R_TC", 0.45], /* FW_R_TC */
     ["FW_RR_FF", 0.5], /* FW_RR_FF */
     ["FW_RR_I", 0.18], /* FW_RR_I */
@@ -40,8 +40,15 @@
       // Attitude PID derivative gain.
       "pid_kd": 0.04,
 
+      // Stage-2 (Px4FwAttCascade) roll time constant (s). From FW_R_TC=0.45.
+      "roll_tc": 0.45,
+
+      // Stage-2 pitch time constant (s). No FW_P_TC → PX4 default 0.4.
+      "pitch_tc": 0.4,
+
       // Path/LOS bank: heading-error P (rad roll / rad heading).
-      "bank_kp_heading": 1.0,
+      // Same seeker lead as headless JSBSim (125350 residual az).
+      "bank_kp_heading": 1.5,
 
       // Path bank: cross-track P (rad roll / m).
       "bank_kp_cross_track": 0.003,
@@ -49,8 +56,8 @@
       // Path: extra lookahead mixed into cross-track (m).
       "bank_xt_lookahead_m": 180.0,
 
-      // Max commanded roll (rad).
-      "bank_max_roll_rad": 0.62,
+      // Max commanded roll (rad). ~45°.
+      "bank_max_roll_rad": 0.70,
 
       // Path/LOS: altitude-error mix into pitch (rad / m).
       "bank_kp_alt": 0.028,
@@ -80,16 +87,79 @@
       "speed_mps": 18.0,
 
       // Final-approach airspeed (m/s) inside slow_range_m.
-      "approach_speed_mps": 15.0,
+      "approach_speed_mps": 16.0,
 
       // Range (m) at which speed blends cruise → approach.
-      "slow_range_m": 180.0,
+      "slow_range_m": 140.0,
 
       // Thrust P vs speed error (1 / (m/s)).
-      "speed_thrust_per_mps": 0.05,
+      "speed_thrust_per_mps": 0.05
+    },
+    // LOS Euler-error close (race_euler); outer gains copied from race_quat; omits PP-only aero/governor fields.
+    "race_euler": {
+      // Attitude PID (quaternion error → body rates) P gain.
+      "pid_kp": 0.8,
 
-      // HSV look-at altitude mix (rad/m).
-      "visual_lock_kp_alt": 0.028
+      // Attitude PID integral gain.
+      "pid_ki": 0.12,
+
+      // Attitude PID derivative gain.
+      "pid_kd": 0.04,
+
+      // Stage-2 (Px4FwAttCascade) roll time constant (s). From FW_R_TC=0.45.
+      "roll_tc": 0.45,
+
+      // Stage-2 pitch time constant (s). No FW_P_TC → PX4 default 0.4.
+      "pitch_tc": 0.4,
+
+      // Path/LOS bank: heading-error P (rad roll / rad heading).
+      // Same seeker lead as headless JSBSim (125350 residual az).
+      "bank_kp_heading": 1.5,
+
+      // Path bank: cross-track P (rad roll / m).
+      "bank_kp_cross_track": 0.003,
+
+      // Path: extra lookahead mixed into cross-track (m).
+      "bank_xt_lookahead_m": 180.0,
+
+      // Max commanded roll (rad). ~45°.
+      "bank_max_roll_rad": 0.70,
+
+      // Path/LOS: altitude-error mix into pitch (rad / m).
+      "bank_kp_alt": 0.028,
+
+      // Legacy path pitch clamp used by path_kwargs (rad).
+      "bank_max_pitch_rad": 0.12,
+
+      // Attitude path-hold max pitch (rad).
+      "att_max_pitch_rad": 0.35,
+
+      // LOS / geometric chase max pitch (rad).
+      "att_los_max_pitch_rad": 0.7,
+
+      // Nominal thrust fraction at cruise.
+      "cruise_thrust": 0.62,
+
+      // Extra thrust per metre of altitude error (1/m).
+      "climb_thrust_per_m": 0.02,
+
+      // Thrust fraction floor.
+      "min_thrust": 0.22,
+
+      // Thrust fraction ceiling.
+      "max_thrust": 1.0,
+
+      // Cruise airspeed command (m/s).
+      "speed_mps": 18.0,
+
+      // Final-approach airspeed (m/s) inside slow_range_m.
+      "approach_speed_mps": 16.0,
+
+      // Range (m) at which speed blends cruise → approach.
+      "slow_range_m": 140.0,
+
+      // Thrust P vs speed error (1 / (m/s)).
+      "speed_thrust_per_mps": 0.05
     },
     // Pure-pursuit a_des → attitude_from_accel → SpeedGovernor.
     "pure_pursuit_quat": {
@@ -102,6 +172,12 @@
       // Attitude PID derivative gain.
       "pid_kd": 0.04,
 
+      // Stage-2 (Px4FwAttCascade) roll time constant (s). From FW_R_TC=0.45.
+      "roll_tc": 0.45,
+
+      // Stage-2 pitch time constant (s). No FW_P_TC → PX4 default 0.4.
+      "pitch_tc": 0.4,
+
       // Path/LOS bank: heading-error P (rad roll / rad heading).
       "bank_kp_heading": 1.0,
 
@@ -149,9 +225,6 @@
 
       // Thrust P vs speed error (1 / (m/s)).
       "speed_thrust_per_mps": 0.05,
-
-      // HSV look-at altitude mix (rad/m).
-      "visual_lock_kp_alt": 0.028,
 
       // Vehicle mass (kg) for T = (m a_parallel + D + mg sin γ) / cos α.
       "mass_kg": 13.0,

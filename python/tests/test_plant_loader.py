@@ -34,6 +34,8 @@ class TestPlantGainsFromDict(unittest.TestCase):
             "pid_kp": 0.8,
             "pid_ki": 0.12,
             "pid_kd": 0.04,
+            "roll_tc": 0.45,
+            "pitch_tc": 0.4,
             "bank_kp_heading": 1.0,
             "bank_kp_cross_track": 0.003,
             "bank_xt_lookahead_m": 180.0,
@@ -50,7 +52,6 @@ class TestPlantGainsFromDict(unittest.TestCase):
             "approach_speed_mps": 15.0,
             "slow_range_m": 180.0,
             "speed_thrust_per_mps": 0.05,
-            "visual_lock_kp_alt": 0.020,
         }
 
     def _pp_only(self) -> dict:
@@ -83,6 +84,7 @@ class TestPlantGainsFromDict(unittest.TestCase):
             "px4_inner": [["FW_THR_TRIM", 0.62]],
             "controllers": {
                 "race_quat": dict(outer),
+                "race_euler": dict(outer),
                 "pure_pursuit_quat": {**outer, **self._pp_only()},
             },
         }
@@ -116,6 +118,28 @@ class TestPlantGainsFromDict(unittest.TestCase):
         with self.assertRaises(KeyError) as ctx:
             merge_plant_controller(data, "race_quat")
         self.assertIn("mass_kg", str(ctx.exception))
+
+    def test_race_euler_fills_pp_from_sibling(self) -> None:
+        data = self._nested()
+        data["controllers"]["pure_pursuit_quat"]["mass_kg"] = 99.0
+        flat = merge_plant_controller(data, "race_euler")
+        p = plant_gains_from_dict(flat)
+        self.assertAlmostEqual(p.mass_kg, 99.0)
+        self.assertAlmostEqual(p.pid_kp, 0.8)
+
+    def test_race_euler_fails_if_sibling_pp_missing_key(self) -> None:
+        data = self._nested()
+        del data["controllers"]["pure_pursuit_quat"]["mass_kg"]
+        with self.assertRaises(KeyError) as ctx:
+            merge_plant_controller(data, "race_euler")
+        self.assertIn("mass_kg", str(ctx.exception))
+
+    def test_missing_race_euler_block_fails(self) -> None:
+        data = self._nested()
+        del data["controllers"]["race_euler"]
+        with self.assertRaises((KeyError, ValueError)) as ctx:
+            merge_plant_controller(data, "race_euler")
+        self.assertIn("race_euler", str(ctx.exception))
 
     def test_controller_block_cannot_override_top_level(self) -> None:
         data = self._nested()
@@ -161,6 +185,8 @@ class TestLoadPlantJsoncFile(unittest.TestCase):
         self.assertIn("race_quat", data["controllers"])
         self.assertNotIn("pid_kp", data)
         self.assertNotIn("mass_kg", data["controllers"]["race_quat"])
+        self.assertIn("race_euler", data["controllers"])
+        self.assertNotIn("mass_kg", data["controllers"]["race_euler"])
         flat = merge_plant_controller(data, "pure_pursuit_quat")
         p = plant_gains_from_dict(flat)
         self.assertEqual(p.plant_id, "jsbsim_rascal")
@@ -192,6 +218,56 @@ class TestLoadPlantJsoncFile(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             load_plant_gains("jsbsim_rascal", controller="not_a_controller")
         self.assertIn("controller", str(ctx.exception).lower())
+
+    def test_load_plant_gains_race_euler(self) -> None:
+        from fw_sitl.plant_gains import load_plant_gains, KNOWN_PLANT_IDS
+
+        race = load_plant_gains("jsbsim_rascal", controller="race_quat")
+        euler = load_plant_gains("jsbsim_rascal", controller="race_euler")
+        self.assertAlmostEqual(euler.pid_kp, race.pid_kp)
+        self.assertAlmostEqual(euler.bank_kp_heading, race.bank_kp_heading)
+        self.assertAlmostEqual(euler.mass_kg, race.mass_kg)
+        for plant_id in KNOWN_PLANT_IDS:
+            p = load_plant_gains(plant_id, controller="race_euler")
+            self.assertEqual(p.plant_id, plant_id)
+
+    def test_race_euler_shares_outer_gains_with_race_quat_all_plants(self) -> None:
+        """Plan-mandated JSONC copy (race_euler = verbatim race_quat outer
+        block) must actually hold for every plant, not just jsbsim_rascal."""
+        from fw_sitl.plant_gains import load_plant_gains, KNOWN_PLANT_IDS
+
+        shared_attrs = (
+            "pid_kp",
+            "pid_ki",
+            "pid_kd",
+            "roll_tc",
+            "pitch_tc",
+            "bank_kp_heading",
+            "bank_kp_cross_track",
+            "bank_xt_lookahead_m",
+            "bank_max_roll_rad",
+            "bank_kp_alt",
+            "bank_max_pitch_rad",
+            "att_max_pitch_rad",
+            "att_los_max_pitch_rad",
+            "cruise_thrust",
+            "climb_thrust_per_m",
+            "min_thrust",
+            "max_thrust",
+            "approach_speed_mps",
+            "slow_range_m",
+            "speed_thrust_per_mps",
+        )
+        for plant_id in KNOWN_PLANT_IDS:
+            with self.subTest(plant_id=plant_id):
+                race = load_plant_gains(plant_id, controller="race_quat")
+                euler = load_plant_gains(plant_id, controller="race_euler")
+                for attr in shared_attrs:
+                    self.assertAlmostEqual(
+                        getattr(euler, attr),
+                        getattr(race, attr),
+                        msg=f"{plant_id}: {attr} differs between race_quat/race_euler",
+                    )
 
     def test_load_plant_gains_missing_controller_block_raises(self) -> None:
         from fw_sitl.plant_gains import load_plant_gains

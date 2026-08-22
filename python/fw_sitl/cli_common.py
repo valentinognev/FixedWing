@@ -82,11 +82,12 @@ def add_common_args(parser: argparse.ArgumentParser, *, default_sim: Path) -> No
     )
     parser.add_argument(
         "--cmd-mode",
-        choices=("velocity", "attitude"),
+        choices=("velocity", "attitude", "rates"),
         default="velocity",
         help=(
             "OFFBOARD hold: velocity = locked-line path setpoints; "
-            "attitude = quaternion PID then Euler + thrust SET_ATTITUDE_TARGET "
+            "attitude = Euler cascade then Euler/quat SET_ATTITUDE_TARGET; "
+            "rates = body pqr from the Euler cascade "
             "(default: velocity)"
         ),
     )

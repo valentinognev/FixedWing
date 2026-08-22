@@ -22,6 +22,7 @@ from fw_sitl.mavlink_io import (
     poll_vehicle_state,
     prepare_sitl_arming,
     reboot_autopilot,
+    send_attitude_rates,
     send_attitude_target,
     send_path_setpoint,
     set_offboard,
@@ -31,6 +32,7 @@ from fw_sitl.path_geometry import (
     ned_velocity_from_course,
 )
 from fw_sitl.plant_gains import PlantGains
+from fw_sitl.px4_att_cascade import Px4FwAttCascade
 from fw_sitl.quat import from_rpy, rpy_from_quat
 from fw_sitl.sim_lifecycle import kill_sim, start_sim
 
@@ -571,6 +573,15 @@ def run_locked_line_hold(
     prev_xy: tuple[float, float] | None = None
     prev_z: float | None = None
     att_pid = plant.make_pid()
+    # Stage-2 rates cascade, gains mapped from the same pid_kp/ki/kd (or
+    # existing pid mapping); only exercised when cmd_mode == "rates".
+    rates_cascade = Px4FwAttCascade(
+        kp=att_pid.kp,
+        ki=att_pid.ki,
+        kd=att_pid.kd,
+        roll_tc=plant.roll_tc,
+        pitch_tc=plant.pitch_tc,
+    )
     # Step larger than this ⇒ LOCAL_POSITION_NED discontinuity (EKF).
     ned_jump_m = 40.0
     z_jump_m = 15.0
@@ -604,7 +615,7 @@ def run_locked_line_hold(
             prev_xy = (xy[0], xy[1])
             prev_z = z_now
         z_now = prev_z if prev_z is not None else z_hold
-        if cmd_mode == "attitude":
+        if cmd_mode in ("attitude", "rates"):
             q_act = history.last_q
             if q_act is None and history.last_att_rad is not None:
                 q_act = from_rpy(*history.last_att_rad)
@@ -613,6 +624,7 @@ def run_locked_line_hold(
                 # ~90° fake yaw error vs a westbound lock and slewed the PID.
                 q_act = from_rpy(0.0, 0.0, course_rad)
                 att_pid.reset()
+                rates_cascade.reset()
             yaw_act = (
                 history.last_att_rad[2] if history.last_att_rad is not None else course_rad
             )
@@ -628,7 +640,6 @@ def run_locked_line_hold(
                 heading_rad=heading_ref,
                 **plant.path_kwargs(),
             )
-            q_cmd = att_pid.command(q_des, q_act, period)
             roll_des = rpy_from_quat(q_des)[0]
             thrust = thrust_for_hold(
                 z_ned=z_now,
@@ -638,8 +649,15 @@ def run_locked_line_hold(
                 roll_rad=roll_des,
                 **plant.thrust_kwargs(),
             )
-            roll, pitch, yaw = rpy_from_quat(q_cmd)
-            send_attitude_target(master, roll, pitch, yaw, thrust)
+            if cmd_mode == "rates":
+                out = rates_cascade.command(
+                    q_des, q_act, period, groundspeed=history.last_groundspeed
+                )
+                send_attitude_rates(master, *out.body_rates, thrust)
+            else:
+                q_cmd = att_pid.command(q_des, q_act, period)
+                roll, pitch, yaw = rpy_from_quat(q_cmd)
+                send_attitude_target(master, roll, pitch, yaw, thrust)
         else:
             send_path_setpoint(
                 master,

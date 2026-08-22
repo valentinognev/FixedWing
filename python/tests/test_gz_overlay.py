@@ -59,6 +59,16 @@ class TestGzOverlay(unittest.TestCase):
         hfov = math.radians(90.0)
         self.assertIn(f"{hfov:.6f}", out)
 
+    def test_inject_race_cam_is_cheap_to_render(self) -> None:
+        """Subscribed 640×480 race_cam with default 4× MSAA + GUI visualize stalls gz-sim."""
+        out = inject_race_cam(
+            _STOCK, width=640, height=480, hfov_deg=90.0, eye_forward_m=5.0
+        )
+        self.assertIn("<visualize>false</visualize>", out)
+        self.assertIn("<anti_aliasing>0</anti_aliasing>", out)
+        self.assertIn("<far>2000</far>", out)
+        self.assertNotIn("<far>5000</far>", out)
+
     def test_apply_overlay_adds_velocity_plugin(self) -> None:
         out = apply_plane_overlay(
             _STOCK, width=640, height=480, hfov_deg=90.0, eye_forward_m=5.0

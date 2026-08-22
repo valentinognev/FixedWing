@@ -40,6 +40,7 @@ def inject_race_cam(
       <sensor name="race_cam" type="camera">
         <always_on>1</always_on>
         <update_rate>{float(update_rate_hz):.1f}</update_rate>
+        <visualize>false</visualize>
         <camera>
           <horizontal_fov>{hfov:.6f}</horizontal_fov>
           <image>
@@ -49,8 +50,9 @@ def inject_race_cam(
           </image>
           <clip>
             <near>0.1</near>
-            <far>5000</far>
+            <far>2000</far>
           </clip>
+          <anti_aliasing>0</anti_aliasing>
         </camera>
       </sensor>
     </link>

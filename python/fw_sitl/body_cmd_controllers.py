@@ -13,7 +13,7 @@ from fw_sitl.body_cmd_bridge import (
     BodyCmdBridge,
 )
 from fw_sitl.controllers._chase_common import _commanded_chase_speed
-from fw_sitl.flight_setup import DEFAULT_CONTROLLER
+from fw_sitl.flight_setup import DEFAULT_ATTITUDE_FORMAT, DEFAULT_CONTROLLER
 from fw_sitl.path_geometry import wrap_pi
 from fw_sitl.plant_gains import PlantGains
 
@@ -51,6 +51,7 @@ class ChaseController(Protocol):
         visual_lock: bool = False,
         q_exec: tuple[float, float, float, float] | None = None,
         range_m: float | None = None,
+        dir_body: tuple[float, float, float] | None = None,
     ) -> tuple[float, float, float]: ...
 
 
@@ -90,7 +91,9 @@ class VelocityChaseController:
         visual_lock: bool = False,
         q_exec: tuple[float, float, float, float] | None = None,
         range_m: float | None = None,
+        dir_body: tuple[float, float, float] | None = None,
     ) -> tuple[float, float, float]:
+        _ = (in_view, z_target, vx, vy, vz, path_lock_token, visual_lock, q_exec, dir_body)
         course = math.atan2(float(dir_ned[1]), float(dir_ned[0]))
         yaw = float(yaw_rad) if yaw_rad is not None else course
         v_cmd = _commanded_chase_speed(
@@ -110,7 +113,11 @@ class VelocityChaseController:
 
 
 class RateChaseController:
-    """Stub: rates body-cmd mode not implemented."""
+    """Deprecated stub. ``make_body_cmd_controller`` no longer returns this;
+    rates body-cmd mode is implemented via the selectable chase controllers
+    (``build_controller(..., cmd_mode="rates")``). Kept only so any direct
+    callers of this class still get a clear error instead of silent misuse.
+    """
 
     def aim_point_ned(
         self,
@@ -139,6 +146,7 @@ class RateChaseController:
         visual_lock: bool = False,
         q_exec: tuple[float, float, float, float] | None = None,
         range_m: float | None = None,
+        dir_body: tuple[float, float, float] | None = None,
     ) -> tuple[float, float, float]:
         raise NotImplementedError("rates body-cmd mode is not implemented")
 
@@ -163,6 +171,7 @@ def make_body_cmd_controller(
     alt_preserve_heading_err_rad: float = DEFAULT_ALT_PRESERVE_HEADING_ERR_RAD,
     plant: PlantGains | None = None,
     controller: str = DEFAULT_CONTROLLER,
+    attitude_format: str = DEFAULT_ATTITUDE_FORMAT,
 ) -> ChaseController:
     """Construct the controller for the selected body-cmd mode / chase law."""
     from fw_sitl.controllers import build_controller
@@ -176,15 +185,15 @@ def make_body_cmd_controller(
     )
     if resolved is BodyCmdMode.VELOCITY:
         return VelocityChaseController(bridge, plant=plant)
-    if resolved is BodyCmdMode.ATTITUDE:
+    if resolved in (BodyCmdMode.ATTITUDE, BodyCmdMode.RATES):
         return build_controller(
             controller,
             bridge,
             speed_mps=speed_mps,
             plant=plant,
+            cmd_mode=resolved.value,
+            attitude_format=attitude_format,
         )
-    if resolved is BodyCmdMode.RATES:
-        return RateChaseController()
     raise ValueError(f"unhandled body-cmd mode {resolved!r}")
 
 

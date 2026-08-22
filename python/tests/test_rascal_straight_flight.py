@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
+import sys
 import unittest
 from pathlib import Path
 
 _PYTHON_ROOT = Path(__file__).resolve().parents[1]
+if str(_PYTHON_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PYTHON_ROOT))
+
+from fw_sitl.cli_common import add_common_args
+
 _JSB = _PYTHON_ROOT / "run_straight_flight_jsbsim.py"
 _YAS = _PYTHON_ROOT / "run_straight_flight_yasim.py"
 _CORE = _PYTHON_ROOT / "fw_sitl" / "straight_flight_core.py"
@@ -56,6 +63,25 @@ class TestRascalStraightFlightAttitude(unittest.TestCase):
         mav = (_PYTHON_ROOT / "fw_sitl" / "mavlink_io.py").read_text(encoding="utf-8")
         self.assertIn('"CBRK_SUPPLY_CHK"', mav)
         self.assertNotIn('"CBRK_SUPPLYCHK"', mav)
+
+    def test_cmd_mode_choices_include_rates(self) -> None:
+        """--cmd-mode rates must be reachable; straight_flight_core already
+        dispatches it (cmd_mode in ("attitude", "rates"))."""
+        parser = argparse.ArgumentParser()
+        add_common_args(parser, default_sim=Path("dummy.sh"))
+        args = parser.parse_args(["--cmd-mode", "rates"])
+        self.assertEqual(args.cmd_mode, "rates")
+        default_args = parser.parse_args([])
+        self.assertEqual(default_args.cmd_mode, "velocity")
+
+    def test_cmd_mode_rates_calls_send_attitude_rates(self) -> None:
+        """Source-contract (as in test_hold_sends_angles_not_raw_quat):
+        cmd_mode == "rates" must dispatch to send_attitude_rates."""
+        text = _CORE.read_text(encoding="utf-8")
+        self.assertIn('cmd_mode == "rates"', text)
+        self.assertIn(
+            "send_attitude_rates(master, *out.body_rates, thrust)", text
+        )
 
 
 if __name__ == "__main__":

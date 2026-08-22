@@ -32,7 +32,8 @@ from fw_sitl.balloon_tracker import track_centroid_near_expected
 from fw_sitl.body_cmd_controllers import make_body_cmd_controller, parse_body_cmd_mode
 from fw_sitl.camera_model import (
     CameraModel,
-    dir_cam_to_ned,
+    dir_body_to_ned,
+    dir_ned_to_body,
     offset_on_screen,
     project_ned_offset_to_pixel,
 )
@@ -699,6 +700,7 @@ def main() -> int:
         ),
         plant=plant,
         controller=setup.guidance.controller,
+        attitude_format=setup.guidance.attitude_format,
     )
     if hasattr(controller, "_bridge"):
         controller._bridge._alt_hold_z = float(
@@ -1062,7 +1064,8 @@ def main() -> int:
                 tracker_in_view=tracker_in_view, on_screen=on_screen
             )
             if tracker_in_view:
-                dir_ned = dir_cam_to_ned(last_dir_cam, camera, att[0], att[1], att[2])
+                dir_body = camera.dir_cam_to_body(last_dir_cam)
+                dir_ned = dir_body_to_ned(dir_body, att[0], att[1], att[2])
                 race.update_track(True, dir_ned, now_s=now_s)
             elif on_screen:
                 # Geometric-only projection is dead-reckoning (no real HSV lock):
@@ -1167,11 +1170,16 @@ def main() -> int:
                 last_published_assisted = race.assisted
                 last_color_pub_t = now_wall
 
-            # Always close chase LOS (blob when visible, else geometric).
-            # Overlay still follows race.assisted; frozen path is unused.
+            # Always close chase LOS in body FRD (blob via camera→body mount,
+            # else geometric NED rotated by attitude). Overlay still follows
+            # race.assisted; frozen path is unused.
             yaw_for_sp = None if use_lookat else att[2]
             tgt = race.balloon_ned()
             range_m = math.hypot(pos[0] - tgt[0], pos[1] - tgt[1])
+            if tracker_in_view and last_dir_cam is not None:
+                chase_body = camera.dir_cam_to_body(last_dir_cam)
+            else:
+                chase_body = dir_ned_to_body(chase, att[0], att[1], att[2])
             if gt_rebase_active and gt_vel is not None:
                 chase_gs = math.hypot(gt_vel[0], gt_vel[1])
                 chase_vx, chase_vy = float(gt_vel[0]), float(gt_vel[1])
@@ -1190,7 +1198,7 @@ def main() -> int:
                 dt=period,
                 groundspeed=chase_gs,
                 in_view=use_lookat,
-                z_target=tgt[2],
+                z_target=None if use_lookat else tgt[2],
                 vx=chase_vx,
                 vy=chase_vy,
                 vz=chase_vz,
@@ -1198,6 +1206,7 @@ def main() -> int:
                 visual_lock=tracker_in_view,
                 q_exec=ekf_q if gt_rebase_active and ekf_q is not None else None,
                 range_m=range_m,
+                dir_body=chase_body,
             )
             q_plot = getattr(controller, "last_q_des", None)
             if q_plot is None:

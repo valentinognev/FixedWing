@@ -93,7 +93,7 @@ def patch_gui_config(
                 f"<camera_pose>{camera_pose}</camera_pose>\n"
                 "  <camera_clip>\n"
                 "    <near>0.25</near>\n"
-                "    <far>25000</far>\n"
+                "    <far>4000</far>\n"
                 "  </camera_clip>"
             ),
             1,

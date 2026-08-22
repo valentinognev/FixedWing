@@ -16,8 +16,8 @@
   },
   // Race launcher plant + length (CLI --viz/--yasim/--gz/--model/--duration override)
   "sim": {
-    // jsbsim (headless default) | viz | yasim | gz
-    "platform": "yasim",
+    // jsbsim | viz | yasim | gz
+    "platform": "gz",
     // only used when platform=gz (or CLI --gz): rc_cessna | advanced_plane
     "gz_model": "rc_cessna",
     // 0 = no time limit; >0 = stop after that many seconds (CLI --duration overrides)
@@ -25,6 +25,7 @@
   },
   "camera": {
     "hfov_deg": 90, "vfov_deg": 70,
+    // Seeker mount vs body +X (future gimbal). +azimuth = right, +elevation = up.
     "azimuth_deg": 0, "elevation_deg": 0,
     "width_px": 640, "height_px": 480,
     "rate_hz": 10,
@@ -41,14 +42,23 @@
     // 0 = keep cycling balloons until sim.duration_s (or Ctrl+C); N>0 = end after N full circuits
     "laps": 0,
     // cmd_mode:
-    //    velocity = locked-line TECS path setpoints; 
-    //    attitude = quaternion chase (uses controller); 
-    //    rates = stub (not implemented)
+    //    velocity = locked-line TECS path setpoints;
+    //    attitude = px4_att_cascade + attitude_format (Euler or Euler-packed-as-quat SET_ATTITUDE_TARGET);
+    //    rates = body rates from Euler φ̇θ̇ψ̇ (px4_att_cascade, implemented)
     "cmd_mode": "attitude",
+    // used when cmd_mode=attitude: 
+    //    quat = raw quaternion
+    //    euler = Euler packed as quat
+    "attitude_format": "euler",
     // default controller: 
     //    pure_pursuit_quat = PP a_des→attitude→governor (default); 
     //    race_quat = pre-PP LOS q_des_from_los chase
-    "controller": "race_quat",
+    //    race_euler = same LOS chase, closes Euler φ/θ error every tick (no cascade reset)
+    // race_euler vs race_quat only differ under cmd_mode=attitude (cascade q_cmd
+    // vs open-loop q_des+reset); cmd_mode=rates sends identical body rates for
+    // both (send_attitude_rates always uses cascade_out.body_rates: des vs act /
+    // roll_tc,pitch_tc — never q_cmd or I-state).
+    "controller": "race_euler",
     "alt_preserve_heading_err_deg": 20
   },
   "verification": {

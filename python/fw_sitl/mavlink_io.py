@@ -34,6 +34,8 @@ TYPEMASK_ATT_IGNORE_RATES = (
     | mavutil.mavlink.ATTITUDE_TARGET_TYPEMASK_BODY_YAW_RATE_IGNORE
 )
 
+TYPEMASK_ATT_IGNORE_ATTITUDE = mavutil.mavlink.ATTITUDE_TARGET_TYPEMASK_ATTITUDE_IGNORE
+
 PX4_CUSTOM_MAIN_MODE_OFFBOARD = 6
 ARM_FORCE_MAGIC = 21196.0
 
@@ -447,6 +449,26 @@ def send_attitude_target(
 ) -> None:
     send_attitude_quat(
         master, attitude_quaternion_from_rpy(roll, pitch, yaw), thrust
+    )
+
+
+def send_attitude_rates(
+    master: mavutil.mavfile,
+    body_roll_rate: float,
+    body_pitch_rate: float,
+    body_yaw_rate: float,
+    thrust: float,
+) -> None:
+    master.mav.set_attitude_target_send(
+        0,
+        master.target_system,
+        master.target_component,
+        TYPEMASK_ATT_IGNORE_ATTITUDE,
+        [1.0, 0.0, 0.0, 0.0],
+        float(body_roll_rate),
+        float(body_pitch_rate),
+        float(body_yaw_rate),
+        float(thrust),
     )
 
 

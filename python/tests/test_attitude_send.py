@@ -7,11 +7,17 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from pymavlink import mavutil
+
 _PYTHON_ROOT = Path(__file__).resolve().parents[1]
 if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
-from fw_sitl.mavlink_io import TYPEMASK_ATT_IGNORE_RATES, send_attitude_target
+from fw_sitl.mavlink_io import (
+    TYPEMASK_ATT_IGNORE_RATES,
+    send_attitude_rates,
+    send_attitude_target,
+)
 from fw_sitl.path_geometry import attitude_quaternion_from_rpy
 from fw_sitl.quat import rpy_from_quat
 
@@ -39,8 +45,44 @@ class TestSendAttitudeTarget(unittest.TestCase):
             self.assertAlmostEqual(float(a), float(b), places=6)
 
 
+class TestSendAttitudeRates(unittest.TestCase):
+    def test_packs_body_rates_and_ignores_attitude(self) -> None:
+        master = MagicMock()
+        master.target_system = 1
+        master.target_component = 1
+        send_attitude_rates(master, 0.11, -0.22, 0.33, 0.8)
+        master.mav.set_attitude_target_send.assert_called_once()
+        args = master.mav.set_attitude_target_send.call_args[0]
+        mask = args[3]
+        self.assertTrue(
+            mask & mavutil.mavlink.ATTITUDE_TARGET_TYPEMASK_ATTITUDE_IGNORE
+        )
+        self.assertFalse(
+            mask & mavutil.mavlink.ATTITUDE_TARGET_TYPEMASK_BODY_ROLL_RATE_IGNORE
+        )
+        self.assertFalse(
+            mask & mavutil.mavlink.ATTITUDE_TARGET_TYPEMASK_BODY_PITCH_RATE_IGNORE
+        )
+        self.assertFalse(
+            mask & mavutil.mavlink.ATTITUDE_TARGET_TYPEMASK_BODY_YAW_RATE_IGNORE
+        )
+        q = args[4]
+        self.assertAlmostEqual(float(q[0]), 1.0)
+        self.assertAlmostEqual(float(q[1]), 0.0)
+        self.assertAlmostEqual(float(q[2]), 0.0)
+        self.assertAlmostEqual(float(q[3]), 0.0)
+        self.assertAlmostEqual(args[5], 0.11)
+        self.assertAlmostEqual(args[6], -0.22)
+        self.assertAlmostEqual(args[7], 0.33)
+        self.assertAlmostEqual(args[8], 0.8)
+
+
 class TestAttitudeCallSites(unittest.TestCase):
     def test_chase_sends_angles_not_raw_quat(self) -> None:
+        """Default path (euler format) still sends Euler + thrust, not a raw
+        quat. ``send_attitude_quat`` may appear, but only conditionally on
+        ``attitude_format == "quat"`` (Task 4 cmd_mode/attitude_format
+        dispatch) — never as the unconditional default send line."""
         for rel in (
             "fw_sitl/controllers/pure_pursuit_quat.py",
             "fw_sitl/controllers/race_quat.py",
@@ -50,7 +92,8 @@ class TestAttitudeCallSites(unittest.TestCase):
             self.assertIn(
                 "send_attitude_target(master, roll, pitch, yaw, thrust)", text, rel
             )
-            self.assertNotIn("send_attitude_quat(master, q_cmd, thrust)", text, rel)
+            if "send_attitude_quat(master, q_cmd, thrust)" in text:
+                self.assertIn('attitude_format == "quat"', text, rel)
 
     def test_hold_sends_angles_not_raw_quat(self) -> None:
         text = (_PYTHON_ROOT / "fw_sitl" / "straight_flight_core.py").read_text(

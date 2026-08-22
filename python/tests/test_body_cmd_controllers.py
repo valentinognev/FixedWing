@@ -25,6 +25,7 @@ from fw_sitl.body_cmd_controllers import (
     VelocityChaseController,
     make_body_cmd_controller,
 )
+from fw_sitl.controllers.race_quat import RaceQuatController
 from fw_sitl.quat import from_rpy, rpy_from_quat
 
 
@@ -250,7 +251,7 @@ class TestAttitudeChaseController(unittest.TestCase):
                 in_view=True,
                 z_target=-12.0,
             )
-        self.assertAlmostEqual(ctrl.last_z_hold or 0.0, -12.0)
+        self.assertAlmostEqual(ctrl.last_z_hold or 0.0, -10.0)
         self.assertTrue(str(ctrl.last_law).startswith("pp"))
 
     def test_assisted_path_does_not_pitch_up_when_balloon_abeam(self) -> None:
@@ -406,6 +407,38 @@ class TestAttitudeChaseController(unittest.TestCase):
         _master, _roll, pitch, _yaw, _thrust = send.call_args[0]
         self.assertTrue(str(ctrl.last_law).startswith("pp"))
         self.assertAlmostEqual(pitch, 0.0, places=2)
+
+    def test_pp_in_view_coalt_ned_while_pitched_down_looks_up(self) -> None:
+        """Camera/body elev vs body +X: PP û above v̂ (along +X) commands pitch up."""
+        plant = load_plant_gains("jsbsim_rascal")
+        bridge = BodyCmdBridge(lookahead_m=500.0, speed_mps=18.0)
+        ctrl = AttitudeChaseController(bridge, speed_mps=18.0, plant=plant)
+        el = math.radians(18.0)
+        dir_body = (math.cos(el), 0.0, -math.sin(el))
+        with patch(
+            "fw_sitl.controllers.pure_pursuit_quat.send_attitude_target", create=True
+        ) as send:
+            ctrl.send_chase_setpoint(
+                MagicMock(),
+                (0.0, 0.0, 10.0),
+                (1.0, 0.0, 0.0),
+                1,
+                yaw_rad=0.0,
+                q_act=from_rpy(0.0, 0.0, 0.0),
+                dt=0.05,
+                in_view=True,
+                vx=18.0,
+                vy=0.0,
+                vz=0.0,
+                dir_body=dir_body,
+            )
+        _master, _roll, pitch, _yaw, _thrust = send.call_args[0]
+        self.assertTrue(str(ctrl.last_law).startswith("pp"))
+        u_hat = ctrl._last_u_hat
+        assert u_hat is not None
+        self.assertAlmostEqual(u_hat[0], dir_body[0], places=4)
+        self.assertAlmostEqual(u_hat[2], dir_body[2], places=4)
+        self.assertLess(u_hat[2], -0.2)
 
     def test_pp_level_los_pitch_near_zero_viz(self) -> None:
         """--viz plant, level LOS: visual_lock unused; PP pitch ~0 not alt-loop."""
@@ -717,8 +750,9 @@ class TestAttitudeChaseController(unittest.TestCase):
                 )
         self.assertTrue(pp.called)
         v_hat = pp.call_args[0][1]
-        self.assertAlmostEqual(v_hat[0], math.cos(yaw_act), places=5)
-        self.assertAlmostEqual(v_hat[1], math.sin(yaw_act), places=5)
+        # Body FRD: along-heading flight is +X, not NED east.
+        self.assertAlmostEqual(v_hat[0], 1.0, places=5)
+        self.assertAlmostEqual(v_hat[1], 0.0, places=5)
         self.assertAlmostEqual(v_hat[2], 0.0, places=5)
 
 
@@ -942,13 +976,102 @@ class TestMakeBodyCmdController(unittest.TestCase):
         ctrl = make_body_cmd_controller("attitude", lookahead_m=500.0, speed_mps=30.0)
         self.assertIsInstance(ctrl, AttitudeChaseController)
 
-    def test_rates_factory_returns_stub(self) -> None:
-        ctrl = make_body_cmd_controller("rates", lookahead_m=500.0, speed_mps=30.0)
-        self.assertIsInstance(ctrl, RateChaseController)
+    def test_rates_factory_returns_chase_controller(self) -> None:
+        ctrl = make_body_cmd_controller(
+            "rates", lookahead_m=500.0, speed_mps=30.0, controller="race_quat"
+        )
+        self.assertIsInstance(ctrl, RaceQuatController)
+        self.assertNotIsInstance(ctrl, RateChaseController)
 
     def test_unknown_mode_raises(self) -> None:
         with self.assertRaises(ValueError):
             make_body_cmd_controller("bogus", lookahead_m=500.0, speed_mps=30.0)
+
+
+class TestRatesSendDispatch(unittest.TestCase):
+    def test_rates_mode_sends_body_rates_not_attitude_target(self) -> None:
+        plant = load_plant_gains("jsbsim_rascal", controller="race_quat")
+        ctrl = make_body_cmd_controller(
+            BodyCmdMode.RATES,
+            lookahead_m=500.0,
+            speed_mps=plant.speed_mps,
+            plant=plant,
+            controller="race_quat",
+        )
+        with patch(
+            "fw_sitl.controllers.race_quat.send_attitude_rates", create=True
+        ) as send_rates, patch(
+            "fw_sitl.controllers.race_quat.send_attitude_target", create=True
+        ) as send_target:
+            ctrl.send_chase_setpoint(
+                MagicMock(),
+                (0.0, 0.0, -10.0),
+                (1.0, 0.0, 0.0),
+                1,
+                yaw_rad=0.0,
+                q_act=from_rpy(0.0, 0.0, 0.0),
+                dt=0.05,
+                groundspeed=18.0,
+                in_view=True,
+                z_target=-10.0,
+            )
+        send_rates.assert_called_once()
+        send_target.assert_not_called()
+
+    def test_default_attitude_mode_sends_attitude_target(self) -> None:
+        ctrl = make_body_cmd_controller(
+            "attitude", lookahead_m=500.0, speed_mps=30.0, controller="race_quat"
+        )
+        with patch(
+            "fw_sitl.controllers.race_quat.send_attitude_target", create=True
+        ) as send_target, patch(
+            "fw_sitl.controllers.race_quat.send_attitude_quat", create=True
+        ) as send_quat:
+            ctrl.send_chase_setpoint(
+                MagicMock(),
+                (0.0, 0.0, -10.0),
+                (1.0, 0.0, 0.0),
+                1,
+                yaw_rad=0.0,
+                q_act=from_rpy(0.0, 0.0, 0.0),
+                dt=0.05,
+                groundspeed=18.0,
+                in_view=True,
+                z_target=-10.0,
+            )
+        send_target.assert_called_once()
+        send_quat.assert_not_called()
+
+    def test_attitude_format_quat_sends_attitude_quat(self) -> None:
+        from fw_sitl.controllers import build_controller
+
+        bridge = BodyCmdBridge(lookahead_m=500.0, speed_mps=30.0)
+        ctrl = build_controller(
+            "race_quat",
+            bridge,
+            speed_mps=30.0,
+            cmd_mode="attitude",
+            attitude_format="quat",
+        )
+        with patch(
+            "fw_sitl.controllers.race_quat.send_attitude_target", create=True
+        ) as send_target, patch(
+            "fw_sitl.controllers.race_quat.send_attitude_quat", create=True
+        ) as send_quat:
+            ctrl.send_chase_setpoint(
+                MagicMock(),
+                (0.0, 0.0, -10.0),
+                (1.0, 0.0, 0.0),
+                1,
+                yaw_rad=0.0,
+                q_act=from_rpy(0.0, 0.0, 0.0),
+                dt=0.05,
+                groundspeed=18.0,
+                in_view=True,
+                z_target=-10.0,
+            )
+        send_quat.assert_called_once()
+        send_target.assert_not_called()
 
 
 if __name__ == "__main__":
