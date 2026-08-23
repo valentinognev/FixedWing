@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,11 +26,19 @@ class LayerSpec:
     amplitude: dict[str, float]
 
 
+@dataclass(frozen=True)
+class MaxAngle:
+    roll_rad: float
+    pitch_rad: float
+    yaw_rad: float
+
+
 @dataclass
 class Procedure:
     rate_hz: float
     hold_quiet_s: float
     hold_timeout_s: float
+    max_angle: MaxAngle
     phases: tuple[tuple[str, float], ...]
     sine_phases: tuple[tuple[str, float], ...]
     layers: dict[str, LayerSpec]
@@ -61,10 +70,17 @@ def load_procedure(path: Path | None = None) -> Procedure:
         if segment not in _KNOWN_SINE_SEGMENTS:
             raise ValueError(f"unknown sine_phases segment: {segment}")
         sine_phases.append((segment, float(item["duration_s"])))
+    ang = raw["max_angle_deg"]
+    max_angle = MaxAngle(
+        roll_rad=math.radians(float(ang["roll"])),
+        pitch_rad=math.radians(float(ang["pitch"])),
+        yaw_rad=math.radians(float(ang["yaw"])),
+    )
     return Procedure(
         rate_hz=float(raw["rate_hz"]),
         hold_quiet_s=float(raw["hold_quiet_s"]),
         hold_timeout_s=float(raw["hold_timeout_s"]),
+        max_angle=max_angle,
         phases=tuple(phases),
         sine_phases=tuple(sine_phases),
         layers=layers,

@@ -2,6 +2,7 @@
   "rate_hz": 50,
   "hold_quiet_s": 1.0,
   "hold_timeout_s": 15.0,
+  "max_angle_deg": { "roll": 30, "pitch": 30, "yaw": 30 },
   "phases": [
     {"segment": "settle", "duration_s": 3.0},
     {"segment": "chirp", "duration_s": 20.0},

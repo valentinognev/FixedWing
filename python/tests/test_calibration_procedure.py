@@ -112,3 +112,38 @@ class TestLoadProcedure(unittest.TestCase):
             path.write_text(json.dumps(raw), encoding="utf-8")
             with self.assertRaises(KeyError):
                 load_procedure(path)
+
+    def test_shipped_max_angle_deg_is_30(self) -> None:
+        proc = load_procedure()
+        self.assertAlmostEqual(proc.max_angle.roll_rad, math.radians(30))
+        self.assertAlmostEqual(proc.max_angle.pitch_rad, math.radians(30))
+        self.assertAlmostEqual(proc.max_angle.yaw_rad, math.radians(30))
+
+    def test_missing_max_angle_deg_raises(self) -> None:
+        raw = _load_shipped_raw()
+        del raw["max_angle_deg"]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "proc.json"
+            path.write_text(json.dumps(raw), encoding="utf-8")
+            with self.assertRaises(KeyError):
+                load_procedure(path)
+
+    def test_custom_max_angle_roll_deg_converts_to_radians(self) -> None:
+        raw = _load_shipped_raw()
+        raw["max_angle_deg"] = {"roll": 15, "pitch": 30, "yaw": 30}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "proc.json"
+            path.write_text(json.dumps(raw), encoding="utf-8")
+            proc = load_procedure(path)
+        self.assertAlmostEqual(proc.max_angle.roll_rad, math.radians(15))
+        self.assertAlmostEqual(proc.max_angle.pitch_rad, math.radians(30))
+        self.assertAlmostEqual(proc.max_angle.yaw_rad, math.radians(30))
+
+    def test_missing_max_angle_axis_key_raises(self) -> None:
+        raw = _load_shipped_raw()
+        raw["max_angle_deg"] = {"roll": 30, "pitch": 30}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "proc.json"
+            path.write_text(json.dumps(raw), encoding="utf-8")
+            with self.assertRaises(KeyError):
+                load_procedure(path)
