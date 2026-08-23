@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 
 from controlCallibration.analyze import analyze_log
-from controlCallibration.chirp import inv_log_chirp, log_chirp
+from controlCallibration.chirp import inv_log_chirp, log_chirp, tone
 from controlCallibration.log_io import COLUMNS, write_csv
 from controlCallibration.overlay import AxisCommand, Trim, axis_command, channels_for
 from controlCallibration.plant import resolve_calibration_sim
@@ -20,8 +20,10 @@ from controlCallibration.procedure import load_procedure
 
 _PROCEDURE = load_procedure()
 PHASES: tuple[tuple[str, float], ...] = _PROCEDURE.phases
+SINE_PHASES: tuple[tuple[str, float], ...] = _PROCEDURE.sine_phases
 
 _LAYERS = ("rates", "attitude", "accel_z", "vel_z")
+_WAVEFORMS = ("chirp", "sine")
 _INJECTS = ("pitch", "thrust")
 _Z_LAYERS = frozenset({"accel_z", "vel_z"})
 _STR_COLUMNS = frozenset({"channel", "segment"})
@@ -64,6 +66,14 @@ def layer_freqs(layer: str) -> tuple[float, float]:
     return (spec.f0_hz, spec.f1_hz)
 
 
+def layer_sine_freq(layer: str) -> float:
+    try:
+        spec = _PROCEDURE.layers[layer]
+    except KeyError:
+        raise ValueError(f"unknown layer: {layer}") from None
+    return spec.f_sine_hz
+
+
 def layer_amplitude(layer: str, channel: str, inject: str | None) -> float:
     """Amplitude for ``channel`` (or the ``thrust`` inject) *within* ``layer``.
 
@@ -92,6 +102,7 @@ def chirp_value(
     f0: float,
     f1: float,
     amplitude: float,
+    f_sine: float = 0.0,
 ) -> float:
     if phase in ("settle", "hold"):
         return 0.0
@@ -100,13 +111,26 @@ def chirp_value(
         return float(log_chirp(t, f0, f1, duration, amplitude)[0])
     if phase == "inv_chirp":
         return float(inv_log_chirp(t, f0, f1, duration, amplitude)[0])
+    if phase == "sine":
+        return float(tone(t, f_sine, amplitude)[0])
     return 0.0
 
 
-def iter_schedule(layer: str) -> list[tuple[str, str, float]]:
+def _phases_for_waveform(waveform: str) -> tuple[tuple[str, float], ...]:
+    if waveform == "chirp":
+        return PHASES
+    if waveform == "sine":
+        return SINE_PHASES
+    raise ValueError(f"unknown waveform: {waveform}")
+
+
+def iter_schedule(
+    layer: str, waveform: str = "chirp"
+) -> list[tuple[str, str, float]]:
+    phases = _phases_for_waveform(waveform)
     out: list[tuple[str, str, float]] = []
     for channel in channels_for(layer):
-        for phase, duration in PHASES:
+        for phase, duration in phases:
             out.append((channel, phase, duration))
     return out
 
@@ -125,6 +149,14 @@ def parse_run_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--layer", required=True, choices=_LAYERS)
     parser.add_argument("--inject", default=None, choices=_INJECTS)
     parser.add_argument("--response", default="gt", choices=("gt", "px4"))
+    parser.add_argument(
+        "--waveform",
+        default="chirp",
+        choices=_WAVEFORMS,
+        help="chirp: log-sweep SID (default). sine: constant-frequency tone,"
+        " an alternative scenario instead of chirp (see procedure.json"
+        " sine_phases/f_sine_hz)",
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -326,16 +358,20 @@ def run_offline_demo(args: argparse.Namespace) -> int:
     layer = args.layer
     inject = effective_inject(layer, args.inject)
     f0, f1 = layer_freqs(layer)
+    f_sine = layer_sine_freq(layer)
+    # getattr: callers that build args by hand (older fixtures/tests) predate
+    # --waveform; default to today's chirp-only behavior.
+    waveform = getattr(args, "waveform", "chirp")
     trim = DEFAULT_TRIM
     dt = 1.0 / RATE_HZ
 
     rows: list[dict] = []
     t = 0.0
-    for channel, phase, duration in iter_schedule(layer):
+    for channel, phase, duration in iter_schedule(layer, waveform):
         amplitude = layer_amplitude(layer, channel, inject)
         n_steps = max(1, round(duration * RATE_HZ))
         for i in range(n_steps):
-            value = chirp_value(phase, i * dt, duration, f0, f1, amplitude)
+            value = chirp_value(phase, i * dt, duration, f0, f1, amplitude, f_sine)
             cmd = axis_command(layer, channel, inject, trim, value)
             append_row(
                 rows,
@@ -403,6 +439,10 @@ def run_sitl(args: argparse.Namespace) -> int:
     layer = args.layer
     inject = effective_inject(layer, args.inject)
     f0, f1 = layer_freqs(layer)
+    f_sine = layer_sine_freq(layer)
+    # getattr: this task's ``--waveform`` predates run_sitl's own tests
+    # (Task 2 updates those); default keeps today's chirp-only behavior.
+    waveform = getattr(args, "waveform", "chirp")
     rate_hz = RATE_HZ
     period = 1.0 / rate_hz
 
@@ -542,10 +582,12 @@ def run_sitl(args: argparse.Namespace) -> int:
             # recapture: the chirp is an overlay on cruise, not on zero.
             trim = capture_trim(history, plant.cruise_thrust)
             amplitude = layer_amplitude(layer, channel, inject)
-            for phase, duration in PHASES:
+            for phase, duration in _phases_for_waveform(waveform):
                 n_steps = max(1, round(duration * rate_hz))
                 for i in range(n_steps):
-                    value = chirp_value(phase, i * period, duration, f0, f1, amplitude)
+                    value = chirp_value(
+                        phase, i * period, duration, f0, f1, amplitude, f_sine
+                    )
                     cmd = axis_command(
                         layer,
                         channel,

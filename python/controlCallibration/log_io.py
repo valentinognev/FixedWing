@@ -29,10 +29,11 @@ COLUMNS: tuple[str, ...] = (
     "r_px4",
 )
 
-SEGMENTS = ("hold", "settle", "chirp", "inv_chirp")
+SEGMENTS = ("hold", "settle", "chirp", "inv_chirp", "sine")
 
 _STR_COLUMNS = frozenset({"channel", "segment"})
-_EXCITATION_SEGMENTS = frozenset({"chirp", "inv_chirp"})
+_CHIRP_SEGMENTS = frozenset({"chirp", "inv_chirp"})
+_SINE_SEGMENTS = frozenset({"sine"})
 _RESPONSE_WHICH = frozenset({"gt", "px4"})
 
 
@@ -64,11 +65,13 @@ def read_csv(path: Path) -> list[dict]:
 
 
 def _excitation_rows(rows: list[dict], channel: str) -> list[dict]:
-    return [
-        row
-        for row in rows
-        if row["channel"] == channel and row["segment"] in _EXCITATION_SEGMENTS
-    ]
+    """Sine XOR chirp+inv_chirp, never concatenated: a channel that has any
+    ``sine`` rows uses only those; otherwise it falls back to chirp."""
+    channel_rows = [row for row in rows if row["channel"] == channel]
+    sine_rows = [row for row in channel_rows if row["segment"] in _SINE_SEGMENTS]
+    if sine_rows:
+        return sine_rows
+    return [row for row in channel_rows if row["segment"] in _CHIRP_SEGMENTS]
 
 
 def select_excitation(

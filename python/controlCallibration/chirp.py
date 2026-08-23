@@ -43,6 +43,12 @@ def inv_log_chirp(
     return _log_sine_chirp(t, f1, f0, t_end, amplitude)
 
 
+def tone(t: np.ndarray, f_hz: float, amplitude: float) -> np.ndarray:
+    """Constant-frequency sine excitation: ``amplitude * sin(2*pi*f_hz*t)``."""
+    t = np.asarray(t, dtype=float)
+    return amplitude * np.sin(2.0 * np.pi * f_hz * t)
+
+
 def estimate_freq_response(
     inp: np.ndarray,
     out: np.ndarray,

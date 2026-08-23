@@ -12,7 +12,12 @@ _PYTHON_ROOT = Path(__file__).resolve().parents[1]
 if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
-from controlCallibration.chirp import estimate_freq_response, inv_log_chirp, log_chirp
+from controlCallibration.chirp import (
+    estimate_freq_response,
+    inv_log_chirp,
+    log_chirp,
+    tone,
+)
 
 
 class TestLogChirp(unittest.TestCase):
@@ -38,6 +43,16 @@ class TestLogChirp(unittest.TestCase):
         zc = np.where(np.diff(np.signbit(y[:n])))[0]
         period = np.mean(np.diff(zc)) * 2.0 / fs if len(zc) >= 3 else 1.0 / f1
         self.assertAlmostEqual(1.0 / period, f1, delta=2.5)
+
+
+class TestTone(unittest.TestCase):
+    def test_matches_amplitude_times_sin_two_pi_f_t(self) -> None:
+        t, f_hz, amplitude = 0.25, 0.5, 0.15
+        y = tone(np.asarray([t]), f_hz, amplitude)
+        self.assertEqual(len(y), 1)
+        self.assertAlmostEqual(
+            float(y[0]), amplitude * math.sin(2.0 * math.pi * f_hz * t)
+        )
 
 
 class TestEstimateFreqResponse(unittest.TestCase):

@@ -73,3 +73,42 @@ class TestLoadProcedure(unittest.TestCase):
             path.write_text(text, encoding="utf-8")
             proc = load_procedure(path)
         self.assertEqual(proc.rate_hz, 50.0)
+
+    def test_shipped_sine_phases_and_f_sine_hz(self) -> None:
+        """Sine is an alternative scenario to chirp: 3.0/60.0/2.0 s per axis,
+        not a phase tacked onto the end of the chirp ``phases`` list."""
+        proc = load_procedure()
+        self.assertEqual(
+            proc.sine_phases,
+            (("settle", 3.0), ("sine", 60.0), ("settle", 2.0)),
+        )
+        # phases (chirp) unchanged by adding sine_phases.
+        self.assertEqual(proc.phases, (
+            ("settle", 3.0),
+            ("chirp", 20.0),
+            ("settle", 2.0),
+            ("inv_chirp", 20.0),
+            ("settle", 2.0),
+        ))
+        self.assertAlmostEqual(proc.layers["rates"].f_sine_hz, 0.5)
+        self.assertAlmostEqual(proc.layers["attitude"].f_sine_hz, 0.3)
+        self.assertAlmostEqual(proc.layers["accel_z"].f_sine_hz, 0.2)
+        self.assertAlmostEqual(proc.layers["vel_z"].f_sine_hz, 0.2)
+
+    def test_sine_phases_reject_chirp_segment(self) -> None:
+        raw = _load_shipped_raw()
+        raw["sine_phases"] = [{"segment": "chirp", "duration_s": 20.0}]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "proc.json"
+            path.write_text(json.dumps(raw), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_procedure(path)
+
+    def test_missing_f_sine_hz_on_a_layer_raises(self) -> None:
+        raw = _load_shipped_raw()
+        del raw["layers"]["rates"]["f_sine_hz"]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "proc.json"
+            path.write_text(json.dumps(raw), encoding="utf-8")
+            with self.assertRaises(KeyError):
+                load_procedure(path)

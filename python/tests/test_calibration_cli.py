@@ -13,6 +13,7 @@ if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
 from controlCallibration.__main__ import main
+from controlCallibration.log_io import read_csv
 
 
 class TestAnalyzeSubcommand(unittest.TestCase):
@@ -60,6 +61,32 @@ class TestRunDryRun(unittest.TestCase):
                 )
             self.assertEqual(rc, 0)
             mock_start.assert_not_called()
+
+
+class TestRunDryRunSineWaveform(unittest.TestCase):
+    def test_waveform_sine_csv_segments_are_settle_sine_settle_only(self) -> None:
+        """Sine is an alternative scenario to chirp, not a phase appended
+        after it: the CSV must contain no chirp/inv_chirp rows at all."""
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp)
+            rc = main(
+                [
+                    "run",
+                    "--dry-run",
+                    "--layer",
+                    "rates",
+                    "--waveform",
+                    "sine",
+                    "--out-dir",
+                    str(out_dir),
+                    "--no-plot",
+                ]
+            )
+            self.assertEqual(rc, 0)
+            csv_path = next(out_dir.glob("*.csv"))
+            rows = read_csv(csv_path)
+        segments = {row["segment"] for row in rows}
+        self.assertEqual(segments, {"settle", "sine"})
 
 
 class TestMissingInjectExits2(unittest.TestCase):

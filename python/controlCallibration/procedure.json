@@ -9,15 +9,22 @@
     {"segment": "inv_chirp", "duration_s": 20.0},
     {"segment": "settle", "duration_s": 2.0}
   ],
+  "sine_phases": [
+    {"segment": "settle", "duration_s": 3.0},
+    {"segment": "sine", "duration_s": 60.0},
+    {"segment": "settle", "duration_s": 2.0}
+  ],
   "layers": {
     "rates": {
       "f0_hz": 0.3,
       "f1_hz": 8.0,
+      "f_sine_hz": 0.5,
       "amplitude": {"p": 0.15, "q": 0.15, "r": 0.15}
     },
     "attitude": {
       "f0_hz": 0.2,
       "f1_hz": 4.0,
+      "f_sine_hz": 0.3,
       "amplitude": {
         "roll": 0.08726646259971647,
         "pitch": 0.08726646259971647,
@@ -27,11 +34,13 @@
     "accel_z": {
       "f0_hz": 0.2,
       "f1_hz": 3.0,
+      "f_sine_hz": 0.2,
       "amplitude": {"az": 1.0, "thrust": 0.08}
     },
     "vel_z": {
       "f0_hz": 0.1,
       "f1_hz": 2.0,
+      "f_sine_hz": 0.2,
       "amplitude": {"w": 1.0, "thrust": 0.08}
     }
   },

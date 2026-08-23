@@ -14,6 +14,7 @@ if str(_PYTHON_ROOT) not in sys.path:
 
 from controlCallibration.log_io import (
     COLUMNS,
+    SEGMENTS,
     read_csv,
     response_series,
     select_excitation,
@@ -120,6 +121,11 @@ class TestCsvRoundTrip(unittest.TestCase):
                 self.assertAlmostEqual(dst[col], float(src[col]))
 
 
+class TestSegments(unittest.TestCase):
+    def test_segments_include_sine(self) -> None:
+        self.assertIn("sine", SEGMENTS)
+
+
 class TestSelectExcitation(unittest.TestCase):
     def test_drops_settle_keeps_chirp_and_inv_chirp(self) -> None:
         rows = [
@@ -136,6 +142,31 @@ class TestSelectExcitation(unittest.TestCase):
         np.testing.assert_allclose(t, [0.1, 0.2])
         np.testing.assert_allclose(cmd, [0.10, 0.20])
         np.testing.assert_allclose(gt, [0.11, 0.22])
+
+    def test_only_sine_rows_are_kept_when_present(self) -> None:
+        rows = [
+            _full_row(t=0.0, channel="p", segment="settle", cmd=0.0, gt=0.0),
+            _full_row(t=0.1, channel="p", segment="sine", cmd=0.10, gt=0.11),
+            _full_row(t=0.2, channel="p", segment="sine", cmd=0.20, gt=0.22),
+        ]
+        t, cmd, gt = select_excitation(rows, "p")
+        np.testing.assert_allclose(t, [0.1, 0.2])
+        np.testing.assert_allclose(cmd, [0.10, 0.20])
+        np.testing.assert_allclose(gt, [0.11, 0.22])
+
+    def test_sine_and_chirp_on_same_channel_returns_only_sine(self) -> None:
+        """Never concatenate sine with chirp: a channel that has any
+        sine rows must return exactly those, ignoring any chirp/inv_chirp
+        rows also present on that channel."""
+        rows = [
+            _full_row(t=0.0, channel="p", segment="chirp", cmd=9.0, gt=9.1),
+            _full_row(t=0.1, channel="p", segment="inv_chirp", cmd=8.0, gt=8.1),
+            _full_row(t=0.2, channel="p", segment="sine", cmd=0.20, gt=0.22),
+        ]
+        t, cmd, gt = select_excitation(rows, "p")
+        np.testing.assert_allclose(t, [0.2])
+        np.testing.assert_allclose(cmd, [0.20])
+        np.testing.assert_allclose(gt, [0.22])
 
 
 class TestResponseSeries(unittest.TestCase):

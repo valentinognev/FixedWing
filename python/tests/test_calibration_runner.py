@@ -26,6 +26,7 @@ from controlCallibration.runner import (
     iter_schedule,
     layer_amplitude,
     layer_freqs,
+    layer_sine_freq,
     measured_channel,
     parse_run_args,
 )
@@ -95,6 +96,31 @@ class TestIterSchedule(unittest.TestCase):
             ],
         )
 
+    def test_chirp_waveform_explicit_matches_default(self) -> None:
+        self.assertEqual(iter_schedule("rates"), iter_schedule("rates", "chirp"))
+
+    def test_sine_waveform_has_9_phase_tuples_pqr_order(self) -> None:
+        sched = iter_schedule("rates", "sine")
+        self.assertEqual(len(sched), 9)
+        self.assertEqual(
+            sched,
+            [
+                ("p", "settle", 3.0),
+                ("p", "sine", 60.0),
+                ("p", "settle", 2.0),
+                ("q", "settle", 3.0),
+                ("q", "sine", 60.0),
+                ("q", "settle", 2.0),
+                ("r", "settle", 3.0),
+                ("r", "sine", 60.0),
+                ("r", "settle", 2.0),
+            ],
+        )
+
+    def test_unknown_waveform_raises_value_error(self) -> None:
+        with self.assertRaises(ValueError):
+            iter_schedule("rates", "square")
+
 
 class TestChirpValue(unittest.TestCase):
     def test_settle_and_hold_are_zero(self) -> None:
@@ -106,6 +132,15 @@ class TestChirpValue(unittest.TestCase):
         inv = chirp_value("inv_chirp", 1.0, 20.0, 0.3, 8.0, 0.15)
         self.assertNotEqual(fwd, 0.0)
         self.assertNotEqual(inv, 0.0)
+
+    def test_sine_phase_uses_tone_of_f_sine(self) -> None:
+        val = chirp_value("sine", 0.25, 60.0, 0.3, 8.0, 0.15, f_sine=0.5)
+        self.assertAlmostEqual(val, 0.15 * math.sin(2.0 * math.pi * 0.5 * 0.25))
+
+    def test_sine_phase_defaults_f_sine_to_zero(self) -> None:
+        # f_sine=0.0 -> sin(0) == 0 for every t, a visible "forgot to pass
+        # f_sine" signal rather than a silent nonzero fallback.
+        self.assertEqual(chirp_value("sine", 0.25, 60.0, 0.3, 8.0, 0.15), 0.0)
 
 
 class TestParseRunArgs(unittest.TestCase):
@@ -133,6 +168,19 @@ class TestParseRunArgs(unittest.TestCase):
         # python/ (see test_default_out_dir_uses_tmp_fw_calib_prefix).
         args = parse_run_args(["--layer", "rates"])
         self.assertIsNone(args.out_dir)
+
+    def test_waveform_defaults_to_chirp(self) -> None:
+        args = parse_run_args(["--layer", "rates"])
+        self.assertEqual(args.waveform, "chirp")
+
+    def test_waveform_sine_is_selectable(self) -> None:
+        args = parse_run_args(["--layer", "rates", "--waveform", "sine"])
+        self.assertEqual(args.waveform, "sine")
+
+    def test_waveform_rejects_unknown_choice(self) -> None:
+        with self.assertRaises(SystemExit) as ctx:
+            parse_run_args(["--layer", "rates", "--waveform", "square"])
+        self.assertEqual(ctx.exception.code, 2)
 
 
 class TestDefaultOutDir(unittest.TestCase):
@@ -179,6 +227,16 @@ class TestLayerHelpers(unittest.TestCase):
             layer_amplitude("rates", "p", "thrust")
         with self.assertRaises(ValueError):
             layer_amplitude("attitude", "roll", "thrust")
+
+    def test_layer_sine_freq(self) -> None:
+        self.assertAlmostEqual(layer_sine_freq("rates"), 0.5)
+        self.assertAlmostEqual(layer_sine_freq("attitude"), 0.3)
+        self.assertAlmostEqual(layer_sine_freq("accel_z"), 0.2)
+        self.assertAlmostEqual(layer_sine_freq("vel_z"), 0.2)
+
+    def test_layer_sine_freq_unknown_layer_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            layer_sine_freq("nope")
 
 
 class TestMeasuredChannel(unittest.TestCase):
@@ -305,6 +363,7 @@ class TestRunOfflineDemoUsesDefaultOutDir(unittest.TestCase):
                 layer="rates",
                 inject=None,
                 response="gt",
+                waveform="chirp",
                 out_dir=None,
                 no_plot=True,
             )
