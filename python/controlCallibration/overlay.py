@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
+
+from controlCallibration.procedure import MaxAngle
 
 G_MPS2 = 9.81
 W_TO_PITCH = 0.05  # rad / (m/s)
@@ -42,6 +45,57 @@ class AxisCommand:
     r: float
     thrust: float
     cmd: float
+
+
+def _at_or_past_limit(err: float, limit: float) -> bool:
+    mag = abs(err)
+    return mag >= limit or math.isclose(mag, limit)
+
+
+def limit_rates_by_angle(
+    cmd: AxisCommand,
+    roll: float,
+    pitch: float,
+    yaw: float,
+    trim_yaw: float,
+    limits: MaxAngle,
+) -> AxisCommand:
+    err_roll = roll
+    if _at_or_past_limit(err_roll, limits.roll_rad) and cmd.p * err_roll > 0:
+        p = -cmd.p
+    else:
+        p = cmd.p
+
+    err_pitch = pitch
+    if _at_or_past_limit(err_pitch, limits.pitch_rad) and cmd.q * err_pitch > 0:
+        q = -cmd.q
+    else:
+        q = cmd.q
+
+    err_yaw = math.remainder(yaw - trim_yaw, 2 * math.pi)
+    if _at_or_past_limit(err_yaw, limits.yaw_rad) and cmd.r * err_yaw > 0:
+        r = -cmd.r
+    else:
+        r = cmd.r
+
+    new_cmd = cmd.cmd
+    if p != cmd.p and cmd.cmd == cmd.p:
+        new_cmd = p
+    elif q != cmd.q and cmd.cmd == cmd.q:
+        new_cmd = q
+    elif r != cmd.r and cmd.cmd == cmd.r:
+        new_cmd = r
+
+    return AxisCommand(
+        roll=cmd.roll,
+        pitch=cmd.pitch,
+        yaw=cmd.yaw,
+        p=p,
+        q=q,
+        r=r,
+        thrust=cmd.thrust,
+        cmd=new_cmd,
+    )
 
 
 def channels_for(layer: str) -> tuple[str, ...]:

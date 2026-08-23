@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import math
 import sys
 import unittest
 from pathlib import Path
@@ -9,11 +10,26 @@ _PYTHON_ROOT = Path(__file__).resolve().parents[1]
 if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
-from controlCallibration.overlay import Trim, axis_command, channels_for
+from controlCallibration.overlay import (
+    AxisCommand,
+    Trim,
+    axis_command,
+    channels_for,
+    limit_rates_by_angle,
+)
+from controlCallibration.procedure import MaxAngle
 
 
 def _trim() -> Trim:
     return Trim(roll=0.1, pitch=0.2, yaw=0.3, p=1.0, q=2.0, r=3.0, thrust=0.6)
+
+
+def _limits() -> MaxAngle:
+    return MaxAngle(
+        roll_rad=math.radians(30),
+        pitch_rad=math.radians(30),
+        yaw_rad=math.radians(30),
+    )
 
 
 class TestRatesPChirp(unittest.TestCase):
@@ -187,6 +203,87 @@ class TestBadCombos(unittest.TestCase):
     def test_unknown_inject_on_z_raises_value_error(self) -> None:
         with self.assertRaises(ValueError):
             axis_command("accel_z", "az", "roll", _trim(), 1.0)
+
+
+class TestLimitRatesByAngle(unittest.TestCase):
+    """Reverse the SID rate at the Euler wall; do not zero it."""
+
+    def test_below_cap_leaves_p_unchanged(self) -> None:
+        cmd = axis_command("rates", "p", None, _trim(), 0.15)
+        out = limit_rates_by_angle(cmd, 0.0, 0.0, 0.0, 0.0, _limits())
+        self.assertEqual(out.p, 0.15)
+        self.assertEqual(out.q, 0.0)
+        self.assertEqual(out.r, 0.0)
+        self.assertEqual(out.cmd, 0.15)
+
+    def test_roll_at_plus_cap_reverses_p_and_cmd(self) -> None:
+        cmd = axis_command("rates", "p", None, _trim(), 0.15)
+        orig_p = cmd.p
+        orig_cmd = cmd.cmd
+        out = limit_rates_by_angle(
+            cmd, math.radians(30), 0.0, 0.0, 0.0, _limits()
+        )
+        self.assertEqual(out.p, -0.15)
+        self.assertEqual(out.cmd, -0.15)
+        self.assertEqual(cmd.p, orig_p)
+        self.assertEqual(cmd.cmd, orig_cmd)
+        self.assertEqual(out.roll, cmd.roll)
+        self.assertEqual(out.pitch, cmd.pitch)
+        self.assertEqual(out.yaw, cmd.yaw)
+        self.assertEqual(out.thrust, cmd.thrust)
+
+    def test_roll_at_plus_cap_already_restoring_is_unchanged(self) -> None:
+        cmd = axis_command("rates", "p", None, _trim(), -0.15)
+        out = limit_rates_by_angle(
+            cmd, math.radians(30), 0.0, 0.0, 0.0, _limits()
+        )
+        self.assertEqual(out.p, -0.15)
+        self.assertEqual(out.cmd, -0.15)
+
+    def test_roll_at_minus_cap_reverses_negative_p(self) -> None:
+        cmd = axis_command("rates", "p", None, _trim(), -0.15)
+        out = limit_rates_by_angle(
+            cmd, -math.radians(30), 0.0, 0.0, 0.0, _limits()
+        )
+        self.assertEqual(out.p, 0.15)
+        self.assertEqual(out.cmd, 0.15)
+
+    def test_pitch_at_plus_cap_reverses_q_leaves_p_r(self) -> None:
+        cmd = axis_command("rates", "q", None, _trim(), 0.1)
+        out = limit_rates_by_angle(
+            cmd, 0.0, math.radians(30), 0.0, 0.0, _limits()
+        )
+        self.assertEqual(out.q, -0.1)
+        self.assertEqual(out.p, 0.0)
+        self.assertEqual(out.r, 0.0)
+        self.assertEqual(out.cmd, -0.1)
+
+    def test_yaw_wrap_at_cap_reverses_r(self) -> None:
+        cmd = axis_command("rates", "r", None, _trim(), 0.2)
+        trim_yaw = 3.0
+        yaw = 3.0 + math.radians(30)
+        out = limit_rates_by_angle(cmd, 0.0, 0.0, yaw, trim_yaw, _limits())
+        self.assertEqual(out.r, -0.2)
+        self.assertEqual(out.cmd, -0.2)
+
+    def test_mixed_roll_at_cap_flips_p_pitch_zero_leaves_q(self) -> None:
+        cmd = AxisCommand(
+            roll=0.1,
+            pitch=0.2,
+            yaw=0.3,
+            p=0.15,
+            q=0.1,
+            r=0.0,
+            thrust=0.6,
+            cmd=0.15,
+        )
+        out = limit_rates_by_angle(
+            cmd, math.radians(30), 0.0, 0.0, 0.0, _limits()
+        )
+        self.assertEqual(out.p, -0.15)
+        self.assertEqual(out.q, 0.1)
+        self.assertEqual(out.r, 0.0)
+        self.assertEqual(out.cmd, -0.15)
 
 
 if __name__ == "__main__":
