@@ -7,6 +7,8 @@ precisely so these seams can be patched at call time.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import math
 import sys
@@ -232,6 +234,10 @@ class TestRunSitlHoldUntilQuiet(unittest.TestCase):
 
 class TestRunSitlEnvelopeAbort(unittest.TestCase):
     def test_out_of_envelope_sample_flushes_csv_and_marks_aborted(self) -> None:
+        """A single envelope trip recaptures and retries that axis instead
+        of ending the whole run: the attitude tips once (15th send) then
+        goes back in-envelope (16th send), so the retried roll succeeds and
+        pitch/yaw fly normally afterwards."""
         hist = _FakeHistory()
         with tempfile.TemporaryDirectory() as tmp:
             out_dir = Path(tmp)
@@ -240,14 +246,59 @@ class TestRunSitlEnvelopeAbort(unittest.TestCase):
 
                 def tipping_send(master, roll, pitch, yaw, thrust):
                     real_send(master, roll, pitch, yaw, thrust)
-                    if len(fakes.attitude_targets) == 15:
+                    n = len(fakes.attitude_targets)
+                    if n == 15:
                         hist.last_att_rad = (math.radians(60.0), 0.0, TRIM_ATT[2])
+                    elif n == 16:
+                        hist.last_att_rad = TRIM_ATT
 
+                stderr = io.StringIO()
                 with patch(
                     "fw_sitl.mavlink_io.send_attitude_target", new=tipping_send
                 ):
-                    rc = runner.run_sitl(_args("attitude", out_dir))
+                    with contextlib.redirect_stderr(stderr):
+                        rc = runner.run_sitl(_args("attitude", out_dir))
             self.assertEqual(rc, 0)
+            csv_path = out_dir / "calib_attitude.csv"
+            self.assertTrue(csv_path.is_file())
+            report = json.loads(
+                (out_dir / "calib_attitude_hints.json").read_text(encoding="utf-8")
+            )
+            # Recovered retry: the axis is not aborted.
+            self.assertFalse(report["aborted"])
+            rows = read_csv(csv_path)
+            # Roll was recaptured and retried; pitch/yaw still flew.
+            self.assertEqual({r["channel"] for r in rows}, {"roll", "pitch", "yaw"})
+            # Path hold was recaptured after the abort.
+            self.assertGreater(fakes.path_setpoints, 0)
+            self.assertIn("roll", stderr.getvalue())
+
+
+class TestRunSitlEnvelopeRetryExhausted(unittest.TestCase):
+    def test_axis_out_of_envelope_every_attempt_is_skipped_others_fly(self) -> None:
+        """``roll`` stays out of the envelope on every overlay tick: after
+        MAX_AXIS_RETRIES attempts it is skipped (no roll excitation rows),
+        ``aborted`` is True, but pitch/yaw still fly normally."""
+        hist = _FakeHistory()
+        hist.last_att_rad = (math.radians(60.0), 0.0, TRIM_ATT[2])
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp)
+            with _Fakes(hist) as fakes:
+                real_send = fakes._send_attitude_target
+
+                def restoring_send(master, roll, pitch, yaw, thrust):
+                    real_send(master, roll, pitch, yaw, thrust)
+                    if len(fakes.attitude_targets) == runner.MAX_AXIS_RETRIES:
+                        hist.last_att_rad = TRIM_ATT
+
+                stderr = io.StringIO()
+                with patch(
+                    "fw_sitl.mavlink_io.send_attitude_target", new=restoring_send
+                ):
+                    with contextlib.redirect_stderr(stderr):
+                        rc = runner.run_sitl(_args("attitude", out_dir))
+            self.assertEqual(rc, 0)
+            self.assertIn("roll", stderr.getvalue())
             csv_path = out_dir / "calib_attitude.csv"
             self.assertTrue(csv_path.is_file())
             report = json.loads(
@@ -255,10 +306,10 @@ class TestRunSitlEnvelopeAbort(unittest.TestCase):
             )
             self.assertTrue(report["aborted"])
             rows = read_csv(csv_path)
-            # Aborted on the first axis: pitch/yaw were never flown.
-            self.assertEqual({r["channel"] for r in rows}, {"roll"})
-            # Path hold was recaptured after the abort.
-            self.assertGreater(fakes.path_setpoints, 0)
+            channels = {r["channel"] for r in rows}
+            self.assertEqual(channels, {"pitch", "yaw"})
+            # No roll chirp/inv_chirp rows made it into the CSV at all.
+            self.assertNotIn("roll", channels)
 
 
 class TestRunOfflineDemoZLayers(unittest.TestCase):

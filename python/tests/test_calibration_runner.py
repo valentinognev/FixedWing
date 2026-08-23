@@ -16,11 +16,13 @@ from controlCallibration.log_io import COLUMNS
 from controlCallibration.runner import (
     HOLD_QUIET_S,
     HOLD_TIMEOUT_S,
+    MAX_AXIS_RETRIES,
     EnvelopeLimits,
     append_row,
     capture_trim,
     chirp_value,
     default_out_dir,
+    envelope_fail_reason,
     envelope_ok,
     hold_until_quiet,
     iter_schedule,
@@ -69,6 +71,57 @@ class TestEnvelopeOk(unittest.TestCase):
 
     def test_false_when_airspeed_below_min(self) -> None:
         self.assertFalse(envelope_ok(0.0, 0.0, 100.0, 100.0, 9.9, 10.0))
+
+
+class TestEnvelopeFailReason(unittest.TestCase):
+    """First failing check in ``envelope_ok`` order, with numbers callers
+    can log/print — tests assert substrings, not a golden string."""
+
+    def test_none_when_inside_limits(self) -> None:
+        self.assertIsNone(envelope_fail_reason(0.0, 0.0, 100.0, 100.0, 18.0, 10.0))
+
+    def test_roll_reason_names_roll_and_its_value(self) -> None:
+        reason = envelope_fail_reason(
+            math.radians(41.0), math.radians(1.0), 100.4, 100.0, 16.2, 10.0
+        )
+        self.assertIsNotNone(reason)
+        self.assertIn("roll", reason)
+        self.assertIn("41.0", reason)
+
+    def test_pitch_reason_names_pitch_and_its_value(self) -> None:
+        reason = envelope_fail_reason(
+            math.radians(1.0), math.radians(31.2), 100.4, 100.0, 16.2, 10.0
+        )
+        self.assertIsNotNone(reason)
+        self.assertIn("pitch", reason)
+        self.assertIn("31.2", reason)
+        # Other measurements are still reported for context.
+        self.assertIn("roll", reason)
+        self.assertIn("airspeed", reason)
+
+    def test_dalt_reason_names_altitude_delta(self) -> None:
+        reason = envelope_fail_reason(0.0, 0.0, 131.0, 100.0, 18.0, 10.0)
+        self.assertIsNotNone(reason)
+        self.assertIn("alt", reason.lower())
+        self.assertIn("31.0", reason)
+
+    def test_airspeed_reason_names_airspeed_and_its_value(self) -> None:
+        reason = envelope_fail_reason(0.0, 0.0, 100.0, 100.0, 9.9, 10.0)
+        self.assertIsNotNone(reason)
+        self.assertIn("airspeed", reason)
+        self.assertIn("9.9", reason)
+
+    def test_checks_in_envelope_ok_order_roll_before_pitch(self) -> None:
+        # Both roll and pitch are out of limits: roll is checked first in
+        # envelope_ok, so it must be the leading complaint, not pitch.
+        reason = envelope_fail_reason(
+            math.radians(41.0), math.radians(31.0), 100.0, 100.0, 18.0, 10.0
+        )
+        self.assertIsNotNone(reason)
+        self.assertTrue(reason.startswith("roll"))
+
+    def test_max_axis_retries_is_3(self) -> None:
+        self.assertEqual(MAX_AXIS_RETRIES, 3)
 
 
 class TestIterSchedule(unittest.TestCase):

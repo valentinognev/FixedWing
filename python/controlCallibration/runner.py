@@ -58,6 +58,47 @@ def envelope_ok(
     return True
 
 
+def envelope_fail_reason(
+    roll: float,
+    pitch: float,
+    alt: float,
+    alt0: float,
+    airspeed: float,
+    airspd_min: float,
+) -> str | None:
+    """First failing check in ``envelope_ok`` order (roll, pitch, Δalt,
+    airspeed), or ``None`` if inside limits. Includes the other three
+    measurements too, so a print/log line shows how close the other limits
+    were, not just the one that tripped."""
+    roll_deg = math.degrees(roll)
+    pitch_deg = math.degrees(pitch)
+    dalt = alt - alt0
+    if abs(roll) > _LIMITS.roll_rad:
+        return (
+            f"roll={roll_deg:.1f}\u00b0 > {math.degrees(_LIMITS.roll_rad):.0f}\u00b0 "
+            f"(pitch={pitch_deg:.1f}\u00b0 \u0394alt={dalt:.1f}m airspeed={airspeed:.1f})"
+        )
+    if abs(pitch) > _LIMITS.pitch_rad:
+        return (
+            f"pitch={pitch_deg:.1f}\u00b0 > {math.degrees(_LIMITS.pitch_rad):.0f}\u00b0 "
+            f"(roll={roll_deg:.1f}\u00b0 \u0394alt={dalt:.1f}m airspeed={airspeed:.1f})"
+        )
+    if abs(dalt) > _LIMITS.dalt_m:
+        return (
+            f"\u0394alt={dalt:.1f}m > {_LIMITS.dalt_m:.0f}m "
+            f"(roll={roll_deg:.1f}\u00b0 pitch={pitch_deg:.1f}\u00b0 airspeed={airspeed:.1f})"
+        )
+    if airspeed < airspd_min:
+        return (
+            f"airspeed={airspeed:.1f} < {airspd_min:.1f} "
+            f"(roll={roll_deg:.1f}\u00b0 pitch={pitch_deg:.1f}\u00b0 \u0394alt={dalt:.1f}m)"
+        )
+    return None
+
+
+MAX_AXIS_RETRIES = 3
+
+
 def layer_freqs(layer: str) -> tuple[float, float]:
     try:
         spec = _PROCEDURE.layers[layer]
@@ -567,8 +608,6 @@ def run_sitl(args: argparse.Namespace) -> int:
 
     rows: list[dict] = []
     aborted = False
-    aborted_channel: str | None = None
-    trim = capture_trim(history, plant.cruise_thrust)
 
     try:
         for channel in channels_for(layer):
@@ -578,83 +617,111 @@ def run_sitl(args: argparse.Namespace) -> int:
                     f"before {channel}; chirping anyway",
                     file=sys.stderr,
                 )
-            # Re-center on what the aircraft is actually flying after the
-            # recapture: the chirp is an overlay on cruise, not on zero.
-            trim = capture_trim(history, plant.cruise_thrust)
             amplitude = layer_amplitude(layer, channel, inject)
-            for phase, duration in _phases_for_waveform(waveform):
-                n_steps = max(1, round(duration * rate_hz))
-                for i in range(n_steps):
-                    value = chirp_value(
-                        phase, i * period, duration, f0, f1, amplitude, f_sine
-                    )
-                    cmd = axis_command(
-                        layer,
-                        channel,
-                        inject,
-                        trim,
-                        value,
-                        min_thrust=plant.min_thrust,
-                        max_thrust=plant.max_thrust,
-                    )
 
-                    got = history.poll(master)
-                    z_now = z_hold
-                    if got is not None:
-                        xy[0], xy[1] = got[0], got[1]
-                        z_now = got[2]
-                    roll_gt, pitch_gt, yaw_gt = history.last_att_rad or (0.0, 0.0, 0.0)
-                    p_gt, q_gt, r_gt = history.last_pqr or (0.0, 0.0, 0.0)
+            channel_ok = False
+            for _attempt in range(MAX_AXIS_RETRIES):
+                # Re-center on what the aircraft is actually flying after
+                # the recapture: the chirp is an overlay on cruise, not on
+                # zero.
+                trim = capture_trim(history, plant.cruise_thrust)
+                channel_rows: list[dict] = []
+                fail_reason: str | None = None
+                try:
+                    for phase, duration in _phases_for_waveform(waveform):
+                        n_steps = max(1, round(duration * rate_hz))
+                        for i in range(n_steps):
+                            value = chirp_value(
+                                phase, i * period, duration, f0, f1, amplitude, f_sine
+                            )
+                            cmd = axis_command(
+                                layer,
+                                channel,
+                                inject,
+                                trim,
+                                value,
+                                min_thrust=plant.min_thrust,
+                                max_thrust=plant.max_thrust,
+                            )
 
-                    if layer == "rates":
-                        send_attitude_rates(master, cmd.p, cmd.q, cmd.r, cmd.thrust)
-                    else:
-                        send_attitude_target(master, cmd.roll, cmd.pitch, cmd.yaw, cmd.thrust)
-                    _gcs_heartbeat()
+                            got = history.poll(master)
+                            z_now = z_hold
+                            if got is not None:
+                                xy[0], xy[1] = got[0], got[1]
+                                z_now = got[2]
+                            roll_gt, pitch_gt, yaw_gt = history.last_att_rad or (0.0, 0.0, 0.0)
+                            p_gt, q_gt, r_gt = history.last_pqr or (0.0, 0.0, 0.0)
 
-                    measured = measured_channel(
-                        channel, roll_gt, pitch_gt, yaw_gt, p_gt, q_gt, r_gt, cmd.thrust
+                            if layer == "rates":
+                                send_attitude_rates(master, cmd.p, cmd.q, cmd.r, cmd.thrust)
+                            else:
+                                send_attitude_target(master, cmd.roll, cmd.pitch, cmd.yaw, cmd.thrust)
+                            _gcs_heartbeat()
+
+                            measured = measured_channel(
+                                channel, roll_gt, pitch_gt, yaw_gt, p_gt, q_gt, r_gt, cmd.thrust
+                            )
+                            log_row = _log_row_from_axis_command(
+                                AxisCommand(
+                                    roll=roll_gt,
+                                    pitch=pitch_gt,
+                                    yaw=yaw_gt,
+                                    p=p_gt,
+                                    q=q_gt,
+                                    r=r_gt,
+                                    thrust=cmd.thrust,
+                                    cmd=cmd.cmd,
+                                )
+                            )
+                            # Override the dry-run 0.9x-of-command fixture
+                            # with the real per-channel measurement: this is
+                            # what select_excitation/response_series
+                            # actually analyze.
+                            log_row["gt"] = measured
+                            log_row["px4"] = measured
+                            append_row(
+                                channel_rows,
+                                t=time.time() - t0,
+                                channel=channel,
+                                segment=phase,
+                                **log_row,
+                            )
+
+                            armed, _mode = poll_vehicle_state(master)
+                            if armed is False:
+                                set_offboard(master)
+                                arm(master, force=True)
+                            airspeed = history.last_airspeed or history.last_groundspeed or speed_mps
+                            if not envelope_ok(roll_gt, pitch_gt, z_now, z_hold, airspeed, airspd_min):
+                                fail_reason = envelope_fail_reason(
+                                    roll_gt, pitch_gt, z_now, z_hold, airspeed, airspd_min
+                                )
+                                raise _EnvelopeAbort()
+
+                            _pace()
+                except _EnvelopeAbort:
+                    # Drop this attempt's rows: a truncated chirp/inv_chirp
+                    # would poison the Wiener deconvolution otherwise.
+                    print(
+                        f"Envelope abort during {channel}: {fail_reason} — recapturing",
+                        file=sys.stderr,
                     )
-                    log_row = _log_row_from_axis_command(
-                        AxisCommand(
-                            roll=roll_gt,
-                            pitch=pitch_gt,
-                            yaw=yaw_gt,
-                            p=p_gt,
-                            q=q_gt,
-                            r=r_gt,
-                            thrust=cmd.thrust,
-                            cmd=cmd.cmd,
-                        )
-                    )
-                    # Override the dry-run 0.9x-of-command fixture with the
-                    # real per-channel measurement: this is what
-                    # select_excitation/response_series actually analyze.
-                    log_row["gt"] = measured
-                    log_row["px4"] = measured
-                    append_row(
-                        rows,
-                        t=time.time() - t0,
-                        channel=channel,
-                        segment=phase,
-                        **log_row,
-                    )
+                    _hold_ticks(3.0)
+                    hold_until_quiet(_hold_tick, period=period)
+                    continue
 
-                    armed, _mode = poll_vehicle_state(master)
-                    if armed is False:
-                        set_offboard(master)
-                        arm(master, force=True)
-                    airspeed = history.last_airspeed or history.last_groundspeed or speed_mps
-                    if not envelope_ok(roll_gt, pitch_gt, z_now, z_hold, airspeed, airspd_min):
-                        aborted = True
-                        aborted_channel = channel
-                        raise _EnvelopeAbort()
+                rows.extend(channel_rows)
+                channel_ok = True
+                break
 
-                    _pace()
+            if not channel_ok:
+                print(
+                    f"Warning: {channel} exceeded the flight envelope on all "
+                    f"{MAX_AXIS_RETRIES} attempts; skipping",
+                    file=sys.stderr,
+                )
+                aborted = True
             _hold_ticks(1.0)
-    except _EnvelopeAbort:
-        print(f"Envelope abort during {aborted_channel} — recapturing path hold", file=sys.stderr)
-        _hold_ticks(3.0)
     finally:
         _stop_sim()
 
