@@ -400,9 +400,7 @@ def run_offline_demo(args: argparse.Namespace) -> int:
     inject = effective_inject(layer, args.inject)
     f0, f1 = layer_freqs(layer)
     f_sine = layer_sine_freq(layer)
-    # getattr: callers that build args by hand (older fixtures/tests) predate
-    # --waveform; default to today's chirp-only behavior.
-    waveform = getattr(args, "waveform", "chirp")
+    waveform = args.waveform
     trim = DEFAULT_TRIM
     dt = 1.0 / RATE_HZ
 
@@ -443,13 +441,22 @@ class _EnvelopeAbort(Exception):
 
 
 def run_sitl(args: argparse.Namespace) -> int:
-    """Live chirp SID: engage/hold copied from ``fw_sitl.straight_flight_core``.
+    """Live SID: engage/hold copied from ``fw_sitl.straight_flight_core``.
 
-    Path-hold (``send_path_setpoint``) between axes; during chirp/settle test
-    phases, send ``AxisCommand`` via ``send_attitude_rates`` (rates layer) or
-    ``send_attitude_target`` (else). Envelope abort recaptures path hold,
-    flushes the CSV, and analyzes with ``aborted=True``. Imports fw_sitl /
-    pymavlink lazily so ``--dry-run`` never needs Docker or MAVLink.
+    Path-hold (``send_path_setpoint``) between axes; during the schedule's
+    test phases, send ``AxisCommand`` via ``send_attitude_rates`` (rates
+    layer) or ``send_attitude_target`` (else). ``args.waveform`` picks the
+    per-axis phase schedule (``PHASES`` chirp/inv_chirp, or ``SINE_PHASES``
+    a constant-frequency tone).
+
+    An envelope abort mid-axis prints the tripping limit (plus the other
+    three measurements for context), recaptures path hold, and retries that
+    axis from a freshly captured trim — up to ``MAX_AXIS_RETRIES`` attempts
+    total. Each failed attempt's rows are dropped (a truncated chirp/sine
+    would poison the deconvolution otherwise). Only once an axis exhausts
+    all attempts is it skipped entirely and ``aborted`` set ``True``; other
+    axes still fly. Imports fw_sitl / pymavlink lazily so ``--dry-run``
+    never needs Docker or MAVLink.
     """
     import sys
     import time
@@ -481,9 +488,7 @@ def run_sitl(args: argparse.Namespace) -> int:
     inject = effective_inject(layer, args.inject)
     f0, f1 = layer_freqs(layer)
     f_sine = layer_sine_freq(layer)
-    # getattr: this task's ``--waveform`` predates run_sitl's own tests
-    # (Task 2 updates those); default keeps today's chirp-only behavior.
-    waveform = getattr(args, "waveform", "chirp")
+    waveform = args.waveform
     rate_hz = RATE_HZ
     period = 1.0 / rate_hz
 

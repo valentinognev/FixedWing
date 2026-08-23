@@ -1,5 +1,11 @@
 # Updates
 
+## 0.50.1 - SID sine waveform review fixes
+- New live-path regression test: `--waveform sine` on `run` (no `--dry-run`) is asserted to fly only `settle`/`sine` CSV segments (no chirp/inv_chirp leak-through) and to log `cmd` matching `A*sin(2π f_sine t)` sample-for-sample (rates layer, channel `p`: `A=0.15`, `f_sine=0.5` Hz).
+- `run_offline_demo`/`run_sitl` read `args.waveform` directly; dropped the `getattr(args, "waveform", "chirp")` fallback now that every caller (CLI parser and hand-built test `Namespace`s) sets it.
+- `run_sitl` docstring no longer says "Live chirp SID" / "abort flushes CSV and aborted=True": documents that `--waveform` picks `PHASES` vs `SINE_PHASES`, and that an envelope abort prints the tripping limit, recaptures, and retries the same axis up to `MAX_AXIS_RETRIES` (3) attempts total before skipping it (`aborted=True` only then).
+- Envelope-abort integration tests now also assert the measured numeric value (e.g. `"60.0"`) is in the stderr message, not just the axis name, so a regression to `Envelope abort during roll: None` would fail.
+
 ## 0.50.0 - SID sine waveform and envelope retry
 - `run`/`run --dry-run` take `--waveform chirp|sine` (default `chirp`); `sine` is an alternative scenario, not a phase tacked onto the chirp.
 - `procedure.json` `sine_phases`: settle 3.0 s / sine 60.0 s / settle 2.0 s per axis (≥60 s of excitation, not concatenated with chirp/inv_chirp). Per-layer `f_sine_hz`: rates 0.5, attitude 0.3, accel_z/vel_z 0.2 Hz. `cmd = A * sin(2π f_sine t)` during the `sine` segment, same trim overlay as chirp.

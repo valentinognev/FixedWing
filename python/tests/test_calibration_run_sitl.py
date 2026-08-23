@@ -34,6 +34,11 @@ SHORT_PHASES = (
     ("inv_chirp", 0.6),
     ("settle", 0.1),
 )
+SHORT_SINE_PHASES = (
+    ("settle", 0.2),
+    ("sine", 1.0),
+    ("settle", 0.1),
+)
 
 
 class _FakeHistory:
@@ -57,11 +62,17 @@ class _FakeHistory:
         return (0.0, 0.0, Z_HOLD)
 
 
-def _args(layer: str, out_dir: Path, inject: str | None = None) -> argparse.Namespace:
+def _args(
+    layer: str,
+    out_dir: Path,
+    inject: str | None = None,
+    waveform: str = "chirp",
+) -> argparse.Namespace:
     return argparse.Namespace(
         layer=layer,
         inject=inject,
         response="gt",
+        waveform=waveform,
         dry_run=False,
         out_dir=out_dir,
         no_sim=True,
@@ -271,7 +282,10 @@ class TestRunSitlEnvelopeAbort(unittest.TestCase):
             self.assertEqual({r["channel"] for r in rows}, {"roll", "pitch", "yaw"})
             # Path hold was recaptured after the abort.
             self.assertGreater(fakes.path_setpoints, 0)
+            # The measured value must actually be in the message, not a
+            # bare "Envelope abort during roll: None".
             self.assertIn("roll", stderr.getvalue())
+            self.assertIn("60.0", stderr.getvalue())
 
 
 class TestRunSitlEnvelopeRetryExhausted(unittest.TestCase):
@@ -298,7 +312,10 @@ class TestRunSitlEnvelopeRetryExhausted(unittest.TestCase):
                     with contextlib.redirect_stderr(stderr):
                         rc = runner.run_sitl(_args("attitude", out_dir))
             self.assertEqual(rc, 0)
+            # Same reasoning as the recovered-retry test: the actual
+            # measured value, not just the axis name, must show up.
             self.assertIn("roll", stderr.getvalue())
+            self.assertIn("60.0", stderr.getvalue())
             csv_path = out_dir / "calib_attitude.csv"
             self.assertTrue(csv_path.is_file())
             report = json.loads(
@@ -310,6 +327,45 @@ class TestRunSitlEnvelopeRetryExhausted(unittest.TestCase):
             self.assertEqual(channels, {"pitch", "yaw"})
             # No roll chirp/inv_chirp rows made it into the CSV at all.
             self.assertNotIn("roll", channels)
+
+
+class TestRunSitlWaveformSine(unittest.TestCase):
+    """Live-path ``--waveform sine``: the schedule must swap wholesale to
+    ``SINE_PHASES`` (no chirp/inv_chirp ever reaches the CSV), and the
+    logged ``cmd`` must be the exact tone the loop sends."""
+
+    def test_flies_only_settle_and_sine_segments_with_the_tone_formula(self) -> None:
+        hist = _FakeHistory()
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp)
+            with _Fakes(hist):
+                with patch.object(runner, "SINE_PHASES", SHORT_SINE_PHASES):
+                    rc = runner.run_sitl(_args("rates", out_dir, waveform="sine"))
+            self.assertEqual(rc, 0)
+            rows = read_csv(out_dir / "calib_rates.csv")
+        self.assertTrue(rows)
+        # No chirp/inv_chirp segment for any flown channel.
+        self.assertEqual({r["segment"] for r in rows}, {"settle", "sine"})
+
+        p_sine_rows = [r for r in rows if r["channel"] == "p" and r["segment"] == "sine"]
+        self.assertTrue(p_sine_rows)
+        # rates layer, channel "p": amplitude 0.15, f_sine 0.5 Hz (procedure.json).
+        amplitude = runner.layer_amplitude("rates", "p", None)
+        f_sine = runner.layer_sine_freq("rates")
+        self.assertAlmostEqual(amplitude, 0.15)
+        self.assertAlmostEqual(f_sine, 0.5)
+        period = 1.0 / runner.RATE_HZ
+        expected = [
+            amplitude * math.sin(2.0 * math.pi * f_sine * i * period)
+            for i in range(len(p_sine_rows))
+        ]
+        # rates channel's cmd is the raw commanded value (no trim offset),
+        # so it must match the tone formula sample-for-sample.
+        for row, exp in zip(p_sine_rows, expected):
+            self.assertAlmostEqual(row["cmd"], exp, places=9)
+        # At least one non-zero sample actually exercises the tone (not
+        # just t=0 where sin(0) == 0).
+        self.assertTrue(any(abs(v) > 1e-6 for v in expected))
 
 
 class TestRunOfflineDemoZLayers(unittest.TestCase):
