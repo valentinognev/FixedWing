@@ -1,5 +1,12 @@
 # Updates
 
+## 0.50.0 - SID sine waveform and envelope retry
+- `run`/`run --dry-run` take `--waveform chirp|sine` (default `chirp`); `sine` is an alternative scenario, not a phase tacked onto the chirp.
+- `procedure.json` `sine_phases`: settle 3.0 s / sine 60.0 s / settle 2.0 s per axis (≥60 s of excitation, not concatenated with chirp/inv_chirp). Per-layer `f_sine_hz`: rates 0.5, attitude 0.3, accel_z/vel_z 0.2 Hz. `cmd = A * sin(2π f_sine t)` during the `sine` segment, same trim overlay as chirp.
+- `analyze`/`log_io.select_excitation`: a channel with any `sine` rows uses only those for the FRF/step response; otherwise falls back to chirp+inv_chirp as before.
+- Live `run`: an envelope trip during an axis no longer ends the whole calibration. It prints which limit tripped and its value, recaptures path-hold, and retries that axis from its first phase (dropping the failed attempt's rows) up to 3 times before skipping to the next axis with a warning.
+- `hints.json` `aborted: true` only if an axis was skipped after exhausting its 3 retries; a recovered retry leaves `aborted: false`.
+
 ## 0.48.1 - Calibration launcher review fixes
 - `runner.layer_amplitude` / `analyze._amplitude` now look up amplitude within the given `layer`'s `procedure.json` block instead of a flattened `amplitude_map` global (removed). A flattened map could silently collide on a shared key or mask a layer/channel mismatch (e.g. `layer_amplitude("rates", "p", "thrust")` used to return accel_z's `thrust` amplitude instead of erroring); both now raise `ValueError` when the layer has no matching amplitude key. Thrust `0.08` stays duplicated under `accel_z`/`vel_z` in `procedure.json` — same value, no collision.
 - `run`'s `--out-dir` defaults to a fresh `runner.default_out_dir()` (`/tmp/fw_calib_<utcstamp>`), not `.` (which dropped CSV/PNGs under wherever `python/` happened to be the cwd). Dry-run and live both use it; tests that already pass `--out-dir` are unaffected.
