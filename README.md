@@ -1,39 +1,121 @@
 # FixedWing
 
 ## Idea
-PX4 fixed-wing SITL via the Noble Docker image: JSBSim Rascal (default headless; optional FG `--fdm=null` viz), YASim FlightGear Rascal, Gazebo PX4 plane, and an optional X-Plane 12 demo Cessna plant (host bind-mount), plus host helpers for in-air spawn and OFFBOARD locked-line hold.
+PX4 fixed-wing SITL testbed for OFFBOARD guidance. Primary workload is a **balloon race**: fly through a sequence of colored spheres using camera/HSV track (or synthetic imagery) and a selectable chase law. Secondary workload is **straight-flight** locked-line hold on the same plants. Plants swap under one Docker image (`px4-noble-sim-ros`, PX4 v1.17) and a shared `python/fw_sitl` package.
 
 ## Architecture
-- `Dockerfiles/` — nested PX4/FlightGear/JSBSim sim image (`px4-noble-sim-ros`, PX4 v1.17, FG 2024.1.6) with baked `mavlink-server`. See that folder’s README.
-- `python/controlCallibration/` — host SID (log/inverse chirp **or** constant-frequency `sine`, Welch FRF, Wiener step response, offline analyze → history/FFT/step PNG + `hints.json`, `run`/`analyze` CLI via `python -m controlCallibration`). `--waveform chirp|sine` (default `chirp`) picks the excitation scenario; `sine` is used **instead of** chirp, not a phase after it — `procedure.json` `sine_phases` (settle 3 s / sine 60 s / settle 2 s per axis) and per-layer `f_sine_hz` (rates 0.5 Hz, attitude 0.3 Hz, accel_z/vel_z 0.2 Hz). Chirp numbers live in `procedure.json` too (per-layer amplitude/window lookup — `layer_amplitude`/`_amplitude` take the layer, not a flattened global map). Plant + sim from `python/flightSetup.json` `sim.platform`/`sim.gz_model`, override `--gz`/`--yasim`/`--viz`/`--jsbsim`/`--model` (no `--xplane`). `run --dry-run` synthesizes the schedule (no Docker/MAVLink, agent-safe); `run` (live) copies the engage/path-hold loop from `fw_sitl.straight_flight_core` and excites one `--layer` at a time as an overlay on **measured** cruise trim (`capture_trim` per axis), recapturing between axes until the envelope is quiet. If an axis trips the flight envelope mid-excitation, `run` prints the tripping limit and its value, recaptures path-hold, and retries that axis from its first phase (up to 3 attempts, dropping the failed attempt's rows) before skipping to the next axis with a warning — the whole calibration run only ends early if the CLI/engage step itself fails; `hints.json` `aborted: true` only if an axis was skipped after exhausting retries. Writes `<stem>_<ch>_history.png` / `_step.png` always, `_fft.png` unless the log is too short for a Welch segment; `plt.show` unless `--no-plot`. Live `gt`/`px4` for `accel_z`/`vel_z` (`az`/`w`) are `nan` (no live GT source wired for those yet), so their hints/metrics read `verdict=no_data` on a live run — fly those layers with `--dry-run` for now. `--out-dir` defaults to a fresh `/tmp/fw_calib_<utcstamp>` per run. Does not write plant JSONC. See `UPDATES.md` 0.50.0.
-- `run_control_calibration.sh` (repo root) — shim → `python3 -m controlCallibration run`. Plant from `flightSetup.json`; procedure from `python/controlCallibration/procedure.json`. Pass `--layer rates|attitude|accel_z|vel_z` (accel/vel need `--inject pitch|thrust`). `--dry-run` / `--no-plot` / `--no-sim` / `--udp` / `--out-dir` / `--setup` / plant flags as above.
-- `python/fw_sitl/` — shared package: `path_geometry`, `quat`, `attitude_pid`, `plant_gains` / `plant_loader` (per plant+airframe outer PID/bank/thrust/speed, PX4 inner `FW_*` overlay, and nested `controllers.*` outer-loop blocks from `python/fw_sitl/platforms/{jsbsim,yasim,gz,xplane}/*.jsonc`: `jsbsim_rascal`, `jsbsim_rascal_viz`, `yasim_rascal`, `gz_rc_cessna`, `gz_advanced_plane`, `xplane_cessna172`; `load_plant_gains(plant_id, controller=...)` merges selected block), `platforms/` (per-backend: `jsbsim/` plants; `yasim/` + `fg_camera`; `gz/` camera/pose/overlay/gui; `xplane/` camera/balloon/origin/pose), `controllers/` (`race_quat` LOS chase, `pure_pursuit_quat` PP chase, `race_euler` same LOS/path closing Euler φ/θ error every tick via the cascade including in-view (no cascade reset); selected via `guidance.controller`; inner stepper `px4_att_cascade` with `guidance.attitude_format` quat|euler; `cmd_mode=rates` sends body rates from Euler φ̇θ̇ψ̇ — identical for `race_euler`/`race_quat` since `send_attitude_rates` always uses `cascade_out.body_rates` (des vs act / roll_tc,pitch_tc), never `q_cmd` or I-state; the in-view difference between the two is `cmd_mode=attitude` only (cascade `q_cmd` vs open-loop `q_des`+reset); in-view homing is body FRD from camera mount `azimuth_deg`/`elevation_deg`), `accel_laws` (pure-pursuit `a_des=k(u_hat-v_hat)`), `attitude_from_accel` (polar/geometric `a_des`→`q_des`), `thrust_energy` (quadratic drag + `SpeedGovernor`; race in-view chase: selected controller → attitude → thrust/speed; PP `last_law` `pp_polar`/`pp_geom`; path-hold unchanged), `mavlink_io`, `sim_lifecycle`, `cli_common`, `straight_flight_core`, `flight_history`; balloon-race: `flight_setup`, `spawn_ic`, `zmq_bus`, `camera_model`, `balloon_tracker`, `synthetic_camera`, `balloon_scene`, `race_guidance`, `race_csv`, `race_compare`, `body_cmd_bridge`, `body_cmd_controllers`.
-- `python/flightSetup.json` — balloon-race config (ZMQ endpoints, balloons as home-relative NED with z≈0 at cruise, `spawn.ned`/`heading_deg` in that same frame — 0=north, 90=east — applied to JSBSim/YASim/Gazebo, `sim.platform`/`sim.gz_model` for the race launcher plant — `jsbsim`|`viz`|`yasim`|`gz` (xplane not in menu), CLI `--viz`/`--yasim`/`--gz`/`--model`/`--duration` override — camera FOV/mount/`fg_window_pattern`/`fg_eye_forward_m`/`fg_hide_aircraft`, rates, guidance `laps`/`duration_s`/`cmd_mode`/`controller`). `laps=0` cycles balloons until `duration_s` (or Ctrl+C); `laps>0` ends after that many full circuits. `duration_s=60` default; `duration_s=0` (or `./run_balloon_race.sh --duration 0`) has no time limit. `guidance.controller` selects `pure_pursuit_quat` (default), `race_quat`, or `race_euler`. `cmd_mode=attitude` uses `px4_att_cascade` Euler PID (`guidance.attitude_format` quat|euler: quaternion vs Euler packing); `SET_ATTITUDE_TARGET` commands are Euler (roll/pitch/yaw) + thrust (not Euler only for display); `cmd_mode=rates` sends body rates from Euler φ̇θ̇ψ̇ (implemented, not a stub); `velocity` is locked-line path setpoints (TECS). `flightSetup.e2e.json` shortens `duration_s` for live checks. FG `--viz`: patch V7 (`--allow-nasal-from-sockets`, draw-mask + forward eye, **clouds off**: `--disable-clouds`/`--disable-clouds3d`/`--disable-real-weather-fetch`) + `fg_camera` window capture (skip Qt 3×3 `fgfs` stubs; cache window/mss and reassert view over telnet every 2 s — per-tick hunt+`set` made `balloon_camera` jump; telnet also holds `draw-mask/clouds=0` and `clouds3d-enable=0`) + `balloon_camera` HighGUI parked **outside** the FG rectangle (`fit_window_outside_rect` / `moveWindow` — shrinks if FG is nearly fullscreen; mss captures overlapping OS windows inside the grab) + `balloon_scene` `add-model` with **`elevation-ft`** from **live** FG `/position/altitude-ft` and **lat/lon from live** `/position/latitude-deg`/`longitude-deg` (fallback 919.2 m / LSZH IC; hardcoded origin left models hundreds of metres behind the visual aircraft). Control re-places those models after altitude settle; chase/plot balloon XY is the live `/models/model` geodetic (same NED conversion as the aircraft), not a settle-lat + config offset taken after the place. Race `--viz`/`--yasim`/`--gz` places those models **before** the PX4 HEARTBEAT (`python -m fw_sitl.balloon_scene --setup … --fg|--gz`); control `--no-sim` does not wait on telnet.
-- `python/requirements.txt` — numpy, pyzmq, opencv-python, pymavlink, mss.
-- `python/run_balloon_{image_source,camera,control}.py` — multi-process balloon race (synth or FG image → camera track → OFFBOARD LOCAL_NED chase); control rebases balloon Z to settled local altitude for chase/CSV/plots; FG models use the same relative Z at live aircraft MSL (`local_z=0`, not EKF `pos_d`), always writes race CSV (`pass`/`sample`/`end_*` with plane `pos_*` and current-balloon `tgt_*` NED), ends on first of laps (if >0) | duration_s (if >0) | Ctrl+C. Timed end writes `/tmp/balloon_race_<stamp>_history.png` + `_trajectory.png` and a `.pkl` of live history **before** removing SITL docker. The launcher starts host `show_race_plots.py` (not tmux) which waits for the CSV `end_*` row and opens an **interactive matplotlib** window (zoom/pan; time-series subplots share the x axis). `--no-plot` skips. On `--gz`, those plots and the 1 Hz `t x y z` line use EKF minus a constant origin bias locked from the first good Gazebo pose (SITL ~50 m), not per-tick mesh pose and not raw EKF. That lock sample comes from a dedicated `pose` tmux pane (`run_balloon_gz_pose.py` → `fw_sitl/platforms/gz/gz_pose_bridge.py`, docker-exec'd in-container) that subscribes Gazebo's physics-rate `dynamic_pose/info` topic (`gz.transport`, ~40 Hz) and streams it to control over ZMQ (`zmq.pose`, continuous) — not one-shot `docker exec gz model --pose` polling, which had ~0.4–0.5 s subprocess latency per sample and showed up as position jitter in the plots. Attitude chase matches Gazebo: co-altitude balloons at NED z=0 (same XY as GZ: 300/600/900 m north); while in view, `AttitudeChaseController` runs PP `a_des` → `attitude_from_accel` → `SpeedGovernor` (`last_law` `pp_polar`/`pp_geom`; yaw stays actual; roll/pitch 0.2 s LPF + 30°/s slew); `--viz`/`--yasim`/`--gz` skip the 80 px geom-gate because FG/EKF pinhole projection does not match the blob; headless synth keeps it; HSV miss still feeds geometric `dir_ned` into PP; synth freezes world balloons from control color `balloons` (rebased NED), not first MAVLink pose, and renders with MAVLink ATTITUDE (polled with LOCAL_POSITION so yaw is not stuck at 0). Balloon-race attitude always closes chase LOS in body FRD (tracker blob through camera→body mount, else geometric NED rotated by attitude); overlay still follows `race.assisted`. All plants keep `RaceGuidance.turn_radius_m=0` (home until pass; JSBSim fly-by cut too early at 27 m/s). All plants settle altitude on the locked-line path (`settle_path_altitude`). Each second, control prints local NED `t x y z` and `balloon_camera` overlays the same line. Straight-flight hold still uses locked-line intercept. `--viz`/`--yasim`: PX4's EKF dead-reckons there (`SYS_HAS_MAG=0`, `EKF2_GPS_MODE=1`) and drifts from FG/JSBSim ground truth (the FG bridge still sends a valid `HIL_GPS` fix + geomagnetic mag; PX4 is told to ignore both). Guidance rebases position+attitude from FG telnet. History/overlay NED is timestamped FG GT from a Nasal pose snapshot plus FG NED velocity (not six serial telnet gets and not a per-cycle balloon-model walk, which froze then snapped 15–92 m every 4 s). Chase XY locks from `/models/model` geodetic once. Plots overlay dotted EKF-in-world and solid sim (FG coast / Gazebo world); ΔN/ΔE/ΔD and CSV `pos_*` use sim. FG view FOV is held at 90° (`goal-field-of-view` + GT-thread re-assert; camera telnet often loses the socket to the GT reader). Attitude still slews; EKF heading glitches (>10°/sample) are absorbed into that yaw offset. Plot velocity is PX4 EKF `vx/vy` with glitch absorb. Attitude samples keep the EKF Euler cache so the yaw offset is not applied twice. LOS plots are body +X only (HSV blob angles are not mixed in). Chase bank/pitch still use 0.2 s LPF + 30°/s slew (kept across in_view/path); PP has no 5° heading deadband or load-factor nose-up. `--gz` heading kp 1.4. YASim inner `FW_R_TC=0.80` / `FW_RR_P=0.095` / `FW_RR_FF=0.48`. `--viz` loads `jsbsim_rascal_viz` (chase thrust uses FG GT speed, not EKF). `--gz` `gz_rc_cessna`: approach 12 m/s @ 180 m, `max_roll=0.55`, cruise thrust 0.62. `--yasim` `yasim_rascal`: approach 22 m/s @ 280 m, `max_roll=0.36`, `bank_kp_heading=0.78`, `kp_alt=0.032`; geometric LOS inside 120 m with |ΔZ|>6 m uses `att_los_max_pitch` so a 28 m/s pass can dive when HSV drops. JSBSim/viz PP approach 15 m/s; `race_quat` 16 m/s @ 140 m, bank kp 1.5 / max ~40°. Velocity chase and attitude path-hold still command `chase_speed_mps` + `thrust_for_hold`; in-view attitude uses governor `v_cmd`/`thrust`. Brief HSV drops hold the last camera LOS 0.35 s. The attitude panel overlays dashed guidance Euler (`last_q_des`, same FG frame as measured, yaw unwrapped). Enabling PX4 GPS/mag fusion (`--ekf-fix gps`) was tried and **disabled**: mag+GPS crashed; GPS-only never armed. Evidence, PX4 source pointers, and the leftover `prepare_sitl_arming(..., force_gps_aiding=True)` hook are in `UPDATES.md` 0.35.1. `--ekf-fix gps` now exits 2.
-- `python/scripts/compare_balloon_runs.py` — offline parity gate: two race CSVs (+ optional pixel dumps / `--setup`) vs `verification.pass_time_tol_s` / `path_rms_max_m` / `pixel_rms_max_px`; exit 0/1.
-- `python/run_straight_flight_jsbsim.py` / `run_straight_flight_yasim.py` — thin plant entrypoints (CLI + engage policy); YASim uses shared hold. JSBSim optional `--viz`. Softened failsafes; plant-specific engage retries. Speed/lookahead/PID from `plant_gains` (JSBSim Rascal 18 m/s; CLI `--speed`/`--lookahead` override). Plot after hold (`--no-plot` to skip). Old names `run_straight_flight_headless.py` / `run_straight_flight.py` are thin shims.
-- Gazebo PX4 plane plant (additive, GUI always): `python/scripts/runSimGzPlane.sh` → container `px4-noble-gz-plane` (`gz_rc_cessna` default; `--model advanced_plane`). GUI chase-follows the plane (`GZ_GUI_CONFIG` + `/gui/track`). Race: `./run_balloon_race.sh --gz` — onboard `race_cam` sensor → ZMQ (not GUI grab); balloons are visual-only (no collision). Straight flight: `python/run_straight_flight_gz.py`. Teardown: `kill.sh --gz` (GPU fallback does not relaunch after a live kill). `--yasim` / `--viz` / `--gz` / `--xplane` are the race plant flags (pairwise exclusive).
-- X-Plane 12 demo Cessna (additive): `python/scripts/runSimXplaneCessna.sh` → `px4-noble-xplane-cessna` (bind-mount `$XP12_HOME` → `/opt/xplane12`, default Salzburg LOWS). Race: `./run_balloon_race.sh --xplane` — mss `--mode xp`, balloons via `fixedwing_balloons` UDP 49091, pose `run_balloon_xp_pose.py`. Fetch: `fetch_px4xplane.sh`. Teardown: `kill.sh --xplane`.
-- `run_balloon_race.sh` / `run_control_calibration.sh` / `kill.sh` (repo root) — race shim → `python/scripts/run_balloon_race.sh`; SID shim → `python3 -m controlCallibration run`; balloon-race teardown (tmux `balloon_race` + JSBSim/mavlink; `kill.sh --fg` includes the mavlink sidecar; pass `--fg`/`--all`/`--xplane` through to `python/scripts/kill.sh`). Race plants: `--yasim` YASim FG Rascal FDM + FG camera; default headless JSBSim synth; `--viz` JSBSim+FG viz; `--gz` Cessna; `--xplane` XP12 demo Cessna. Launcher `kill.sh --all` before a new sim (skip with `--no-sim`); `--duration SEC` / `--no-plot`; race-owned runs pass `--stop-sim-on-exit`. After sim/fan-out, `--viz`/`--yasim`/`--gz`/`--xplane` spawn balloons then wait HEARTBEAT on 14540 then **control** then image+camera. The launcher **attaches** to tmux (control pane; 1 Hz `t x y z`). `--detach` leaves it in the background. Plot waiter is a host background process (`show_race_plots.py`) so the matplotlib window still opens if the tmux control pane dies during docker kill. Camera pane gets `DISPLAY` like control. OpenCV ≥5 (conda `base`) is swapped to env `pigeon` (`opencv-python<5`) so `balloon_camera` is not a black Qt window.
-- Host mavlink-server **0.10.1**: `python/scripts/fetch_mavlink_server.sh` → `python/bin/mavlink-server` (fan-out prefers this over broken PATH binaries). Docker bake uses the same pin (`MAVLINK_SERVER_VERSION`); rebuild image to refresh the sidecar binary.
-- `python/scripts/` — `runSimJsbsimRascal.sh` (headless default; `--viz` → FG `--fdm=null` + balloons mount `/opt/fixedwing/balloons`; optional `--mavlink-server` / `MAVLINK_FANOUT=1` fan-out 14550→14540/14541, off by default), `runSimYasimRascal.sh` (same optional fan-out, default off; balloons mount + copy into FG_ROOT `Models/FixedWing/`; `patch_px4_flightgear_sitl.sh` adds `--telnet=5501` `--allow-nasal-from-sockets`), `runSimXplaneCessna.sh` (XP12 bind-mount + px4xplane + airframe 5001), `run_balloon_race.sh` (fan-out on; `--viz`/`--yasim`/`--gz`/`--xplane` spawn balloons then wait HEARTBEAT on 14540 then **control** then image+camera), `compare_balloon_runs.py`, `kill.sh` (`--fg`/`--jsbsim`/`--gz`/`--xplane` also remove `${name}-mavlink` sidecar + host mavlink-server). Compat shims remain at `python/runSim*.sh` / `python/kill.sh`.
-- `python/assets/` — `jsb_spawn.xml` / `fg_spawn.env` (~500 m AGL in-air; straight-flight default). Race `--setup` writes a temp IC from `flightSetup.json` `spawn`. `balloons/` (~10 m FG `.ac` spheres + XML under `Models/FixedWing/`; not stock hot-air `balloon4`; last animation is object-name `enable-hot=false` plus `add-model` `enable-hot: 0` so YASim does not collide), `gz/models/balloon_*` (Gazebo visual-only spheres, no collision), `xplane/` (airframe 5001, `fixedwing_balloons` plugin sources, fetched `px4xplane/`).
-- `python/tests/` — unit tests. Host must use `cd python && python3 -m unittest discover -s tests` because Anaconda `site-packages/tests` shadows `python3 -m unittest tests.*`. Live `race_quat` SITL e2e (opt-in): `FW_SITL_E2E=1 ./python/scripts/run_race_quat_e2e.sh` (or `FW_SITL_E2E_PLATFORMS=jsbsim,gz`).
-- MAVLink: optional mavlink-server fans PX4 GCS (PX4 local **18570** → remote **14550**) to control **14540** and image-source **14541** (QGC connects as UDP client to 14550). Straight-flight default: no fan-out. Balloon race enables it and exits if start fails or no control heartbeat. Prefer distinct `--udp` so processes do not fight one bind. mavlink-server logs go to `/tmp/mavlink-server-fanout.log` (`RUST_LOG=off`) so dialect InvalidCRC on newer PX4 msgs does not spam the sim pane (seen on 0.9.0; whether 0.10.1 accepts those CRCs is unconfirmed — keep log redirect). `--mavlink-heartbeat-frequency 0` remains correct on 0.10.1 (#223: skip heartbeat when frequency ≤ 0).
-- Airspeed in QGC: `VFR_HUD.airspeed`. Thrust: `VFR_HUD.throttle` / servos / `ACTUATOR_OUTPUT_STATUS`. RPM: `RAW_RPM` (YASim FG path).
 
-## Run examples
+Control stack (outer → inner):
+
+1. **Guidance** — `race_guidance` + balloon pass logic; `flightSetup.json` selects plant, duration, `cmd_mode`, controller.
+2. **Chase controllers** (`fw_sitl/controllers/`) — registry: `pure_pursuit_quat` (PP `a_des`→attitude→governor), `race_quat` (LOS `q_des_from_los`), `race_euler` (same LOS; in-view keeps cascade I-state under `cmd_mode=attitude`). In-view `race_*` speed/thrust follow LOS elevation (`range·sin(el)`), not balloon Z.
+3. **Attitude cascade** — `px4_att_cascade` (Euler PID → `q_cmd` / body rates). `cmd_mode=attitude` packs quat|euler; `rates` sends body rates from φ̇θ̇ψ̇; `velocity` is locked-line TECS path setpoints.
+4. **Plant gains** — `platforms/<family>/{plant_id}.jsonc` → `load_plant_gains(plant_id, controller=…)`; shared top-level + `controllers.*` blocks; PX4 `FW_*` overlay at arm.
+5. **PX4 SITL** — OFFBOARD over MAVLink; optional mavlink-server fan-out.
+6. **FDM** — JSBSim (headless / FG viz), YASim+FlightGear, Gazebo; X-Plane code remains in-tree but is off the race menu.
+
+Package layout:
+
+| Path | Role |
+|------|------|
+| `Dockerfiles/` | Nested PX4/FG/JSBSim/Gazebo image + patches. See that folder’s README. |
+| `python/fw_sitl/` | Shared library (geometry, MAVLink, plants, race, straight flight). |
+| `python/fw_sitl/platforms/{jsbsim,yasim,gz,xplane}/` | Plant JSONC + backend camera/pose/overlay glue. |
+| `python/fw_sitl/controllers/` | Selectable outer chase laws. |
+| `python/controlCallibration/` | Host SID. `--waveform chirp\|sine` (default chirp; sine is instead of chirp). Procedure in `procedure.json` (`sine_phases` 3/60/2 s, per-layer `f_sine_hz`; `max_angle_deg` 30° bounce-at-wall on `--layer rates`). Plant from `flightSetup.json` (`--gz`/`--yasim`/`--viz`/`--jsbsim`/`--model`). History/FFT/step PNG + `hints.json`. Envelope abort recaptures and retries that axis (3 attempts) then skips. Does not write plant JSONC. See `UPDATES.md` 0.51.0. |
+| `run_control_calibration.sh` | Root shim → `python -m controlCallibration run`. |
+| `python/flightSetup.json` | Balloon-race config (JSONC); also default SID plant. |
+| `python/scripts/` | Sim launchers, race orchestrator, kill, fetch helpers. |
+| `python/tests/` | Unit tests (host: `cd python && python3 -m unittest discover -s tests`). |
+
+## Runtime (balloon race)
+
+`./run_balloon_race.sh` → tmux session `balloon_race`:
+
+| Pane | Process |
+|------|---------|
+| sim | `runSim{JsbsimRascal,YasimRascal,GzPlane}.sh` in Docker |
+| control | `run_balloon_control.py --udp 14540` |
+| image | `run_balloon_image_source.py --udp 14541` (`synth`\|`fg`\|`gz`) |
+| camera | `run_balloon_camera.py` (HSV track + overlay) |
+| pose | `--gz` only: `gz_pose_bridge` → ZMQ (~40 Hz mesh pose) |
+
+**ZMQ** (`flightSetup.json` → `zmq`): `image`, `color`, `track`, `pose` (one PUB binder per endpoint).
+
+**MAVLink**: PX4 GCS **18570** → remote **14550**; mavlink-server fans to control **14540** and image **14541**. QGC connects as UDP client to 14550. Race requires fan-out + real autopilot HEARTBEAT before spawning control/image. Straight flight leaves fan-out off by default.
+
+Teardown: `./kill.sh --all` (or `--gz` / `--fg` / `--jsbsim` as needed).
+
+## Plants
+
+| Flag / `sim.platform` | Plant id | Notes |
+|-----------------------|----------|--------|
+| (default) `jsbsim` | `jsbsim_rascal` | Headless JSBSim Rascal; primary tuning target |
+| `--viz` | `jsbsim_rascal_viz` | Same FDM + FG `--fdm=null` window; FG GT rebase |
+| `--yasim` | `yasim_rascal` | YASim FG Rascal; FG GT rebase |
+| `--gz` | `gz_rc_cessna` (or `--model advanced_plane`) | Gazebo; EKF−origin_bias NED |
+| (disabled) | `xplane_cessna172` | In-tree; `sim.platform=xplane` / `--xplane` exit 2 |
+
+Straight flight: `run_straight_flight_{jsbsim,yasim,gz}.py`.
+
+## Config
+
+**`python/flightSetup.json`**
+
+- `balloons[]` / `spawn` — home-relative NED (`+z` down); heading 0=N, 90=E.
+- `sim.platform` — `jsbsim`\|`viz`\|`yasim`\|`gz`; `sim.gz_model`; `sim.duration_s` (`0` = no limit; CLI `--duration` overrides).
+- `camera` — FOV, mount `azimuth_deg`/`elevation_deg`, resolution, FG window pattern.
+- `guidance.controller` — `pure_pursuit_quat`\|`race_quat`\|`race_euler`.
+- `guidance.cmd_mode` — `velocity`\|`attitude`\|`rates`; `attitude_format` quat\|euler (meaningful for `attitude`).
+- `guidance.laps` — `0` = cycle until duration; `N>0` = end after N circuits.
+- `verification.*` — offline parity thresholds for `compare_balloon_runs.py`.
+
+**Plant JSONC** — `python/fw_sitl/platforms/<family>/{plant_id}.jsonc`. Family from plant-id prefix (`jsbsim_`, `yasim_`, `gz_`, `xplane_`). Top-level: airspeeds, lookahead, `px4_inner`. Per-controller outer gains under `controllers.<id>`; PP-only aero/governor keys may be inherited by `race_*` from sibling `pure_pursuit_quat`.
+
+Code defaults for missing keys: controller `pure_pursuit_quat`. Check the checked-in `flightSetup.json` for the active race defaults (may differ).
+
+## Frames
+
+- **NED** — balloons, spawn, chase targets, CSV/plots (`+z` down; race balloons at local `z≈0` cruise).
+- **Body FRD** — in-view homing closes LOS vs body +X (camera→body via mount; else NED→body by attitude).
+- **Camera** — OpenCV optical (+Z boresight); mount azimuth+/elevation+ vs body FRD (`camera_model.py`).
+- **`--viz`/`--yasim`** — PX4 EKF dead-reckons and drifts; guidance rebases from FG telnet GT (`--ekf-fix gps` disabled / exit 2).
+- **`--gz`** — race NED = EKF − constant origin bias locked from first good mesh pose (ZMQ pose stream, not per-tick `docker exec` poll).
+
+## Run
+
 ```bash
+./run_balloon_race.sh                  # headless JSBSim (or sim.platform in setup)
+./run_balloon_race.sh --gz
+./run_balloon_race.sh --yasim
+./run_balloon_race.sh --viz
+./run_balloon_race.sh --duration 0     # no time limit
+./kill.sh --all
+
 ./run_control_calibration.sh --layer rates
 ./run_control_calibration.sh --layer attitude --gz
-./run_control_calibration.sh --layer accel_z --inject pitch --dry-run --no-plot
 ./run_control_calibration.sh --layer rates --gz --waveform sine
 ./run_control_calibration.sh --layer attitude --gz --waveform sine
+./run_control_calibration.sh --layer accel_z --inject pitch --dry-run --no-plot
+
+cd python && python3 -m unittest discover -s tests
+FW_SITL_E2E=1 ./python/scripts/run_race_quat_e2e.sh   # opt-in live SITL
 ```
-Plant from `python/flightSetup.json`; override with `--gz`/`--yasim`/`--viz`/`--jsbsim`/`--model`. Procedure: `python/controlCallibration/procedure.json`. `--waveform sine` runs 60 s of constant-frequency sine per axis (from `procedure.json` `sine_phases`) **instead of** the chirp — not an extra phase after it. PNGs: `_history` / `_step` always, `_fft` unless the log is too short for a Welch segment. Interactive matplotlib unless `--no-plot`. `--layer accel_z`/`vel_z` have no live GT wired yet (`gt`/`px4` are `nan`, hints read `no_data`) — fly those with `--dry-run` only; `rates`/`attitude` are the live layers today. `--layer rates` commands body rates (no visible Euler wobble in a GUI viz — use `--layer attitude` to see the aircraft actually pitch/roll/yaw). If an axis trips the envelope, the run recaptures and retries that axis (up to 3×) and keeps going, printing the tripping limit each time — it no longer aborts the whole calibration on the first trip. Does not write plant JSONC.
+
+Plant for SID comes from `flightSetup.json`; override with `--gz`/`--yasim`/`--viz`/`--jsbsim`/`--model`. `--waveform sine` is **instead of** chirp (60 s tone per axis from `procedure.json`). Artifacts in `/tmp/fw_calib_<stamp>/` (`_history` / `_step` always, `_fft` unless the log is too short). Interactive matplotlib unless `--no-plot`. Envelope abort recaptures and retries that axis (3 attempts) then skips.
+
+Full `unittest discover` blocks on race-plot `plt.show(block=True)`. Calibration tests: `MPLBACKEND=Agg python3 -m unittest tests.test_calibration_* tests.test_flight_history`.
+
+## Known limits
+
+- `race_euler` + `px4_att_cascade`: host-tested; **GZ live** (`165855`) 3D miss under 10 m on all three balloons. Other plants unflown.
+- X-Plane plant is residual (code/tests present; race menu disabled).
+- FG/YASim: EKF is not ground truth — always use GT rebase for chase/plots.
+- OpenCV ≥5 (some conda envs) blacks out `balloon_camera`; race launcher prefers an `opencv-python<5` env when needed.
+- Calibration live `gt`/`px4` are the same MAVLink ATTITUDE sample, not FDM truth. `accel_z`/`vel_z` live GT is `nan` (`no_data`) — use `--dry-run` for those layers.
+- `--layer rates` commands body rates (little visible Euler wobble). Use `--layer attitude` to see the aircraft pitch/roll/yaw.
 
 ## Reading order for agents
 1. Read this `README.md` (mandatory if present).
-2. Read `UPDATES.md` (mandatory) for the change history and current state before working.
+2. Read `UPDATES.md` (mandatory) for recent change history before working.
 3. Read `Dockerfiles/README.md` before touching the image or FlightGear/PX4 glue.

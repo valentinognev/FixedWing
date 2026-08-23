@@ -53,13 +53,16 @@ class _FakeHistory:
         self.path_origin_xy: tuple[float, float] | None = None
         self.path_course_rad: float | None = None
         self.polls = 0
+        self.last_pos: tuple[float, float, float] | None = (0.0, 0.0, Z_HOLD)
 
     def request_streams(self, master: object, hz: float = 20.0) -> None:
         return None
 
     def poll(self, master: object) -> tuple[float, float, float]:
         self.polls += 1
-        return (0.0, 0.0, Z_HOLD)
+        pos = (0.0, 0.0, Z_HOLD)
+        self.last_pos = pos
+        return pos
 
 
 def _args(
@@ -290,24 +293,47 @@ class TestRunSitlEnvelopeAbort(unittest.TestCase):
 
 class TestRunSitlEnvelopeRetryExhausted(unittest.TestCase):
     def test_axis_out_of_envelope_every_attempt_is_skipped_others_fly(self) -> None:
-        """``roll`` stays out of the envelope on every overlay tick: after
-        MAX_AXIS_RETRIES attempts it is skipped (no roll excitation rows),
-        ``aborted`` is True, but pitch/yaw still fly normally."""
+        """``roll`` overlay trips on every attempt; recapture (path hold)
+        restores the envelope so retries actually run. After
+        MAX_AXIS_RETRIES the axis is skipped (no roll excitation rows),
+        ``aborted`` is True, but pitch/yaw still fly normally.
+
+        FakeHistory does not recover attitude on its own. Path-hold
+        restoring TRIM is the test stand-in for a successful recapture;
+        without it ``_quiet_or_relock`` would skip the remaining axes.
+        """
         hist = _FakeHistory()
-        hist.last_att_rad = (math.radians(60.0), 0.0, TRIM_ATT[2])
         with tempfile.TemporaryDirectory() as tmp:
             out_dir = Path(tmp)
             with _Fakes(hist) as fakes:
                 real_send = fakes._send_attitude_target
 
-                def restoring_send(master, roll, pitch, yaw, thrust):
+                trips = {"n": 0}
+
+                def overlay_send(master, roll, pitch, yaw, thrust):
                     real_send(master, roll, pitch, yaw, thrust)
-                    if len(fakes.attitude_targets) == runner.MAX_AXIS_RETRIES:
+                    # Tip the next overlay tick until roll has used up
+                    # its retries. Send-count is a bad proxy: each failed
+                    # attempt is two overlay ticks (in-envelope then abort).
+                    if trips["n"] < runner.MAX_AXIS_RETRIES:
+                        hist.last_att_rad = (
+                            math.radians(60.0),
+                            0.0,
+                            TRIM_ATT[2],
+                        )
+
+                def recapture_path(*_a, **_kw):
+                    fakes.path_setpoints += 1
+                    att = hist.last_att_rad or TRIM_ATT
+                    if abs(att[0]) > math.radians(40):
+                        trips["n"] += 1
                         hist.last_att_rad = TRIM_ATT
 
                 stderr = io.StringIO()
                 with patch(
-                    "fw_sitl.mavlink_io.send_attitude_target", new=restoring_send
+                    "fw_sitl.mavlink_io.send_attitude_target", new=overlay_send
+                ), patch(
+                    "fw_sitl.mavlink_io.send_path_setpoint", new=recapture_path
                 ):
                     with contextlib.redirect_stderr(stderr):
                         rc = runner.run_sitl(_args("attitude", out_dir))
@@ -366,6 +392,27 @@ class TestRunSitlWaveformSine(unittest.TestCase):
         # At least one non-zero sample actually exercises the tone (not
         # just t=0 where sin(0) == 0).
         self.assertTrue(any(abs(v) > 1e-6 for v in expected))
+
+
+class TestRunSitlRatesAngleLimit(unittest.TestCase):
+    """Live ``--layer rates`` must reverse a same-sign rate at the Euler
+    wall (``max_angle_deg`` 30°). Envelope abort stays 40° / 80 m, so a
+    stuck +31° roll is still in-envelope and must bounce, not abort."""
+
+    def test_stuck_past_roll_cap_never_sends_positive_p(self) -> None:
+        hist = _FakeHistory()
+        hist.last_att_rad = (math.radians(31.0), TRIM_ATT[1], TRIM_ATT[2])
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp)
+            with _Fakes(hist) as fakes:
+                rc = runner.run_sitl(_args("rates", out_dir))
+            self.assertEqual(rc, 0)
+            self.assertTrue(fakes.rate_targets)
+            for p, _q, _r, _thrust in fakes.rate_targets:
+                self.assertLessEqual(p, 0.0)
+            self.assertTrue(
+                any(p < 0.0 for p, _q, _r, _thrust in fakes.rate_targets)
+            )
 
 
 class TestRunOfflineDemoZLayers(unittest.TestCase):

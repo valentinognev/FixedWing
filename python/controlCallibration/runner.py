@@ -14,7 +14,13 @@ import numpy as np
 from controlCallibration.analyze import analyze_log
 from controlCallibration.chirp import inv_log_chirp, log_chirp, tone
 from controlCallibration.log_io import COLUMNS, write_csv
-from controlCallibration.overlay import AxisCommand, Trim, axis_command, channels_for
+from controlCallibration.overlay import (
+    AxisCommand,
+    Trim,
+    axis_command,
+    channels_for,
+    limit_rates_by_angle,
+)
 from controlCallibration.plant import resolve_calibration_sim
 from controlCallibration.procedure import load_procedure
 
@@ -32,8 +38,8 @@ _STR_COLUMNS = frozenset({"channel", "segment"})
 @dataclass
 class EnvelopeLimits:
     roll_rad: float = math.radians(40)
-    pitch_rad: float = math.radians(25)
-    dalt_m: float = 30.0
+    pitch_rad: float = math.radians(40)
+    dalt_m: float = 80.0
 
 
 _LIMITS = EnvelopeLimits()
@@ -450,13 +456,15 @@ def run_sitl(args: argparse.Namespace) -> int:
     a constant-frequency tone).
 
     An envelope abort mid-axis prints the tripping limit (plus the other
-    three measurements for context), recaptures path hold, and retries that
-    axis from a freshly captured trim — up to ``MAX_AXIS_RETRIES`` attempts
-    total. Each failed attempt's rows are dropped (a truncated chirp/sine
-    would poison the deconvolution otherwise). Only once an axis exhausts
-    all attempts is it skipped entirely and ``aborted`` set ``True``; other
-    axes still fly. Imports fw_sitl / pymavlink lazily so ``--dry-run``
-    never needs Docker or MAVLink.
+    three measurements for context), recaptures path hold, re-locks
+    ``z_hold`` / origin to the current pose, and retries that axis from a
+    freshly captured trim — up to ``MAX_AXIS_RETRIES`` attempts total.
+    Each failed attempt's rows are dropped (a truncated chirp/sine would
+    poison the deconvolution otherwise). If the envelope is still not
+    quiet after recapture, that attempt is skipped instead of overlaying
+    anyway. Only once an axis exhausts all attempts is it skipped entirely
+    and ``aborted`` set ``True``; other axes still fly. Imports fw_sitl /
+    pymavlink lazily so ``--dry-run`` never needs Docker or MAVLink.
     """
     import sys
     import time
@@ -611,17 +619,44 @@ def run_sitl(args: argparse.Namespace) -> int:
         for _ in range(max(1, round(seconds / period))):
             _hold_tick()
 
+    def _relock_path() -> None:
+        """Re-datum ``z_hold`` / origin to the aircraft's current pose.
+
+        After a rates overlay the plane is no longer on TECS; recapture
+        often settles tens of metres above the post-fall lock. Measuring
+        Δalt against that stale lock makes every retry abort on the first
+        sample. Envelope Δalt is relative to the cruise we are actually in.
+        """
+        nonlocal z_hold, origin_xy
+        pos = getattr(history, "last_pos", None)
+        if pos is None:
+            return
+        origin_xy = (float(pos[0]), float(pos[1]))
+        z_hold = float(pos[2])
+        history.path_origin_xy = origin_xy
+
+    def _quiet_or_relock() -> bool:
+        # Re-datum before every axis (and every retry): Δalt is vs the
+        # cruise we are in, not the post-fall lock.
+        _relock_path()
+        if hold_until_quiet(_hold_tick, period=period):
+            return True
+        _relock_path()
+        return hold_until_quiet(_hold_tick, period=period)
+
     rows: list[dict] = []
     aborted = False
 
     try:
         for channel in channels_for(layer):
-            if not hold_until_quiet(_hold_tick, period=period):
+            if not _quiet_or_relock():
                 print(
                     f"Warning: envelope not quiet within {HOLD_TIMEOUT_S:.0f} s "
-                    f"before {channel}; chirping anyway",
+                    f"before {channel}; skipping",
                     file=sys.stderr,
                 )
+                aborted = True
+                continue
             amplitude = layer_amplitude(layer, channel, inject)
 
             channel_ok = False
@@ -658,6 +693,14 @@ def run_sitl(args: argparse.Namespace) -> int:
                             p_gt, q_gt, r_gt = history.last_pqr or (0.0, 0.0, 0.0)
 
                             if layer == "rates":
+                                cmd = limit_rates_by_angle(
+                                    cmd,
+                                    roll_gt,
+                                    pitch_gt,
+                                    yaw_gt,
+                                    trim.yaw,
+                                    _PROCEDURE.max_angle,
+                                )
                                 send_attitude_rates(master, cmd.p, cmd.q, cmd.r, cmd.thrust)
                             else:
                                 send_attitude_target(master, cmd.roll, cmd.pitch, cmd.yaw, cmd.thrust)
@@ -712,7 +755,14 @@ def run_sitl(args: argparse.Namespace) -> int:
                         file=sys.stderr,
                     )
                     _hold_ticks(3.0)
-                    hold_until_quiet(_hold_tick, period=period)
+                    _relock_path()
+                    if not _quiet_or_relock():
+                        print(
+                            f"Warning: envelope not quiet after recapture on "
+                            f"{channel}; not overlaying",
+                            file=sys.stderr,
+                        )
+                        break
                     continue
 
                 rows.extend(channel_rows)

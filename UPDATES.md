@@ -1,5 +1,14 @@
 # Updates
 
+## 0.51.0 - Reverse rates SID at Euler wall
+- `overlay.limit_rates_by_angle` flips `p`/`q`/`r` (does not zero) when Euler is at/beyond `MaxAngle` and the rate still drives into the wall; yaw error is `remainder(yaw−trim_yaw, 2π)`. New `AxisCommand`; `cmd` tracks the flipped axis when it matched.
+- Live `--layer rates` applies that limiter after `axis_command` / `last_att_rad` and before `send_attitude_rates`. Caps from `procedure.json` `max_angle_deg` 30°. Logged/sent `cmd` is post-limit; `measured` stays the aircraft. Attitude layer does not call it. Envelope abort stays 40° / 80 m.
+
+## 0.50.2 - GZ rates SID envelope was unflyable
+- Live `--layer rates --gz` recaptured as designed but skipped p/q/r: first overlay tripped at pitch −25.1° (post-fall dive), then every retry hit Δalt ±30 m because `z_hold` stayed at the post-arm lock (~68 m) while rate overlay drops TECS and the Cessna climbs.
+- Envelope pitch limit 25°→40° (same as roll). Δalt 30 m→80 m so a rates SID without TECS can finish an axis.
+- After recapture, re-lock path origin + `z_hold` to the current pose. If the envelope is still not quiet, skip that axis instead of overlaying anyway.
+
 ## 0.50.1 - SID sine waveform review fixes
 - New live-path regression test: `--waveform sine` on `run` (no `--dry-run`) is asserted to fly only `settle`/`sine` CSV segments (no chirp/inv_chirp leak-through) and to log `cmd` matching `A*sin(2π f_sine t)` sample-for-sample (rates layer, channel `p`: `A=0.15`, `f_sine=0.5` Hz).
 - `run_offline_demo`/`run_sitl` read `args.waveform` directly; dropped the `getattr(args, "waveform", "chirp")` fallback now that every caller (CLI parser and hand-built test `Namespace`s) sets it.
@@ -12,6 +21,10 @@
 - `analyze`/`log_io.select_excitation`: a channel with any `sine` rows uses only those for the FRF/step response; otherwise falls back to chirp+inv_chirp as before.
 - Live `run`: an envelope trip during an axis no longer ends the whole calibration. It prints which limit tripped and its value, recaptures path-hold, and retries that axis from its first phase (dropping the failed attempt's rows) up to 3 times before skipping to the next axis with a warning.
 - `hints.json` `aborted: true` only if an axis was skipped after exhausting its 3 retries; a recovered retry leaves `aborted: false`.
+
+## 0.49.0 - In-view LOS speed/thrust
+- Homing `v_cmd` slows on steep LOS elevation (dive more than climb); in-view thrust uses `range·sin(el)` as Δz, not balloon bookkeeping Z.
+- GZ `race_euler` attitude/euler live `165855`: pass 3D 9.7 / 9.5 / 9.8 m (Z −2.1 / −2.2 / −9.6). Plant energy keys left at the `race_quat` copy (lower `min_thrust` did not beat that on later dirty-IC runs).
 
 ## 0.48.1 - Calibration launcher review fixes
 - `runner.layer_amplitude` / `analyze._amplitude` now look up amplitude within the given `layer`'s `procedure.json` block instead of a flattened `amplitude_map` global (removed). A flattened map could silently collide on a shared key or mask a layer/channel mismatch (e.g. `layer_amplitude("rates", "p", "thrust")` used to return accel_z's `thrust` amplitude instead of erroring); both now raise `ValueError` when the layer has no matching amplitude key. Thrust `0.08` stays duplicated under `accel_z`/`vel_z` in `procedure.json` — same value, no collision.

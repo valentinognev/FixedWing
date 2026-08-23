@@ -61,13 +61,22 @@ class TestEnvelopeOk(unittest.TestCase):
             envelope_ok(math.radians(40) + 1e-6, 0.0, 100.0, 100.0, 18.0, 10.0)
         )
 
-    def test_false_when_pitch_exceeds_25_deg(self) -> None:
+    def test_false_when_pitch_exceeds_40_deg(self) -> None:
         self.assertFalse(
-            envelope_ok(0.0, math.radians(25) + 1e-6, 100.0, 100.0, 18.0, 10.0)
+            envelope_ok(0.0, math.radians(40) + 1e-6, 100.0, 100.0, 18.0, 10.0)
         )
 
-    def test_false_when_altitude_delta_exceeds_30_m(self) -> None:
-        self.assertFalse(envelope_ok(0.0, 0.0, 131.0, 100.0, 18.0, 10.0))
+    def test_true_when_pitch_is_25_deg(self) -> None:
+        # GZ rates overlay after an unarmed fall sits near −25°; that
+        # must not trip the envelope on the first sample.
+        self.assertTrue(envelope_ok(0.0, math.radians(25.1), 100.0, 100.0, 18.0, 10.0))
+
+    def test_false_when_altitude_delta_exceeds_80_m(self) -> None:
+        self.assertFalse(envelope_ok(0.0, 0.0, 181.0, 100.0, 18.0, 10.0))
+
+    def test_true_when_altitude_delta_is_35_m(self) -> None:
+        # Rate overlay drops TECS; 30 m of climb is a normal GZ SID, not an abort.
+        self.assertTrue(envelope_ok(0.0, 0.0, 135.0, 100.0, 18.0, 10.0))
 
     def test_false_when_airspeed_below_min(self) -> None:
         self.assertFalse(envelope_ok(0.0, 0.0, 100.0, 100.0, 9.9, 10.0))
@@ -90,20 +99,20 @@ class TestEnvelopeFailReason(unittest.TestCase):
 
     def test_pitch_reason_names_pitch_and_its_value(self) -> None:
         reason = envelope_fail_reason(
-            math.radians(1.0), math.radians(31.2), 100.4, 100.0, 16.2, 10.0
+            math.radians(1.0), math.radians(41.2), 100.4, 100.0, 16.2, 10.0
         )
         self.assertIsNotNone(reason)
         self.assertIn("pitch", reason)
-        self.assertIn("31.2", reason)
+        self.assertIn("41.2", reason)
         # Other measurements are still reported for context.
         self.assertIn("roll", reason)
         self.assertIn("airspeed", reason)
 
     def test_dalt_reason_names_altitude_delta(self) -> None:
-        reason = envelope_fail_reason(0.0, 0.0, 131.0, 100.0, 18.0, 10.0)
+        reason = envelope_fail_reason(0.0, 0.0, 181.0, 100.0, 18.0, 10.0)
         self.assertIsNotNone(reason)
         self.assertIn("alt", reason.lower())
-        self.assertIn("31.0", reason)
+        self.assertIn("81.0", reason)
 
     def test_airspeed_reason_names_airspeed_and_its_value(self) -> None:
         reason = envelope_fail_reason(0.0, 0.0, 100.0, 100.0, 9.9, 10.0)
