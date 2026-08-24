@@ -261,6 +261,25 @@ class TestRaceQuatLos(unittest.TestCase):
         _master, _roll, pitch, _yaw, _thrust = send.call_args[0]
         self.assertAlmostEqual(pitch, el, delta=math.radians(2.0))
 
+    def test_race_quat_smooth_roll_uses_plant_slew(self) -> None:
+        from dataclasses import replace
+
+        from fw_sitl.controllers.race_quat import RaceQuatController
+
+        ctl = self._build(speed=18.0)
+        self.assertIsInstance(ctl, RaceQuatController)
+        ctl._plant = replace(
+            ctl._plant,
+            los_roll_slew_rad_s=math.radians(45.0),
+            los_roll_lpf_tau_s=0.10,
+        )
+        first = ctl._smooth_roll(0.0, dt=0.05)
+        self.assertAlmostEqual(first, 0.0)
+        stepped = ctl._smooth_roll(math.radians(20.0), dt=0.05)
+        # 45°/s * 0.05s = 2.25°; LPF also pulls toward target. Must exceed 30°/s cap (1.5°).
+        self.assertGreater(stepped, math.radians(1.5) + 1e-6)
+        self.assertLessEqual(stepped, math.radians(45.0) * 0.05 + 1e-6)
+
 
 class TestMakeBodyCmdControllerControllerArg(unittest.TestCase):
     def test_attitude_factory_accepts_controller(self) -> None:
@@ -318,6 +337,21 @@ class TestRaceEulerLos(unittest.TestCase):
             "race_euler", bridge, speed_mps=30.0, plant=plant
         )
         self.assertIsInstance(ctrl, RaceEulerController)
+
+    def test_race_euler_smooth_roll_uses_plant_slew(self) -> None:
+        from dataclasses import replace
+
+        ctl = self._build()
+        ctl._plant = replace(
+            ctl._plant,
+            los_roll_slew_rad_s=math.radians(45.0),
+            los_roll_lpf_tau_s=0.10,
+        )
+        first = ctl._smooth_roll(0.0, dt=0.05)
+        self.assertAlmostEqual(first, 0.0)
+        stepped = ctl._smooth_roll(math.radians(20.0), dt=0.05)
+        self.assertGreater(stepped, math.radians(1.5) + 1e-6)
+        self.assertLessEqual(stepped, math.radians(45.0) * 0.05 + 1e-6)
 
     def test_in_view_last_law_is_los(self) -> None:
         ctrl = self._build()

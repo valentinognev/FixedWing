@@ -9,6 +9,7 @@ the sibling ``controllers.pure_pursuit_quat`` block in the same file.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import fields
 from pathlib import Path
 from typing import Any
@@ -53,6 +54,12 @@ _PP_ONLY_KEYS = frozenset(
 )
 
 _ALLOWED_ROOT_KEYS = _TOP_LEVEL_KEYS | frozenset({"controllers"})
+
+_OPTIONAL_PLANT_DEFAULTS = {
+    "kp_elev": 1.0,
+    "los_roll_slew_rad_s": math.radians(30.0),
+    "los_roll_lpf_tau_s": 0.20,
+}
 
 
 def strip_jsonc(text: str) -> str:
@@ -190,7 +197,13 @@ def plant_gains_from_dict(data: dict) -> PlantGains:
         )
     kwargs: dict = {}
     for field in fields(PlantGains):
-        kwargs[field.name] = data[field.name]
+        name = field.name
+        if name in data:
+            kwargs[name] = data[name]
+        elif name in _OPTIONAL_PLANT_DEFAULTS:
+            kwargs[name] = _OPTIONAL_PLANT_DEFAULTS[name]
+        else:
+            raise KeyError(name)
     kwargs["px4_inner"] = tuple(
         (str(name), float(value)) for name, value in kwargs["px4_inner"]
     )

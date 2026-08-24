@@ -104,12 +104,18 @@ class RaceQuatController:
         return filt
 
     def _smooth_roll(self, roll: float, dt: float) -> float:
+        if self._plant is not None:
+            tau = self._plant.los_roll_lpf_tau_s
+            slew_rad_s = self._plant.los_roll_slew_rad_s
+        else:
+            tau = LOS_ROLL_LPF_TAU_S
+            slew_rad_s = LOS_ROLL_SLEW_RAD_S
         return self._smooth_axis(
             "_last_roll_cmd",
             roll,
             dt,
-            tau=LOS_ROLL_LPF_TAU_S,
-            slew_rad_s=LOS_ROLL_SLEW_RAD_S,
+            tau=tau,
+            slew_rad_s=slew_rad_s,
         )
 
     def _smooth_pitch(self, pitch: float, dt: float) -> float:

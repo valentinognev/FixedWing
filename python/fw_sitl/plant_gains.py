@@ -69,6 +69,9 @@ class PlantGains:
     bank_max_pitch_rad: float
     att_max_pitch_rad: float
     att_los_max_pitch_rad: float
+    kp_elev: float
+    los_roll_slew_rad_s: float
+    los_roll_lpf_tau_s: float
     cruise_thrust: float
     climb_thrust_per_m: float
     min_thrust: float
@@ -113,6 +116,9 @@ class PlantGains:
             self.bank_max_pitch_rad,
             self.att_max_pitch_rad,
             self.att_los_max_pitch_rad,
+            self.kp_elev,
+            self.los_roll_slew_rad_s,
+            self.los_roll_lpf_tau_s,
             self.cruise_thrust,
             self.climb_thrust_per_m,
             self.min_thrust,
@@ -170,6 +176,7 @@ class PlantGains:
             "kp_heading": self.bank_kp_heading,
             "max_roll": self.bank_max_roll_rad,
             "max_pitch": self.att_los_max_pitch_rad,
+            "kp_elev": self.kp_elev,
         }
 
     def thrust_kwargs(self) -> dict[str, float]:

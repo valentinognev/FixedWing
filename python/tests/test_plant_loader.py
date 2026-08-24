@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sys
 import unittest
 from pathlib import Path
@@ -88,6 +89,26 @@ class TestPlantGainsFromDict(unittest.TestCase):
                 "pure_pursuit_quat": {**outer, **self._pp_only()},
             },
         }
+
+    def test_omitted_kp_elev_and_los_roll_get_defaults(self) -> None:
+        flat = merge_plant_controller(self._nested(), "race_quat")
+        self.assertNotIn("kp_elev", flat)
+        self.assertNotIn("los_roll_slew_rad_s", flat)
+        self.assertNotIn("los_roll_lpf_tau_s", flat)
+        p = plant_gains_from_dict(flat)
+        self.assertAlmostEqual(p.kp_elev, 1.0)
+        self.assertAlmostEqual(p.los_roll_slew_rad_s, math.radians(30.0))
+        self.assertAlmostEqual(p.los_roll_lpf_tau_s, 0.20)
+
+    def test_explicit_kp_elev_and_los_roll_override_defaults(self) -> None:
+        flat = merge_plant_controller(self._nested(), "race_quat")
+        flat["kp_elev"] = 1.8
+        flat["los_roll_slew_rad_s"] = math.radians(45.0)
+        flat["los_roll_lpf_tau_s"] = 0.10
+        p = plant_gains_from_dict(flat)
+        self.assertAlmostEqual(p.kp_elev, 1.8)
+        self.assertAlmostEqual(p.los_roll_slew_rad_s, math.radians(45.0))
+        self.assertAlmostEqual(p.los_roll_lpf_tau_s, 0.10)
 
     def test_builds_plant_via_merge_pp(self) -> None:
         flat = merge_plant_controller(self._nested(), "pure_pursuit_quat")

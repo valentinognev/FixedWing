@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -135,6 +137,25 @@ class TestPlantGainsRegistry(unittest.TestCase):
         self.assertAlmostEqual(p.los_kwargs()["kp_heading"], 1.0)
         self.assertNotIn("kp_alt", p.los_kwargs())
         self.assertAlmostEqual(p.los_kwargs()["max_roll"], 0.62)
+
+    def test_los_kwargs_includes_default_kp_elev(self) -> None:
+        p = load_plant_gains("jsbsim_rascal", controller="race_quat")
+        self.assertAlmostEqual(p.kp_elev, 1.0)
+        self.assertAlmostEqual(p.los_kwargs()["kp_elev"], 1.0)
+        self.assertAlmostEqual(p.los_roll_slew_rad_s, math.radians(30.0))
+        self.assertAlmostEqual(p.los_roll_lpf_tau_s, 0.20)
+
+    def test_fingerprint_includes_kp_elev_and_los_roll(self) -> None:
+        p = load_plant_gains("jsbsim_rascal", controller="race_quat")
+        self.assertNotEqual(p.fingerprint(), replace(p, kp_elev=2.0).fingerprint())
+        self.assertNotEqual(
+            p.fingerprint(),
+            replace(p, los_roll_slew_rad_s=1.0).fingerprint(),
+        )
+        self.assertNotEqual(
+            p.fingerprint(),
+            replace(p, los_roll_lpf_tau_s=0.5).fingerprint(),
+        )
 
     def test_jsbsim_race_quat_leads_body_az(self) -> None:
         """JSBSim 131011: kp=2 + 12 m/s @ 220 m crawled (~15 m/s) and over-banked
