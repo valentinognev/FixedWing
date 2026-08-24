@@ -288,6 +288,36 @@ class TestPlantGainsRegistry(unittest.TestCase):
         )
         self.assertLessEqual(rpy_from_quat(steep)[1], 0.26 + 1e-6)
 
+    def test_gz_race_euler_center_through_gains(self) -> None:
+        """Calibrated GZ inner loop: 20° pitch, elev lead, faster bank, slower final."""
+        import math
+        from fw_sitl.attitude_pid import q_des_from_los
+        from fw_sitl.quat import rpy_from_quat
+
+        euler = load_plant_gains("gz_rc_cessna", controller="race_euler")
+        race = load_plant_gains("gz_rc_cessna", controller="race_quat")
+        self.assertAlmostEqual(euler.kp_elev, 1.2)
+        self.assertAlmostEqual(euler.att_los_max_pitch_rad, 0.35)
+        self.assertAlmostEqual(euler.los_roll_slew_rad_s, math.radians(45.0))
+        self.assertAlmostEqual(euler.los_roll_lpf_tau_s, 0.10)
+        self.assertAlmostEqual(euler.approach_speed_mps, 10.0)
+        self.assertAlmostEqual(euler.slow_range_m, 220.0)
+        self.assertAlmostEqual(euler.speed_mps, 16.0)
+        self.assertGreater(euler.approach_speed_mps, euler.fw_airspd_min)
+        self.assertAlmostEqual(euler.bank_kp_heading, 1.4)
+        self.assertAlmostEqual(race.att_los_max_pitch_rad, 0.26)
+        self.assertAlmostEqual(race.kp_elev, 1.0)
+        lim = dict(euler.px4_inner)
+        self.assertAlmostEqual(lim["FW_P_LIM_MIN"], -20.0)
+        self.assertAlmostEqual(lim["FW_P_LIM_MAX"], 20.0)
+        steep = q_des_from_los(
+            (0.2, 0.0, -1.0),
+            yaw_rad=0.0,
+            **euler.los_kwargs(),
+        )
+        self.assertLessEqual(rpy_from_quat(steep)[1], 0.35 + 1e-6)
+        self.assertGreater(rpy_from_quat(steep)[1], 0.26)
+
     def test_gz_advanced_plane_differs_from_cessna(self) -> None:
         cessna = load_plant_gains("gz_rc_cessna")
         adv = load_plant_gains("gz_advanced_plane")
@@ -325,7 +355,8 @@ class TestPlantGainsRegistry(unittest.TestCase):
         self.assertAlmostEqual(inner["FW_RR_P"], 0.4)
         self.assertAlmostEqual(inner["FW_YR_P"], 0.45)
         self.assertAlmostEqual(inner["FW_YR_FF"], 0.5)
-        self.assertAlmostEqual(inner["FW_P_LIM_MAX"], 15.0)
+        self.assertAlmostEqual(inner["FW_P_LIM_MIN"], -20.0)
+        self.assertAlmostEqual(inner["FW_P_LIM_MAX"], 20.0)
 
     def test_px4_inner_gz_advanced_snapshot(self) -> None:
         inner = dict(load_plant_gains("gz_advanced_plane").px4_inner)

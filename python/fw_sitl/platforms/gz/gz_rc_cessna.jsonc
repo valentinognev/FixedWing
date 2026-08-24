@@ -28,8 +28,8 @@
     ["FW_YR_P", 0.45], /* FW_YR_P */
     ["FW_YR_I", 0.3], /* FW_YR_I */
     ["FW_PSP_OFF", 0.0], /* FW_PSP_OFF */
-    ["FW_P_LIM_MIN", -15.0], /* FW_P_LIM_MIN */
-    ["FW_P_LIM_MAX", 15.0], /* FW_P_LIM_MAX */
+    ["FW_P_LIM_MIN", -20.0], /* FW_P_LIM_MIN */
+    ["FW_P_LIM_MAX", 20.0], /* FW_P_LIM_MAX */
     ["FW_T_CLMB_MAX", 5.0], /* FW_T_CLMB_MAX */
     ["FW_T_SINK_MAX", 3.5], /* FW_T_SINK_MAX */
     ["FW_T_SINK_MIN", 3.0], /* FW_T_SINK_MIN */
@@ -103,7 +103,7 @@
       // Thrust P vs speed error (1 / (m/s)).
       "speed_thrust_per_mps": 0.07
     },
-    // LOS Euler-error close (race_euler); outer gains copied from race_quat; omits PP-only aero/governor fields.
+    // LOS Euler-error close (race_euler); retuned for calibrated inner loop / center-through (not a verbatim race_quat copy).
     "race_euler": {
       // Attitude PID (quaternion error → body rates) P gain.
       "pid_kp": 1.0,
@@ -141,8 +141,17 @@
       // Attitude path-hold max pitch (rad).
       "att_max_pitch_rad": 0.26,
 
-      // LOS / geometric chase max pitch (rad). Cessna stalls at 40° (live 135412).
-      "att_los_max_pitch_rad": 0.26,
+      // LOS / geometric chase max pitch (rad). 20° for calibrated inner loop / center-through.
+      "att_los_max_pitch_rad": 0.35,
+
+      // Elevator lead on LOS look-at (1 = no extra pitch vs geometric).
+      "kp_elev": 1.2,
+
+      // Max LOS-bank slew (rad/s); 45°/s for faster bank into the dive.
+      "los_roll_slew_rad_s": 0.7853981633974483,
+
+      // LOS-bank LPF time constant (s); 0.10 s vs default 0.20 s.
+      "los_roll_lpf_tau_s": 0.10,
 
       // Nominal thrust fraction at cruise.
       "cruise_thrust": 0.80,
@@ -160,10 +169,10 @@
       "speed_mps": 16.0,
 
       // Final-approach airspeed (m/s) inside slow_range_m.
-      "approach_speed_mps": 12.0,
+      "approach_speed_mps": 10.0,
 
       // Range (m) at which speed blends cruise → approach.
-      "slow_range_m": 180.0,
+      "slow_range_m": 220.0,
 
       // Thrust P vs speed error (1 / (m/s)).
       "speed_thrust_per_mps": 0.07

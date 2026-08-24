@@ -279,11 +279,32 @@ class TestLoadPlantJsoncFile(unittest.TestCase):
             "slow_range_m",
             "speed_thrust_per_mps",
         )
+        # GZ race_euler is retuned for center-through; keep PID/bank/thrust parity only.
+        gz_shared_attrs = (
+            "pid_kp",
+            "pid_ki",
+            "pid_kd",
+            "roll_tc",
+            "pitch_tc",
+            "bank_kp_heading",
+            "bank_kp_cross_track",
+            "bank_xt_lookahead_m",
+            "bank_max_roll_rad",
+            "bank_kp_alt",
+            "bank_max_pitch_rad",
+            "att_max_pitch_rad",
+            "cruise_thrust",
+            "climb_thrust_per_m",
+            "min_thrust",
+            "max_thrust",
+            "speed_thrust_per_mps",
+        )
         for plant_id in KNOWN_PLANT_IDS:
             with self.subTest(plant_id=plant_id):
                 race = load_plant_gains(plant_id, controller="race_quat")
                 euler = load_plant_gains(plant_id, controller="race_euler")
-                for attr in shared_attrs:
+                attrs = gz_shared_attrs if plant_id == "gz_rc_cessna" else shared_attrs
+                for attr in attrs:
                     self.assertAlmostEqual(
                         getattr(euler, attr),
                         getattr(race, attr),
