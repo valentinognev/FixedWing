@@ -108,7 +108,7 @@ Full `unittest discover` blocks on race-plot `plt.show(block=True)`. Calibration
 
 ## Known limits
 
-- `race_euler` + `px4_att_cascade`: host-tested; GZ `race_euler` retuned for center-through after inner-loop SID — re-fly to confirm <5 m 3D. Other plants unflown.
+- `race_euler` + `px4_att_cascade`: host-tested; GZ `race_euler` retuned for center-through after inner-loop SID — re-fly to confirm <5 m 3D (baseline `165855`: 9.7/9.5/9.8 m). Load-pitch on down-LOS is skipped in shared `q_des_from_los` (all `race_quat`/`race_euler` plants); JSBSim/YASim dives unflown since.
 - X-Plane plant is residual (code/tests present; race menu disabled).
 - FG/YASim: EKF is not ground truth — always use GT rebase for chase/plots.
 - OpenCV ≥5 (some conda envs) blacks out `balloon_camera`; race launcher prefers an `opencv-python<5` env when needed.
