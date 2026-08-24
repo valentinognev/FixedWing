@@ -169,11 +169,13 @@ def chase_speed_mps(
     approach_mps: float,
     slow_range_m: float,
     heading_err_rad: float = 0.0,
+    elev_rad: float = 0.0,
 ) -> float:
     """Cruise far; blend down to approach speed near the balloon.
 
     ``R = v²/(g tan φ)``: lower v on final cuts intercept miss. Large heading
     error trims the blend further so a 90° corner is not taken at cruise.
+    Steep LOS elevation trims it again so pitch/thrust have time to close Z.
     Missing range keeps cruise (straight-flight / tests).
     """
     cruise = float(cruise_mps)
@@ -185,6 +187,10 @@ def chase_speed_mps(
     herr = abs(wrap_pi(float(heading_err_rad)))
     turn_frac = min(1.0, herr / (math.pi / 2))
     w *= 1.0 - 0.35 * turn_frac
+    el_frac = min(1.0, abs(float(elev_rad)) / math.radians(20.0))
+    if float(elev_rad) > 0.0:
+        el_frac *= 0.65
+    w *= 1.0 - 0.50 * el_frac
     return approach + w * (cruise - approach)
 
 

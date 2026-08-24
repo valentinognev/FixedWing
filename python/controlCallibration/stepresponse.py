@@ -110,7 +110,14 @@ def step_calc(
 def step_stats(step_responses: np.ndarray, time_ms: np.ndarray) -> dict[str, float]:
     """Compute peak and latency statistics from step response stack."""
     if step_responses.size == 0:
-        return {"peak_mean": 0, "peak_std": 0, "latency_mean_ms": 0, "latency_std_ms": 0, "n": 0}
+        return {
+            "peak_mean": 0,
+            "peak_std": 0,
+            "latency_mean_ms": 0,
+            "latency_std_ms": 0,
+            "n": 0,
+            "curve_peak": 0,
+        }
 
     peaks = np.max(step_responses, axis=1)
     latencies = []
@@ -119,10 +126,12 @@ def step_stats(step_responses: np.ndarray, time_ms: np.ndarray) -> dict[str, flo
         latencies.append(time_ms[above[0]] if len(above) else 0)
 
     latencies = np.array(latencies)
+    mean_curve = np.mean(step_responses, axis=0)
     return {
         "peak_mean": float(np.mean(peaks)),
         "peak_std": float(np.std(peaks)),
         "latency_mean_ms": float(np.mean(latencies)),
         "latency_std_ms": float(np.std(latencies)),
         "n": len(peaks),
+        "curve_peak": float(np.max(mean_curve)) if mean_curve.size else 0.0,
     }

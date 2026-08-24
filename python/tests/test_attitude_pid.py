@@ -334,6 +334,46 @@ class TestChaseSpeedMps(unittest.TestCase):
         )
         self.assertAlmostEqual(v, 18.0, places=2)
 
+    def test_large_elevation_slows_mid_range(self) -> None:
+        """Homing with steep LOS must cut v_cmd so pitch has time to settle."""
+        flat = chase_speed_mps(
+            90.0,
+            cruise_mps=18.0,
+            approach_mps=12.0,
+            slow_range_m=180.0,
+            heading_err_rad=0.0,
+            elev_rad=0.0,
+        )
+        steep = chase_speed_mps(
+            90.0,
+            cruise_mps=18.0,
+            approach_mps=12.0,
+            slow_range_m=180.0,
+            heading_err_rad=0.0,
+            elev_rad=math.radians(20.0),
+        )
+        self.assertLess(steep, flat)
+
+    def test_dive_slows_more_than_climb_at_same_elev(self) -> None:
+        """Climbing LOS keeps more energy; a dive can bleed speed."""
+        climb = chase_speed_mps(
+            90.0,
+            cruise_mps=18.0,
+            approach_mps=12.0,
+            slow_range_m=180.0,
+            heading_err_rad=0.0,
+            elev_rad=math.radians(20.0),
+        )
+        dive = chase_speed_mps(
+            90.0,
+            cruise_mps=18.0,
+            approach_mps=12.0,
+            slow_range_m=180.0,
+            heading_err_rad=0.0,
+            elev_rad=math.radians(-20.0),
+        )
+        self.assertLess(dive, climb)
+
 
 if __name__ == "__main__":
     unittest.main()

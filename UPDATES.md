@@ -1,8 +1,63 @@
 # Updates
 
+## 0.54.2 - Attitude SID: narrower pitch/yaw chirps, unwrap gt at ±π
+- `procedure.json` attitude chirp `f1_hz` pitch 3.0→1.5, yaw 2.0→1.2 (same reason as q/r: do not sweep past useful coherence). `f1_hz.roll` stays 4.0; all attitude `f0_hz` / amplitudes and `window_s` roll/yaw 1.0 / pitch 2.0 unchanged.
+- Live attitude `gt`/`px4` are unwrapped onto `cmd`'s 2π branch. PX4 ATTITUDE Euler is (-π, π]; `cmd = trim + excitation` can sit just past π, and a wrapped `gt` was a 2π step that poisons Wiener.
+
+## 0.54.1 - Rates SID: q/pitch 2 s window, narrower q/r chirps, one-click P
+- `procedure.json` `window_s` q 0.5→2.0 and pitch 1.0→2.0 (Wiener already deconvolves 2 s segments; the q step plot was truncated at 500 ms). p/r stay 0.5; roll/yaw 1.0; az/w 2.0.
+- Rates chirp `f1_hz` q 4.0→2.0, r 2.0→1.2 (energy past useful coherence). `f1_hz.p` stays 8.0; all `f0_hz` and amplitudes unchanged (q/r amp 0.08).
+- GZ Cessna one-click: `FW_PR_P` 0.65→0.50, `FW_YR_P` 0.7→0.45. `FW_PR_FF` / `FW_YR_FF` / `FW_RR_*` / I-terms untouched.
+
+## 0.54.0 - Rates SID: yaw wall was eating r, verdict used outlier peaks
+- `limit_rates_by_angle(..., channel=)` skips the yaw Euler wall on channel `r`. Heading is not in the envelope abort; the restore rate replaced the r chirp with a one-sided square wave (live GZ). Roll/pitch walls unchanged; p/q overlays still restore r at the yaw cap.
+- Overshoot/weak follow `curve_peak` (max of the mean Wiener step) not `peak_mean` (mean of per-window maxes). Live p was `peak=1.40` / `curve=1.03` → was `overshoot`, now `ok`. Printed metrics include `curve=`.
+- History plot inserts NaNs across the chirp→inv_chirp settle hole so matplotlib does not draw a diagonal through the 2 s join.
+- Live after the limiter fix (`/tmp/fw_calib_20260824_131307`): `p curve=1.026 ok`. q/r still `overshoot` on a climbing mean step (q first-cycle overshoot + high-f attenuation, `|G|≈0.6` at 1 Hz; r Dutch roll + climb bias). Lowering `FW_PR_P` 0.65→0.40 made q `curve` 1.28→1.41; reverted.
+
+## 0.53.0 - GZ Cessna pitch/yaw rate retune from chirp plots
+- Live `--layer rates --gz` chirp: 5° pitch/yaw walls turned q/r into limiter square-waves (one-sided cmd, heading walk). Stats said overshoot/slow; history showed the chirp never ran. Walls 10/12/40°, q/r amp 0.08, r `f0` 0.3→0.4 Hz.
+- `gz_rc_cessna` pitch rate was high-P/low-FF (`FW_PR_P` 0.9 / `FW_PR_FF` 0.2): history |q|≈½|q_cmd|, |G|≈0.5 at 1 Hz. Now 0.65 / 0.45. Roll `FW_RR_*` unchanged (history already tracked; step mean `curve≈1.03`).
+- Yaw: `FW_YR_P` 1.3→0.7, `FW_YR_FF` 0.3→0.5. More P/FF (0.85/0.7) raised the ~2.5 Hz Dutch-roll |G| peak 1.03→1.3; reverted. Residual +r bias still walks into the yaw wall late in the chirp — Cessna uncoordinated climb, not a stats-overshoot fix.
+- Keeper plots: `/tmp/fw_calib_20260824_105528`. Do not tune off Wiener `peak_mean` when history is wall-clipped or the mean step `curve` sits near 1.
+
+## 0.52.2 - Attitude overlay no longer aborts on Δalt
+- Live `--layer attitude --gz` skipped roll/pitch/yaw on Δalt ≈ 80 m (wings-level, airspeed ~35). Attitude overlay drops TECS the same way rates does; the Cessna climbs to the cap, every axis is skipped, `run_sitl` returns 1 with no CSV → no plots.
+- Overlay `check_dalt` is off for `attitude` as well as `rates`. Hold/recapture still uses the 80 m cap.
+
+## 0.52.1 - Step-plot y-axis unit
+- Step ylabel is `step (1)`: Wiener \(G\) is DC-normalized, so the curve is dimensionless (same unit as \(Y/U\) for rates/attitude).
+
+## 0.52.0 - Per-channel chirp/sine frequencies for rates and attitude
+- `procedure.json` `f0_hz` / `f1_hz` / `f_sine_hz` are per axis on `rates` (p 1–8 Hz / 0.5 Hz sine, q 0.5–4 / 0.3, r 0.3–2 / 0.2) and `attitude` (roll 0.2–4 / 0.3, pitch 0.15–3 / 0.2, yaw 0.1–2 / 0.15). `accel_z`/`vel_z` stay a scalar that expands to every amplitude key.
+- `layer_freqs(layer, channel)` / `layer_sine_freq(layer, channel)` look up that axis. Live and dry-run apply the lookup inside the channel loop.
+
+## 0.51.5 - Step plot showed mean curve, box showed mean-of-peaks
+- `peak` in the step box / printed metrics is `mean(max(each Wiener window))`. The blue line is `mean(windows)`, so peaks that don't line up look ~1.0 while the box said 1.51. Plot faint per-window traces; box also shows `curve=` (max of the blue mean).
+
+## 0.51.4 - Recover from dive once, then overlay all rate axes
+- Live `--layer rates --gz` after 0.51.3: p and q plots were empty (`n=0` `no_data`). CSV had only `r` from t≈62 s. Each axis waited 15 s×2 for wings-level, skipped, and the GZ recapture from the unarmed drop (~62 s) only finished in time for r.
+- `procedure.json` `hold_initial_timeout_s` 90. One path-hold until `|roll|/|pitch|≤5°` before the first axis (relock retry included). If that fails, skip the whole overlay. Per-axis recapture stays 15 s.
+- Stuck-dive skip no longer burns p then q as warmup.
+
+## 0.51.3 - Rates SID: tighter q/r walls, start from wings-level
+- Live `--layer rates --gz` identified `q`/`r` as overshoot (peak 1.61 / 1.50) and the first `p` sample was still the post-fall −40° dive. Bounce-at-wall on a diving airframe distorts the chirp, so Wiener step ID is not usable.
+- `procedure.json` `max_angle_deg` pitch/yaw 10°→5° (roll stays 10°). Rates amplitude `q`/`r` 0.15→0.08 so Euler stays inside the wall from trim (p stays 0.15). Chirp+inv_chirp still 20+20 s (≥4 s needed for 2 s Wiener segments).
+- New `start_angle_deg` roll/pitch 5°. `_quiet_or_relock` waits for wings-level before overlay (recapture `_hold_ticks` stays envelope-only). Banked/diving attitude skips the axis instead of exciting it.
+
+## 0.51.2 - Rates chirp 10° wall, f0 1 Hz
+- `procedure.json` `max_angle_deg` 20°→10° (roll/pitch/yaw).
+- Rates chirp `f0_hz` 0.3→1.0 (less dwell at slow rates that integrate into large Euler). `f1_hz` stays 8. Sine `f_sine_hz` unchanged.
+
+## 0.51.1 - GZ rates still aborted; 20° wall + restore unused axis
+- Live `--layer rates --gz`: `p` finished; `q`/`r` still skipped on Δalt 80 m. Uncommanded Euler (q=0 during p, etc.) walked because the limiter only negated a same-sign rate.
+- `procedure.json` `max_angle_deg` 30°→20°. At the wall, a zero rate on that axis becomes a restoring rate of the excitation amplitude (opposite the Euler error).
+- Live `--layer rates` overlay does not abort on Δalt (TECS is off; climb is expected). Roll/pitch/airspeed abort still apply. Hold/recapture still uses the 80 m Δalt cap.
+- Envelope abort stays 40° / 80 m.
+
 ## 0.51.0 - Reverse rates SID at Euler wall
 - `overlay.limit_rates_by_angle` flips `p`/`q`/`r` (does not zero) when Euler is at/beyond `MaxAngle` and the rate still drives into the wall; yaw error is `remainder(yaw−trim_yaw, 2π)`. New `AxisCommand`; `cmd` tracks the flipped axis when it matched.
-- Live `--layer rates` applies that limiter after `axis_command` / `last_att_rad` and before `send_attitude_rates`. Caps from `procedure.json` `max_angle_deg` 30°. Logged/sent `cmd` is post-limit; `measured` stays the aircraft. Attitude layer does not call it. Envelope abort stays 40° / 80 m.
+- Live `--layer rates` applies that limiter after `axis_command` / `last_att_rad` and before `send_attitude_rates`. Caps from `procedure.json` `max_angle_deg` (10° as of 0.51.2). Logged/sent `cmd` is post-limit; `measured` stays the aircraft. Attitude layer does not call it. Envelope abort stays 40° / 80 m.
 
 ## 0.50.2 - GZ rates SID envelope was unflyable
 - Live `--layer rates --gz` recaptured as designed but skipped p/q/r: first overlay tripped at pitch −25.1° (post-fall dive), then every retry hit Δalt ±30 m because `z_hold` stayed at the post-arm lock (~68 m) while rate overlay drops TECS and the Cessna climbs.

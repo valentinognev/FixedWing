@@ -37,12 +37,20 @@ def chase_dir_body(
     return dir_ned_to_body(dir_ned, roll, pitch, yaw)
 
 
+def _los_elev_rad(dir_body: tuple[float, float, float]) -> float:
+    """Body-FRD LOS elevation (rad): +up, same convention as q_des_from_los."""
+    dx, dy, dz = (float(dir_body[0]), float(dir_body[1]), float(dir_body[2]))
+    horiz = math.hypot(dx, dy)
+    return math.atan2(-dz, horiz)
+
+
 def _commanded_chase_speed(
     range_m: float | None,
     *,
     cruise_mps: float,
     heading_err_rad: float,
     plant: PlantGains | None,
+    elev_rad: float = 0.0,
 ) -> float:
     """Plant table when present; otherwise 70% cruise on final."""
     if plant is not None:
@@ -52,6 +60,7 @@ def _commanded_chase_speed(
             approach_mps=plant.approach_speed_mps,
             slow_range_m=plant.slow_range_m,
             heading_err_rad=heading_err_rad,
+            elev_rad=elev_rad,
         )
     cruise = float(cruise_mps)
     return chase_speed_mps(
@@ -60,4 +69,5 @@ def _commanded_chase_speed(
         approach_mps=0.70 * cruise,
         slow_range_m=150.0,
         heading_err_rad=heading_err_rad,
+        elev_rad=elev_rad,
     )

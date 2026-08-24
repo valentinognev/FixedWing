@@ -67,11 +67,38 @@ def _welch_too_short(n: int, fs: float) -> bool:
     return n_seg < 1
 
 
+def nan_at_gaps(
+    t: np.ndarray, y: np.ndarray, *, max_gap_s: float = 0.15
+) -> tuple[np.ndarray, np.ndarray]:
+    """Insert NaNs so matplotlib does not draw across a time hole.
+
+    ``select_excitation`` concatenates chirp+inv_chirp and drops settle, so
+    ``plot(t, y)`` otherwise draws a diagonal through the 2 s join.
+    """
+    t = np.asarray(t, dtype=float).ravel()
+    y = np.asarray(y, dtype=float).ravel()
+    n = min(t.size, y.size)
+    t = t[:n]
+    y = y[:n]
+    if n < 2:
+        return t, y
+    dt = np.diff(t)
+    breaks = np.where(np.isfinite(dt) & (dt > max_gap_s))[0]
+    if breaks.size == 0:
+        return t, y
+    insert_at = breaks + 1
+    t_out = np.insert(t, insert_at, np.nan)
+    y_out = np.insert(y, insert_at, np.nan)
+    return t_out, y_out
+
+
 def _draw_history(
     ax: plt.Axes, t: np.ndarray, cmd: np.ndarray, resp: np.ndarray, response: str
 ) -> None:
-    ax.plot(t, cmd, label="cmd")
-    ax.plot(t, resp, label=response)
+    t_cmd, cmd_b = nan_at_gaps(t, cmd)
+    t_resp, resp_b = nan_at_gaps(t, resp)
+    ax.plot(t_cmd, cmd_b, label="cmd")
+    ax.plot(t_resp, resp_b, label=response)
     ax.set_xlabel("t (s)")
     ax.set_ylabel("value")
     ax.set_title("history")
@@ -91,12 +118,17 @@ def _draw_fft(ax: plt.Axes, freq: np.ndarray, gain: np.ndarray, coh: np.ndarray)
 def _draw_step(
     ax: plt.Axes, time_ms: np.ndarray, stack: np.ndarray, hint: dict
 ) -> None:
+    curve_peak = 0.0
     if stack.ndim == 2 and stack.shape[0] > 0:
+        tt = time_ms[: stack.shape[1]]
+        for row in stack:
+            ax.plot(tt, row[: len(tt)], color="0.75", linewidth=0.6, zorder=1)
         mean = np.mean(stack, axis=0)
         tt = time_ms[: len(mean)]
-        ax.plot(tt, mean)
+        ax.plot(tt, mean, color="C0", linewidth=1.8, zorder=3)
         peak_idx = int(np.argmax(mean))
-        ax.plot(tt[peak_idx], mean[peak_idx], "ro")
+        curve_peak = float(mean[peak_idx])
+        ax.plot(tt[peak_idx], mean[peak_idx], "ro", zorder=4)
     latency = hint.get("latency_mean_ms")
     if latency:
         ax.axvline(float(latency), color="gray", linestyle="--")
@@ -104,6 +136,7 @@ def _draw_step(
     latency_mean_ms = hint.get("latency_mean_ms") or 0.0
     text = (
         f"n={hint.get('n')}  peak={peak_mean:.3f}  "
+        f"curve={curve_peak:.3f}  "
         f"lat={latency_mean_ms:.1f}ms  verdict={hint.get('verdict')}"
     )
     ax.text(
@@ -116,7 +149,7 @@ def _draw_step(
         bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.8},
     )
     ax.set_xlabel("time_ms")
-    ax.set_ylabel("step")
+    ax.set_ylabel("step (1)")
     ax.set_title("step")
 
 
@@ -127,8 +160,10 @@ def print_metrics(report: dict) -> str:
         peak = data.get("peak_mean") or 0.0
         latency = data.get("latency_mean_ms") or 0.0
         n = data.get("n") or 0
+        curve = data.get("curve_peak")
+        curve_s = f"  curve={curve:.3f}" if curve is not None else ""
         lines.append(
-            f"{channel}  n={n}  peak={peak:.3f}  lat={latency:.1f}ms  "
+            f"{channel}  n={n}  peak={peak:.3f}{curve_s}  lat={latency:.1f}ms  "
             f"verdict={data.get('verdict')}"
         )
     return "\n".join(lines)

@@ -13,6 +13,7 @@ if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
 from controlCallibration.log_io import COLUMNS
+from controlCallibration.procedure import StartAngle
 from controlCallibration.runner import (
     HOLD_QUIET_S,
     HOLD_TIMEOUT_S,
@@ -30,7 +31,9 @@ from controlCallibration.runner import (
     layer_freqs,
     layer_sine_freq,
     measured_channel,
+    measured_on_cmd_branch,
     parse_run_args,
+    straight_flight_ok,
 )
 
 
@@ -78,8 +81,40 @@ class TestEnvelopeOk(unittest.TestCase):
         # Rate overlay drops TECS; 30 m of climb is a normal GZ SID, not an abort.
         self.assertTrue(envelope_ok(0.0, 0.0, 135.0, 100.0, 18.0, 10.0))
 
+    def test_true_when_dalt_ignored_even_if_over_80_m(self) -> None:
+        self.assertTrue(
+            envelope_ok(
+                0.0, 0.0, 200.0, 100.0, 18.0, 10.0, check_dalt=False
+            )
+        )
+
     def test_false_when_airspeed_below_min(self) -> None:
         self.assertFalse(envelope_ok(0.0, 0.0, 100.0, 100.0, 9.9, 10.0))
+
+
+class TestStraightFlightOk(unittest.TestCase):
+    """Wings-level gate before overlay — tighter than the 40° abort envelope."""
+
+    def _start(self) -> StartAngle:
+        return StartAngle(roll_rad=math.radians(5), pitch_rad=math.radians(5))
+
+    def test_true_at_trim_like_angles(self) -> None:
+        self.assertTrue(straight_flight_ok(0.06, 0.04, self._start()))
+
+    def test_true_on_the_limit(self) -> None:
+        self.assertTrue(
+            straight_flight_ok(math.radians(5), math.radians(5), self._start())
+        )
+
+    def test_false_when_pitch_past_start(self) -> None:
+        self.assertFalse(
+            straight_flight_ok(0.0, math.radians(5.1), self._start())
+        )
+
+    def test_false_when_roll_past_start(self) -> None:
+        self.assertFalse(
+            straight_flight_ok(math.radians(5.1), 0.0, self._start())
+        )
 
 
 class TestEnvelopeFailReason(unittest.TestCase):
@@ -262,10 +297,18 @@ class TestDefaultOutDir(unittest.TestCase):
 
 class TestLayerHelpers(unittest.TestCase):
     def test_layer_freqs(self) -> None:
-        self.assertEqual(layer_freqs("rates"), (0.3, 8))
-        self.assertEqual(layer_freqs("attitude"), (0.2, 4))
-        self.assertEqual(layer_freqs("accel_z"), (0.2, 3))
-        self.assertEqual(layer_freqs("vel_z"), (0.1, 2))
+        self.assertEqual(layer_freqs("rates", "p"), (1.0, 8.0))
+        self.assertEqual(layer_freqs("rates", "q"), (0.5, 2.0))
+        self.assertEqual(layer_freqs("rates", "r"), (0.4, 1.2))
+        self.assertEqual(layer_freqs("attitude", "roll"), (0.2, 4.0))
+        self.assertEqual(layer_freqs("attitude", "pitch"), (0.15, 1.5))
+        self.assertEqual(layer_freqs("attitude", "yaw"), (0.1, 1.2))
+        self.assertEqual(layer_freqs("accel_z", "az"), (0.2, 3.0))
+        self.assertEqual(layer_freqs("vel_z", "w"), (0.1, 2.0))
+
+    def test_layer_freqs_unknown_channel_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            layer_freqs("rates", "nope")
 
     def test_layer_amplitude_thrust_inject_is_0_08(self) -> None:
         self.assertAlmostEqual(layer_amplitude("accel_z", "az", "thrust"), 0.08)
@@ -291,14 +334,18 @@ class TestLayerHelpers(unittest.TestCase):
             layer_amplitude("attitude", "roll", "thrust")
 
     def test_layer_sine_freq(self) -> None:
-        self.assertAlmostEqual(layer_sine_freq("rates"), 0.5)
-        self.assertAlmostEqual(layer_sine_freq("attitude"), 0.3)
-        self.assertAlmostEqual(layer_sine_freq("accel_z"), 0.2)
-        self.assertAlmostEqual(layer_sine_freq("vel_z"), 0.2)
+        self.assertAlmostEqual(layer_sine_freq("rates", "p"), 0.5)
+        self.assertAlmostEqual(layer_sine_freq("rates", "q"), 0.3)
+        self.assertAlmostEqual(layer_sine_freq("rates", "r"), 0.2)
+        self.assertAlmostEqual(layer_sine_freq("attitude", "roll"), 0.3)
+        self.assertAlmostEqual(layer_sine_freq("attitude", "pitch"), 0.2)
+        self.assertAlmostEqual(layer_sine_freq("attitude", "yaw"), 0.15)
+        self.assertAlmostEqual(layer_sine_freq("accel_z", "az"), 0.2)
+        self.assertAlmostEqual(layer_sine_freq("vel_z", "w"), 0.2)
 
     def test_layer_sine_freq_unknown_layer_raises(self) -> None:
         with self.assertRaises(ValueError):
-            layer_sine_freq("nope")
+            layer_sine_freq("nope", "p")
 
 
 class TestMeasuredChannel(unittest.TestCase):
@@ -317,6 +364,16 @@ class TestMeasuredChannel(unittest.TestCase):
         self.assertEqual(measured_channel("roll", **self._ARGS), 0.11)
         self.assertEqual(measured_channel("pitch", **self._ARGS), 0.22)
         self.assertEqual(measured_channel("yaw", **self._ARGS), 0.33)
+
+    def test_yaw_wrap_is_lifted_onto_cmd_branch(self) -> None:
+        cmd = math.pi + 0.01
+        wrapped = math.remainder(cmd, 2.0 * math.pi)
+        self.assertLess(wrapped, 0.0)
+        out = measured_on_cmd_branch(wrapped, cmd)
+        self.assertAlmostEqual(out, cmd, places=9)
+
+    def test_in_range_euler_is_unchanged(self) -> None:
+        self.assertAlmostEqual(measured_on_cmd_branch(0.11, 0.15), 0.11)
 
     def test_az_and_w_are_named_fallback_not_silently_wrong(self) -> None:
         # No live GT source wired for accel_z/vel_z yet: must not fabricate

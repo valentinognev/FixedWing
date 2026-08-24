@@ -191,6 +191,54 @@ class TestRunSitlAttitudeTrim(unittest.TestCase):
         self.assertTrue(any(abs(c - TRIM_ATT[0]) > 1e-6 for c in chirped))
         self.assertTrue(all(abs(c - TRIM_ATT[0]) < 0.2 for c in chirped))
 
+    def test_yaw_gt_stays_on_cmd_branch_when_heading_crosses_pi(self) -> None:
+        """PX4 ATTITUDE.yaw is in (-π, π]. Attitude ``cmd = trim + excitation``
+        can sit just past π; logging the wrapped measurement as ``gt`` is a
+        2π step that poisons Wiener (n drops, false overshoot)."""
+        near_pi = math.pi - 0.05
+        trim_att = (TRIM_ATT[0], TRIM_ATT[1], near_pi)
+        hist = _FakeHistory()
+        hist.last_att_rad = trim_att
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp)
+            with _Fakes(hist) as fakes:
+                real_send = fakes._send_attitude_target
+
+                def wrapping_send(master, roll, pitch, yaw, thrust):
+                    real_send(master, roll, pitch, yaw, thrust)
+                    hist.last_att_rad = (
+                        math.remainder(roll, 2.0 * math.pi),
+                        math.remainder(pitch, 2.0 * math.pi),
+                        math.remainder(yaw, 2.0 * math.pi),
+                    )
+
+                def recapture_path(*_a, **_kw):
+                    fakes.path_setpoints += 1
+                    hist.last_att_rad = trim_att
+
+                with patch(
+                    "fw_sitl.mavlink_io.send_attitude_target", new=wrapping_send
+                ), patch(
+                    "fw_sitl.mavlink_io.send_path_setpoint", new=recapture_path
+                ):
+                    rc = runner.run_sitl(_args("attitude", out_dir))
+            self.assertEqual(rc, 0)
+            rows = read_csv(out_dir / "calib_attitude.csv")
+        yaw_chirp = [
+            r for r in rows if r["channel"] == "yaw" and r["segment"] == "chirp"
+        ]
+        self.assertTrue(yaw_chirp)
+        self.assertTrue(
+            any(r["cmd"] > math.pi for r in yaw_chirp),
+            "chirp never crossed +π — test is not exercising wrap",
+        )
+        for row in yaw_chirp:
+            self.assertLess(
+                abs(row["gt"] - row["cmd"]),
+                math.pi,
+                f"gt={row['gt']} and cmd={row['cmd']} are on different 2π branches",
+            )
+
     def test_rates_layer_thrust_is_cruise_and_other_rates_zero(self) -> None:
         hist = _FakeHistory()
         with tempfile.TemporaryDirectory() as tmp:
@@ -241,7 +289,8 @@ class TestRunSitlHoldUntilQuiet(unittest.TestCase):
                 ) as mock_hold:
                     rc = runner.run_sitl(_args("attitude", Path(tmp)))
         self.assertEqual(rc, 0)
-        self.assertEqual(mock_hold.call_count, 3)
+        # One recover-from-dive wait, then one recapture per axis.
+        self.assertEqual(mock_hold.call_count, 4)
         for call in mock_hold.call_args_list:
             self.assertAlmostEqual(call.kwargs["period"], 1.0 / runner.RATE_HZ)
 
@@ -289,6 +338,34 @@ class TestRunSitlEnvelopeAbort(unittest.TestCase):
             # bare "Envelope abort during roll: None".
             self.assertIn("roll", stderr.getvalue())
             self.assertIn("60.0", stderr.getvalue())
+
+    def test_attitude_overlay_climb_past_80m_still_flies(self) -> None:
+        """Attitude overlay drops TECS the same way rates does. GZ climb of
+        >80 m must not skip every axis (empty CSV → no plots). Hold/recapture
+        still uses the 80 m Δalt cap, so the climb is applied only once
+        overlay sends have started."""
+        hist = _FakeHistory()
+        climbed_z = Z_HOLD - 90.0
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp)
+            with _Fakes(hist) as fakes:
+                def climbing_poll(master: object) -> tuple[float, float, float]:
+                    hist.polls += 1
+                    z = climbed_z if fakes.attitude_targets else Z_HOLD
+                    pos = (0.0, 0.0, z)
+                    hist.last_pos = pos
+                    return pos
+
+                hist.poll = climbing_poll  # type: ignore[method-assign]
+                stderr = io.StringIO()
+                with contextlib.redirect_stderr(stderr):
+                    rc = runner.run_sitl(_args("attitude", out_dir))
+            self.assertEqual(rc, 0)
+            self.assertNotIn("Δalt", stderr.getvalue())
+            csv_path = out_dir / "calib_attitude.csv"
+            self.assertTrue(csv_path.is_file())
+            rows = read_csv(csv_path)
+            self.assertEqual({r["channel"] for r in rows}, {"roll", "pitch", "yaw"})
 
 
 class TestRunSitlEnvelopeRetryExhausted(unittest.TestCase):
@@ -377,7 +454,7 @@ class TestRunSitlWaveformSine(unittest.TestCase):
         self.assertTrue(p_sine_rows)
         # rates layer, channel "p": amplitude 0.15, f_sine 0.5 Hz (procedure.json).
         amplitude = runner.layer_amplitude("rates", "p", None)
-        f_sine = runner.layer_sine_freq("rates")
+        f_sine = runner.layer_sine_freq("rates", "p")
         self.assertAlmostEqual(amplitude, 0.15)
         self.assertAlmostEqual(f_sine, 0.5)
         period = 1.0 / runner.RATE_HZ
@@ -396,23 +473,93 @@ class TestRunSitlWaveformSine(unittest.TestCase):
 
 class TestRunSitlRatesAngleLimit(unittest.TestCase):
     """Live ``--layer rates`` must reverse a same-sign rate at the Euler
-    wall (``max_angle_deg`` 30°). Envelope abort stays 40° / 80 m, so a
-    stuck +31° roll is still in-envelope and must bounce, not abort."""
+    wall (``max_angle_deg`` roll 10°). Envelope abort stays 40° / 80 m, so a
+    stuck +11° roll is still in-envelope and must bounce, not abort.
+
+    Overlay must start from TRIM (inside ``start_angle_deg``); a banked
+    initial attitude would skip the axis instead of exciting it."""
 
     def test_stuck_past_roll_cap_never_sends_positive_p(self) -> None:
         hist = _FakeHistory()
-        hist.last_att_rad = (math.radians(31.0), TRIM_ATT[1], TRIM_ATT[2])
         with tempfile.TemporaryDirectory() as tmp:
             out_dir = Path(tmp)
             with _Fakes(hist) as fakes:
-                rc = runner.run_sitl(_args("rates", out_dir))
+                real_send = fakes._send_attitude_rates
+
+                def tip_after_first(master, p, q, r, thrust):
+                    real_send(master, p, q, r, thrust)
+                    hist.last_att_rad = (
+                        math.radians(11.0),
+                        TRIM_ATT[1],
+                        TRIM_ATT[2],
+                    )
+
+                with patch(
+                    "fw_sitl.mavlink_io.send_attitude_rates", new=tip_after_first
+                ):
+                    rc = runner.run_sitl(_args("rates", out_dir))
             self.assertEqual(rc, 0)
             self.assertTrue(fakes.rate_targets)
-            for p, _q, _r, _thrust in fakes.rate_targets:
+            # Index 0 is from TRIM (below the wall); bounce from then on.
+            for p, _q, _r, _thrust in fakes.rate_targets[1:]:
                 self.assertLessEqual(p, 0.0)
             self.assertTrue(
-                any(p < 0.0 for p, _q, _r, _thrust in fakes.rate_targets)
+                any(p < 0.0 for p, _q, _r, _thrust in fakes.rate_targets[1:])
             )
+
+
+class _RecoveringHistory(_FakeHistory):
+    """Post-fall dive that levels out after ``recover_after_polls`` path-hold
+    ticks — stand-in for GZ recapture from the unarmed drop."""
+
+    def __init__(self, recover_after_polls: int) -> None:
+        super().__init__()
+        self.last_att_rad = (TRIM_ATT[0], math.radians(25.0), TRIM_ATT[2])
+        self._recover_after_polls = recover_after_polls
+
+    def poll(self, master: object) -> tuple[float, float, float]:
+        pos = super().poll(master)
+        if self.polls >= self._recover_after_polls:
+            self.last_att_rad = TRIM_ATT
+        return pos
+
+
+class TestRunSitlSkipIfNotStraight(unittest.TestCase):
+    """Post-fall dive (~25° pitch) is inside the 40° abort envelope but
+    must not start a rates chirp. Wait for wings-level or skip the run."""
+
+    def test_banked_pitch_skips_overlay(self) -> None:
+        hist = _FakeHistory()
+        hist.last_att_rad = (TRIM_ATT[0], math.radians(25.0), TRIM_ATT[2])
+        with tempfile.TemporaryDirectory() as tmp:
+            with _Fakes(hist) as fakes:
+                stderr = io.StringIO()
+                # Keep the never-recovers path off the 90 s initial wait.
+                with patch.object(runner, "HOLD_INITIAL_TIMEOUT_S", 0.4), \
+                        contextlib.redirect_stderr(stderr):
+                    rc = runner.run_sitl(_args("rates", Path(tmp)))
+        self.assertEqual(rc, 1)
+        self.assertFalse(fakes.rate_targets)
+        self.assertIn("not starting overlay", stderr.getvalue())
+
+
+class TestRunSitlRecoverFromDiveThenAllAxes(unittest.TestCase):
+    """Live GZ: the Cessna is still diving after 15 s of path-hold (the
+    per-axis timeout). That used to skip p (and q), burning axes as
+    warmup. Recover-from-dive must wait once, then overlay p, q, and r."""
+
+    def test_levels_out_after_per_axis_timeout_then_flies_p_q_r(self) -> None:
+        # Longer than one axis's 15 s + 15 s relock skip, shorter than
+        # the 90 s initial wait — the live 62 s recover sits in this gap.
+        recover_after = int(35 * runner.RATE_HZ)
+        hist = _RecoveringHistory(recover_after)
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp)
+            with _Fakes(hist):
+                rc = runner.run_sitl(_args("rates", out_dir))
+            self.assertEqual(rc, 0)
+            rows = read_csv(out_dir / "calib_rates.csv")
+        self.assertEqual({r["channel"] for r in rows}, {"p", "q", "r"})
 
 
 class TestRunOfflineDemoZLayers(unittest.TestCase):

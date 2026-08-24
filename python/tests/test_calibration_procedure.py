@@ -35,13 +35,18 @@ class TestLoadProcedure(unittest.TestCase):
             ("inv_chirp", 20.0),
             ("settle", 2.0),
         ))
-        self.assertEqual(proc.layers["rates"].f0_hz, 0.3)
-        self.assertEqual(proc.layers["rates"].f1_hz, 8.0)
+        self.assertEqual(proc.layers["rates"].f0_hz["p"], 1.0)
+        self.assertEqual(proc.layers["rates"].f1_hz["p"], 8.0)
         self.assertAlmostEqual(proc.layers["attitude"].amplitude["roll"], math.radians(5))
         self.assertAlmostEqual(proc.layers["attitude"].amplitude["yaw"], math.radians(8))
         self.assertEqual(proc.layers["rates"].amplitude["p"], 0.15)
+        self.assertEqual(proc.layers["rates"].amplitude["q"], 0.08)
+        self.assertEqual(proc.layers["rates"].amplitude["r"], 0.08)
         self.assertEqual(proc.window_s["p"], 0.5)
+        self.assertEqual(proc.window_s["q"], 2.0)
+        self.assertEqual(proc.window_s["pitch"], 2.0)
         self.assertEqual(proc.hold_quiet_s, 1.0)
+        self.assertEqual(proc.hold_initial_timeout_s, 90.0)
 
     def test_custom_path_overrides_chirp_length(self) -> None:
         raw = _load_shipped_raw()
@@ -90,10 +95,14 @@ class TestLoadProcedure(unittest.TestCase):
             ("inv_chirp", 20.0),
             ("settle", 2.0),
         ))
-        self.assertAlmostEqual(proc.layers["rates"].f_sine_hz, 0.5)
-        self.assertAlmostEqual(proc.layers["attitude"].f_sine_hz, 0.3)
-        self.assertAlmostEqual(proc.layers["accel_z"].f_sine_hz, 0.2)
-        self.assertAlmostEqual(proc.layers["vel_z"].f_sine_hz, 0.2)
+        self.assertAlmostEqual(proc.layers["rates"].f_sine_hz["p"], 0.5)
+        self.assertAlmostEqual(proc.layers["rates"].f_sine_hz["q"], 0.3)
+        self.assertAlmostEqual(proc.layers["rates"].f_sine_hz["r"], 0.2)
+        self.assertAlmostEqual(proc.layers["attitude"].f_sine_hz["roll"], 0.3)
+        self.assertAlmostEqual(proc.layers["attitude"].f_sine_hz["pitch"], 0.2)
+        self.assertAlmostEqual(proc.layers["attitude"].f_sine_hz["yaw"], 0.15)
+        self.assertAlmostEqual(proc.layers["accel_z"].f_sine_hz["az"], 0.2)
+        self.assertAlmostEqual(proc.layers["vel_z"].f_sine_hz["w"], 0.2)
 
     def test_sine_phases_reject_chirp_segment(self) -> None:
         raw = _load_shipped_raw()
@@ -102,6 +111,45 @@ class TestLoadProcedure(unittest.TestCase):
             path = Path(tmp) / "proc.json"
             path.write_text(json.dumps(raw), encoding="utf-8")
             with self.assertRaises(ValueError):
+                load_procedure(path)
+
+    def test_shipped_rate_and_attitude_chirp_freqs_differ_per_channel(self) -> None:
+        proc = load_procedure()
+        rates = proc.layers["rates"]
+        self.assertEqual(rates.f0_hz, {"p": 1.0, "q": 0.5, "r": 0.4})
+        self.assertEqual(rates.f1_hz, {"p": 8.0, "q": 2.0, "r": 1.2})
+        self.assertEqual(len(set(rates.f0_hz.values())), 3)
+        self.assertEqual(len(set(rates.f1_hz.values())), 3)
+        self.assertEqual(len(set(rates.f_sine_hz.values())), 3)
+        att = proc.layers["attitude"]
+        self.assertEqual(att.f0_hz, {"roll": 0.2, "pitch": 0.15, "yaw": 0.1})
+        self.assertEqual(att.f1_hz, {"roll": 4.0, "pitch": 1.5, "yaw": 1.2})
+        self.assertEqual(len(set(att.f0_hz.values())), 3)
+        self.assertEqual(len(set(att.f1_hz.values())), 3)
+        self.assertEqual(len(set(att.f_sine_hz.values())), 3)
+
+    def test_scalar_f0_hz_expands_to_amplitude_keys(self) -> None:
+        raw = _load_shipped_raw()
+        raw["layers"]["accel_z"]["f0_hz"] = 0.4
+        raw["layers"]["accel_z"]["f1_hz"] = 2.5
+        raw["layers"]["accel_z"]["f_sine_hz"] = 0.25
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "proc.json"
+            path.write_text(json.dumps(raw), encoding="utf-8")
+            proc = load_procedure(path)
+        spec = proc.layers["accel_z"]
+        for key in spec.amplitude:
+            self.assertAlmostEqual(spec.f0_hz[key], 0.4)
+            self.assertAlmostEqual(spec.f1_hz[key], 2.5)
+            self.assertAlmostEqual(spec.f_sine_hz[key], 0.25)
+
+    def test_rates_f0_hz_dict_missing_channel_raises(self) -> None:
+        raw = _load_shipped_raw()
+        raw["layers"]["rates"]["f0_hz"] = {"p": 1.0, "r": 0.3}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "proc.json"
+            path.write_text(json.dumps(raw), encoding="utf-8")
+            with self.assertRaises(KeyError):
                 load_procedure(path)
 
     def test_missing_f_sine_hz_on_a_layer_raises(self) -> None:
@@ -113,11 +161,23 @@ class TestLoadProcedure(unittest.TestCase):
             with self.assertRaises(KeyError):
                 load_procedure(path)
 
-    def test_shipped_max_angle_deg_is_30(self) -> None:
+    def test_shipped_max_angle_deg_is_10_12_40(self) -> None:
         proc = load_procedure()
-        self.assertAlmostEqual(proc.max_angle.roll_rad, math.radians(30))
-        self.assertAlmostEqual(proc.max_angle.pitch_rad, math.radians(30))
-        self.assertAlmostEqual(proc.max_angle.yaw_rad, math.radians(30))
+        self.assertAlmostEqual(proc.max_angle.roll_rad, math.radians(10))
+        self.assertAlmostEqual(proc.max_angle.pitch_rad, math.radians(12))
+        self.assertAlmostEqual(proc.max_angle.yaw_rad, math.radians(40))
+
+    def test_shipped_start_angle_deg_is_5(self) -> None:
+        proc = load_procedure()
+        self.assertAlmostEqual(proc.start_angle.roll_rad, math.radians(5))
+        self.assertAlmostEqual(proc.start_angle.pitch_rad, math.radians(5))
+
+    def test_shipped_chirp_is_long_enough_for_step(self) -> None:
+        """Wiener step ID uses 2 s segments; both chirp directions must
+        be long enough that a completed axis yields a usable stack."""
+        proc = load_procedure()
+        chirp_s = sum(d for s, d in proc.phases if s in ("chirp", "inv_chirp"))
+        self.assertGreaterEqual(chirp_s, 4.0)
 
     def test_missing_max_angle_deg_raises(self) -> None:
         raw = _load_shipped_raw()
@@ -142,6 +202,33 @@ class TestLoadProcedure(unittest.TestCase):
     def test_missing_max_angle_axis_key_raises(self) -> None:
         raw = _load_shipped_raw()
         raw["max_angle_deg"] = {"roll": 30, "pitch": 30}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "proc.json"
+            path.write_text(json.dumps(raw), encoding="utf-8")
+            with self.assertRaises(KeyError):
+                load_procedure(path)
+
+    def test_missing_start_angle_deg_raises(self) -> None:
+        raw = _load_shipped_raw()
+        raw.pop("start_angle_deg", None)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "proc.json"
+            path.write_text(json.dumps(raw), encoding="utf-8")
+            with self.assertRaises(KeyError):
+                load_procedure(path)
+
+    def test_missing_start_angle_axis_key_raises(self) -> None:
+        raw = _load_shipped_raw()
+        raw["start_angle_deg"] = {"roll": 5}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "proc.json"
+            path.write_text(json.dumps(raw), encoding="utf-8")
+            with self.assertRaises(KeyError):
+                load_procedure(path)
+
+    def test_missing_hold_initial_timeout_s_raises(self) -> None:
+        raw = _load_shipped_raw()
+        raw.pop("hold_initial_timeout_s", None)
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "proc.json"
             path.write_text(json.dumps(raw), encoding="utf-8")

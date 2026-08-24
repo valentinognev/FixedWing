@@ -299,9 +299,11 @@ class TestPlantGainsRegistry(unittest.TestCase):
 
     def test_px4_inner_gz_cessna_snapshot(self) -> None:
         inner = dict(load_plant_gains("gz_rc_cessna").px4_inner)
-        self.assertAlmostEqual(inner["FW_PR_P"], 0.9)
+        self.assertAlmostEqual(inner["FW_PR_P"], 0.50)
+        self.assertAlmostEqual(inner["FW_PR_FF"], 0.45)
         self.assertAlmostEqual(inner["FW_RR_P"], 0.4)
-        self.assertAlmostEqual(inner["FW_YR_P"], 1.3)
+        self.assertAlmostEqual(inner["FW_YR_P"], 0.45)
+        self.assertAlmostEqual(inner["FW_YR_FF"], 0.5)
         self.assertAlmostEqual(inner["FW_P_LIM_MAX"], 15.0)
 
     def test_px4_inner_gz_advanced_snapshot(self) -> None:
@@ -362,7 +364,7 @@ class TestPrepareSitlArmingUsesPlant(unittest.TestCase):
         self.assertAlmostEqual(written["FW_AIRSPD_TRIM"], 16.0)
         self.assertAlmostEqual(written["FW_AIRSPD_MIN"], 8.0)
         self.assertAlmostEqual(written["FW_AIRSPD_MAX"], 25.0)
-        self.assertAlmostEqual(written["FW_PR_P"], 0.9)
+        self.assertAlmostEqual(written["FW_PR_P"], 0.50)
         self.assertEqual(written["CBRK_SUPPLY_CHK"], 894281)
 
     def test_requires_plant(self) -> None:

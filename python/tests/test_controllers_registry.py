@@ -433,6 +433,101 @@ class TestRaceEulerLos(unittest.TestCase):
         self.assertGreater(abs(roll2), abs(roll1))
         self.assertIsNotNone(ctrl._cascade._e_prev)
 
+    def test_in_view_upward_los_adds_climb_thrust(self) -> None:
+        """In-view thrust follows camera elevation, not balloon bookkeeping Z."""
+        el = math.radians(15.0)
+        kwargs = dict(
+            pos_ned=(0.0, 0.0, -10.0),
+            dir_ned=(1.0, 0.0, 0.0),
+            frame=1,
+            yaw_rad=0.0,
+            q_act=from_rpy(0.0, 0.0, 0.0),
+            dt=0.05,
+            in_view=True,
+            z_target=0.0,
+            groundspeed=18.0,
+            range_m=90.0,
+            vx=18.0,
+            vy=0.0,
+        )
+
+        def _thrust(dir_body: tuple[float, float, float]) -> float:
+            ctrl = self._build(kp=1.0)
+            with patch(
+                "fw_sitl.controllers.race_quat.send_attitude_target", create=True
+            ) as send:
+                ctrl.send_chase_setpoint(
+                    MagicMock(), **kwargs, dir_body=dir_body
+                )
+            return float(send.call_args[0][4])
+
+        level = _thrust((1.0, 0.0, 0.0))
+        up = _thrust((math.cos(el), 0.0, -math.sin(el)))
+        self.assertGreater(up, level)
+
+    def test_in_view_upward_los_slows_vs_level(self) -> None:
+        """Steep visual LOS must cut v_cmd even while XY range is unchanged."""
+        el = math.radians(20.0)
+        kwargs = dict(
+            pos_ned=(0.0, 0.0, -10.0),
+            dir_ned=(1.0, 0.0, 0.0),
+            frame=1,
+            yaw_rad=0.0,
+            q_act=from_rpy(0.0, 0.0, 0.0),
+            dt=0.05,
+            in_view=True,
+            groundspeed=18.0,
+            range_m=90.0,
+            vx=18.0,
+            vy=0.0,
+        )
+
+        def _speed(dir_body: tuple[float, float, float]) -> float:
+            ctrl = self._build(kp=1.0)
+            with patch(
+                "fw_sitl.controllers.race_quat.send_attitude_target", create=True
+            ):
+                ctrl.send_chase_setpoint(
+                    MagicMock(), **kwargs, dir_body=dir_body
+                )
+            assert ctrl.last_speed_mps is not None
+            return float(ctrl.last_speed_mps)
+
+        level = _speed((1.0, 0.0, 0.0))
+        up = _speed((math.cos(el), 0.0, -math.sin(el)))
+        self.assertLess(up, level)
+
+    def test_in_view_downward_los_cuts_thrust_vs_level(self) -> None:
+        """Looking down must bleed thrust; signed LOS, not |el|."""
+        el = math.radians(15.0)
+        kwargs = dict(
+            pos_ned=(0.0, 0.0, -10.0),
+            dir_ned=(1.0, 0.0, 0.0),
+            frame=1,
+            yaw_rad=0.0,
+            q_act=from_rpy(0.0, 0.0, 0.0),
+            dt=0.05,
+            in_view=True,
+            groundspeed=18.0,
+            range_m=90.0,
+            vx=18.0,
+            vy=0.0,
+        )
+
+        def _thrust(dir_body: tuple[float, float, float]) -> float:
+            ctrl = self._build(kp=1.0)
+            with patch(
+                "fw_sitl.controllers.race_quat.send_attitude_target", create=True
+            ) as send:
+                ctrl.send_chase_setpoint(
+                    MagicMock(), **kwargs, dir_body=dir_body
+                )
+            return float(send.call_args[0][4])
+
+        level = _thrust((1.0, 0.0, 0.0))
+        down = _thrust((math.cos(el), 0.0, math.sin(el)))
+        self.assertLess(down, level)
+
     def test_cmd_mode_rates_race_euler_matches_race_quat(self) -> None:
         """cmd_mode=rates is a documented no-op distinction: send_attitude_rates
         uses cascade_out.body_rates, which come from (q_des, q_act, roll_tc/

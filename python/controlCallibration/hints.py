@@ -66,11 +66,22 @@ def _is_p_or_ff(key: str) -> bool:
     return "_P" in key or "_FF" in key or key == "pid_kp"
 
 
+def _shape_peak(stats: dict) -> float:
+    """Overshoot/weak follow the mean-step curve the plot shows.
+
+    ``peak_mean`` is mean(max(each Wiener window)); misaligned windows
+    inflate it while the blue mean curve sits near 1 (live p: 1.40 vs 1.03).
+    """
+    if stats.get("curve_peak") is not None:
+        return float(stats["curve_peak"])
+    return float(stats.get("peak_mean", 0.0))
+
+
 def verdict(stats: dict, channel: str) -> str:
     n = stats.get("n", 0)
     if n == 0:
         return "no_data"
-    peak = float(stats.get("peak_mean", 0.0))
+    peak = _shape_peak(stats)
     if peak > 1.25:
         return "overshoot"
     if peak < 0.85:
@@ -86,7 +97,7 @@ def _hint_items(channel: str, inject: str | None, stats: dict, kind: str) -> lis
     keys = KEYS.get((channel, inject), ())
     if not keys:
         return []
-    peak = stats.get("peak_mean")
+    peak = _shape_peak(stats)
     if kind == "overshoot":
         reason = f"peak {peak} > 1.25"
         selected = [k for k in keys if _is_p_or_ff(k)][:_MAX_HINTS]
@@ -122,6 +133,7 @@ def hints_for_channel(channel: str, inject: str | None, stats: dict) -> dict:
     return {
         "peak_mean": stats.get("peak_mean"),
         "peak_std": stats.get("peak_std", 0),
+        "curve_peak": stats.get("curve_peak"),
         "latency_mean_ms": stats.get("latency_mean_ms"),
         "latency_std_ms": stats.get("latency_std_ms", 0),
         "n": stats.get("n"),

@@ -16,7 +16,7 @@ _PYTHON_ROOT = Path(__file__).resolve().parents[1]
 if str(_PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(_PYTHON_ROOT))
 
-from controlCallibration.analyze import _amplitude, analyze_log, main_analyze
+from controlCallibration.analyze import _amplitude, _draw_step, analyze_log, main_analyze, nan_at_gaps
 from controlCallibration.chirp import inv_log_chirp, log_chirp
 from controlCallibration.log_io import COLUMNS, write_csv
 
@@ -80,6 +80,24 @@ class TestAmplitudeLookup(unittest.TestCase):
     def test_thrust_inject_without_thrust_key_in_layer_raises(self) -> None:
         with self.assertRaises(ValueError):
             _amplitude("rates", "p", "thrust")
+
+
+class TestNanAtGaps(unittest.TestCase):
+    def test_inserts_nan_across_settle_hole(self) -> None:
+        """chirp+inv_chirp rows skip the 2 s settle; plot() would draw a
+        diagonal through that hole (live history at the chirp/inv_chirp join)."""
+        t = np.array([0.00, 0.02, 0.04, 2.04, 2.06])
+        y = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+        t2, y2 = nan_at_gaps(t, y, max_gap_s=0.1)
+        self.assertTrue(np.any(np.isnan(y2)))
+        self.assertFalse(np.any(np.isnan(y)))
+
+    def test_no_gap_unchanged(self) -> None:
+        t = np.array([0.00, 0.02, 0.04])
+        y = np.array([1.0, 2.0, 3.0])
+        t2, y2 = nan_at_gaps(t, y, max_gap_s=0.1)
+        np.testing.assert_array_equal(t2, t)
+        np.testing.assert_array_equal(y2, y)
 
 
 class TestAnalyzeLog(unittest.TestCase):
@@ -153,6 +171,43 @@ class TestMainAnalyze(unittest.TestCase):
             with patch("sys.stderr", new=StringIO()):
                 rc = main_analyze([str(csv_path), "--layer", "rates"])
             self.assertEqual(rc, 2)
+
+
+class TestDrawStep(unittest.TestCase):
+    """The box peak is mean(per-segment max). The blue line is mean(stack),
+    whose max is lower when peaks do not line up. Plot the stack so the
+    reported peak is actually on the axes."""
+
+    def test_stack_traces_reach_per_segment_peak_not_only_the_mean(self) -> None:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        time_ms = np.array([0.0, 100.0, 200.0])
+        # Peaks 2.0 and 1.0 → peak_mean 1.5. Mean curve peaks at 1.0.
+        stack = np.array(
+            [
+                [0.0, 2.0, 0.5],
+                [0.0, 0.0, 1.0],
+            ]
+        )
+        hint = {
+            "n": 2,
+            "peak_mean": 1.5,
+            "latency_mean_ms": 100.0,
+            "verdict": "overshoot",
+        }
+        fig, ax = plt.subplots()
+        _draw_step(ax, time_ms, stack, hint)
+        ys = np.concatenate([np.asarray(ln.get_ydata()) for ln in ax.lines])
+        self.assertGreaterEqual(float(np.max(ys)), 2.0)
+        text = ax.texts[0].get_text()
+        self.assertIn("1.500", text)
+        self.assertIn("curve=", text)
+        # DC-normalized G: (rad/s)/(rad/s) or (rad)/(rad) → dimensionless 1.
+        self.assertEqual(ax.get_ylabel(), "step (1)")
+        plt.close(fig)
 
 
 if __name__ == "__main__":

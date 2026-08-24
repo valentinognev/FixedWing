@@ -18,6 +18,7 @@ from fw_sitl.controllers._chase_common import (
     LOS_ROLL_LPF_TAU_S,
     LOS_ROLL_SLEW_RAD_S,
     _commanded_chase_speed,
+    _los_elev_rad,
     chase_dir_body,
 )
 from fw_sitl.flight_setup import DEFAULT_ATTITUDE_FORMAT
@@ -32,6 +33,7 @@ class RaceQuatController:
     """OFFBOARD SET_ATTITUDE_TARGET chase: LOS look-at in view, path-hold otherwise.
 
     In-view attitude uses body-FRD LOS (camera→body mount, no balloon Z).
+    In-view speed/thrust also follow that elevation (range·sin(el) Δz proxy).
     ``visual_lock`` is accepted for protocol compatibility but unused.
     """
 
@@ -150,24 +152,28 @@ class RaceQuatController:
     ) -> tuple[float, float, float]:
         _ = (frame, heading_rad, vz, visual_lock)
         course = math.atan2(float(dir_ned[1]), float(dir_ned[0]))
-        if in_view:
-            # Homing uses LOS elevation only — never balloon bookkeeping Z.
-            z_hold = float(pos_ned[2])
-        elif z_target is not None:
-            z_hold = float(z_target)
-        else:
-            _aim, _course, z_hold = self._bridge.chase_geometry(
-                pos_ned, dir_ned, yaw_rad=yaw_rad
-            )
+        z_hold = float(pos_ned[2])
+        if not in_view:
+            if z_target is not None:
+                z_hold = float(z_target)
+            else:
+                _aim, _course, z_hold = self._bridge.chase_geometry(
+                    pos_ned, dir_ned, yaw_rad=yaw_rad
+                )
         if q_act is None:
             yaw = float(yaw_rad) if yaw_rad is not None else course
             q_act = from_rpy(0.0, 0.0, yaw)
         _, _, yaw_act = rpy_from_quat(q_act)
+        los_el = 0.0
         if in_view:
             self._path_lock = None
             self.last_law = "los"
             los_kw = dict(self._plant.los_kwargs()) if self._plant is not None else {}
             los_body = chase_dir_body(dir_ned, q_act=q_act, dir_body=dir_body)
+            los_el = _los_elev_rad(los_body)
+            # Homing altitude from LOS elevation — never balloon bookkeeping Z.
+            if range_m is not None and math.isfinite(range_m):
+                z_hold = float(pos_ned[2]) - float(range_m) * math.sin(los_el)
             q_des = q_des_from_los(
                 los_body,
                 yaw_rad=yaw_act,
@@ -222,6 +228,7 @@ class RaceQuatController:
             cruise_mps=self._speed_mps,
             heading_err_rad=heading_err,
             plant=self._plant,
+            elev_rad=los_el if self.last_law == "los" else 0.0,
         )
         self.last_speed_mps = v_cmd
         thrust_kw = self._plant.thrust_kwargs() if self._plant is not None else {}

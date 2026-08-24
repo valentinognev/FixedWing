@@ -75,6 +75,19 @@ class TestStepCalc(unittest.TestCase):
         stats = step_stats(resp, t_ms)
         self.assertGreater(stats["n"], 0)
         self.assertGreater(stats["peak_mean"], 0.5)
+        self.assertIn("curve_peak", stats)
+
+
+class TestStepStatsCurvePeak(unittest.TestCase):
+    def test_curve_peak_is_max_of_mean_not_mean_of_maxes(self) -> None:
+        t = np.array([0.0, 100.0, 200.0, 300.0, 400.0, 500.0])
+        good = np.array([0.0, 0.6, 1.02, 1.04, 1.03, 1.02])
+        spike = np.array([4.0, 1.0, 1.0, 1.0, 1.0, 1.0])
+        stack = np.vstack([np.tile(good, (8, 1)), spike])
+        stats = step_stats(stack, t)
+        self.assertGreater(stats["peak_mean"], 1.25)
+        self.assertLess(stats["curve_peak"], 1.15)
+        self.assertEqual(verdict(stats, "p"), "ok")
 
 
 class TestZetaSweepAtRatesOperatingPoint(unittest.TestCase):
@@ -128,11 +141,18 @@ class TestZetaSweepAtRatesOperatingPoint(unittest.TestCase):
         self.assertGreaterEqual(stats["peak_mean"], 0.85)
         self.assertNotEqual(verdict(stats, "p"), "weak")
 
-    def test_underdamped_plant_reaches_overshoot(self) -> None:
+    def test_underdamped_windows_ring_harder_than_mean_curve(self) -> None:
+        """Grey-trace peaks still exceed 1.25; the blue mean is compressed
+        (0.47.1) so overshoot verdict follows ``curve_peak``, not
+        mean-of-maxes."""
         stats = self._stats(0.15)
         self.assertGreater(_true_peak(0.15), 1.25)
         self.assertGreater(stats["peak_mean"], 1.25)
-        self.assertEqual(verdict(stats, "p"), "overshoot")
+        self.assertLess(stats["curve_peak"], stats["peak_mean"])
+        self.assertEqual(
+            verdict(stats, "p"),
+            "overshoot" if stats["curve_peak"] > 1.25 else "ok",
+        )
 
     def test_peak_decreases_with_damping(self) -> None:
         peaks = [self._stats(z)["peak_mean"] for z in (0.15, 0.3, 0.7)]

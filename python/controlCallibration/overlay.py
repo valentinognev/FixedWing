@@ -52,6 +52,15 @@ def _at_or_past_limit(err: float, limit: float) -> bool:
     return mag >= limit or math.isclose(mag, limit)
 
 
+def _restore_rate(commanded: float, err: float, amp: float) -> float:
+    """Rate that reduces ``|err|``. Zero commanded still gets ``amp`` toward center."""
+    if commanded * err > 0:
+        return -commanded
+    if commanded == 0.0 and amp > 0.0:
+        return -math.copysign(amp, err)
+    return commanded
+
+
 def limit_rates_by_angle(
     cmd: AxisCommand,
     roll: float,
@@ -59,22 +68,27 @@ def limit_rates_by_angle(
     yaw: float,
     trim_yaw: float,
     limits: MaxAngle,
+    *,
+    channel: str | None = None,
 ) -> AxisCommand:
+    amp = max(abs(cmd.p), abs(cmd.q), abs(cmd.r), abs(cmd.cmd))
     err_roll = roll
-    if _at_or_past_limit(err_roll, limits.roll_rad) and cmd.p * err_roll > 0:
-        p = -cmd.p
+    if _at_or_past_limit(err_roll, limits.roll_rad):
+        p = _restore_rate(cmd.p, err_roll, amp)
     else:
         p = cmd.p
 
     err_pitch = pitch
-    if _at_or_past_limit(err_pitch, limits.pitch_rad) and cmd.q * err_pitch > 0:
-        q = -cmd.q
+    if _at_or_past_limit(err_pitch, limits.pitch_rad):
+        q = _restore_rate(cmd.q, err_pitch, amp)
     else:
         q = cmd.q
 
+    # Heading is not in the envelope abort. On channel r the yaw wall
+    # replaced the chirp with a one-sided restore (live GZ r history).
     err_yaw = math.remainder(yaw - trim_yaw, 2 * math.pi)
-    if _at_or_past_limit(err_yaw, limits.yaw_rad) and cmd.r * err_yaw > 0:
-        r = -cmd.r
+    if channel != "r" and _at_or_past_limit(err_yaw, limits.yaw_rad):
+        r = _restore_rate(cmd.r, err_yaw, amp)
     else:
         r = cmd.r
 

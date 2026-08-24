@@ -266,6 +266,40 @@ class TestLimitRatesByAngle(unittest.TestCase):
         self.assertEqual(out.r, -0.2)
         self.assertEqual(out.cmd, -0.2)
 
+    def test_r_chirp_at_yaw_cap_keeps_excitation(self) -> None:
+        """Heading is not in the envelope abort. Replacing r with a restore
+        rate at the yaw wall turns the identification input into a one-sided
+        square wave (live GZ r history). Skip the yaw wall on channel r."""
+        cmd = axis_command("rates", "r", None, _trim(), 0.2)
+        trim_yaw = 3.0
+        yaw = 3.0 + math.radians(30)
+        out = limit_rates_by_angle(
+            cmd, 0.0, 0.0, yaw, trim_yaw, _limits(), channel="r"
+        )
+        self.assertEqual(out.r, 0.2)
+        self.assertEqual(out.cmd, 0.2)
+
+    def test_yaw_at_cap_during_p_chirp_injects_restoring_r(self) -> None:
+        cmd = axis_command("rates", "p", None, _trim(), 0.15)
+        trim_yaw = 0.0
+        yaw = math.radians(30)
+        out = limit_rates_by_angle(
+            cmd, 0.0, 0.0, yaw, trim_yaw, _limits(), channel="p"
+        )
+        self.assertEqual(out.p, 0.15)
+        self.assertAlmostEqual(out.r, -0.15)
+
+    def test_pitch_at_cap_during_p_chirp_injects_restoring_q(self) -> None:
+        """p-axis overlay has q=0; without a restoring q, pitch walks into
+        the 40° envelope abort. Wall must start the opposite pitch rate."""
+        cmd = axis_command("rates", "p", None, _trim(), 0.15)
+        out = limit_rates_by_angle(
+            cmd, 0.0, math.radians(30), 0.0, 0.0, _limits()
+        )
+        self.assertEqual(out.p, 0.15)
+        self.assertAlmostEqual(out.q, -0.15)
+        self.assertEqual(out.r, 0.0)
+
     def test_mixed_roll_at_cap_flips_p_pitch_zero_leaves_q(self) -> None:
         cmd = AxisCommand(
             roll=0.1,

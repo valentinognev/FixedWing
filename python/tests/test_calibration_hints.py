@@ -135,6 +135,17 @@ class TestSlowAndOk(unittest.TestCase):
         self.assertEqual(out["verdict"], "ok")
         self.assertEqual(out["hints"], [])
 
+    def test_outlier_window_peaks_do_not_override_mean_curve(self) -> None:
+        """Live p: peak_mean 1.40 from misaligned windows, blue mean curve
+        1.03. Overshoot must follow the curve the plot shows, not the
+        mean-of-maxes box number."""
+        stats = _stats(peak=1.40, latency_ms=70.0, n=126)
+        stats["curve_peak"] = 1.03
+        out = hints_for_channel("p", None, stats)
+        self.assertEqual(out["verdict"], "ok")
+        self.assertEqual(out["hints"], [])
+        self.assertEqual(verdict(stats, "p"), "ok")
+
 
 class TestBuildReport(unittest.TestCase):
     def test_top_level_keys_and_channel_payload(self) -> None:
