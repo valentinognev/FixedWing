@@ -16,6 +16,7 @@ from fw_sitl.race_plots import csv_has_end_event, wait_for_race_end
 _PYTHON_ROOT = Path(__file__).resolve().parents[1]
 _REPO_ROOT = _PYTHON_ROOT.parent
 _E2E_SETUP_TEMPLATE = _PYTHON_ROOT / "flightSetup.e2e.json"
+_PRODUCTION_SETUP = _PYTHON_ROOT / "flightSetup.json"
 _RACE_SH = _PYTHON_ROOT / "scripts" / "run_balloon_race.sh"
 _KILL_SH = _PYTHON_ROOT / "scripts" / "kill.sh"
 _LOG_DIR = _PYTHON_ROOT / "logs" / "e2e"
@@ -81,6 +82,55 @@ def write_race_quat_e2e_setup(
     return out
 
 
+def write_race_euler_e2e_setup(
+    path: Path,
+    *,
+    platform: str = "gz",
+    duration_s: float = 90.0,
+    gz_model: str = "rc_cessna",
+    pass_radius_m: float = 10.0,
+) -> Path:
+    """Materialize production-course ``race_euler`` attitude/euler for one platform.
+
+    Balloons/spawn come from ``flightSetup.json`` (same 500/200 triangle as
+    GZ live ``165855``), not the looser ``flightSetup.e2e.json`` 50 m course.
+    """
+    plat = str(platform).strip().lower()
+    if plat not in KNOWN_SIM_PLATFORMS:
+        raise ValueError(
+            f"platform {plat!r} not in {sorted(KNOWN_SIM_PLATFORMS)}"
+        )
+    raw = _PRODUCTION_SETUP.read_text(encoding="utf-8")
+    data = json.loads(strip_jsonc(raw))
+    if not isinstance(data, dict):
+        raise ValueError(f"{_PRODUCTION_SETUP}: root must be an object")
+    sim = dict(data.get("sim") or {})
+    sim["platform"] = plat
+    sim["gz_model"] = str(gz_model).strip().lower()
+    sim["duration_s"] = float(duration_s)
+    data["sim"] = sim
+    guidance = dict(data.get("guidance") or {})
+    guidance["controller"] = "race_euler"
+    guidance["cmd_mode"] = "attitude"
+    guidance["attitude_format"] = "euler"
+    guidance["laps"] = 0
+    guidance.pop("duration_s", None)
+    guidance["pass_radius_m"] = float(pass_radius_m)
+    data["guidance"] = guidance
+    zmq = dict(data.get("zmq") or {})
+    zmq.setdefault("pose", "tcp://127.0.0.1:5558")
+    data["zmq"] = zmq
+    out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    setup = load_flight_setup(out)
+    if setup.sim.platform != plat:
+        raise RuntimeError(f"setup platform mismatch: {setup.sim.platform}")
+    if setup.guidance.controller != "race_euler":
+        raise RuntimeError(f"setup controller mismatch: {setup.guidance.controller}")
+    return out
+
+
 def kill_all_sims(*, timeout_s: float = 120.0) -> None:
     subprocess.run(
         ["bash", str(_KILL_SH), "--all"],
@@ -102,7 +152,7 @@ def run_balloon_race_detached(
     env = dict(os.environ)
     env["BALLOON_RACE_CSV"] = str(csv_path)
     env["PYTHONUNBUFFERED"] = "1"
-    if platform == "jsbsim":
+    if platform in {"jsbsim", "gz"}:
         env["BALLOON_CAMERA_NO_DISPLAY"] = "1"
     cmd = [
         "bash",
@@ -122,7 +172,7 @@ def run_balloon_race_detached(
         env=env,
         capture_output=True,
         text=True,
-        timeout=180.0,  # launch only; race runs in tmux
+        timeout=300.0,  # docker + GZ spawn + HEARTBEAT; race itself runs in tmux
         check=False,
     )
 
@@ -195,6 +245,82 @@ def run_race_quat_platform_e2e(
     finally:
         kill_all_sims()
         # Drop the e2e tmux session if kill left it.
+        subprocess.run(
+            ["tmux", "kill-session", "-t", session],
+            check=False,
+            capture_output=True,
+        )
+
+
+def assert_race_euler_csv_ok(
+    csv_path: Path,
+    *,
+    min_passes: int = 3,
+    max_miss_m: float = 10.0,
+) -> list[tuple[int, float, bool]]:
+    """Gate: end_*, ≥min_passes, each of the first ``min_passes`` 3D misses ≤ max."""
+    passes = assert_race_quat_csv_ok(csv_path, min_passes=min_passes)
+    scored = passes[: int(min_passes)]
+    over = [(idx, miss) for idx, miss, _a in scored if float(miss) > float(max_miss_m)]
+    if over:
+        raise AssertionError(
+            f"3D miss over {max_miss_m} m in {csv_path}: {over} (all={scored})"
+        )
+    return passes
+
+
+def run_race_euler_platform_e2e(
+    platform: str,
+    *,
+    duration_s: float = 90.0,
+    min_passes: int = 3,
+    wait_slack_s: float = 240.0,
+    gz_model: str = "rc_cessna",
+    max_miss_m: float = 10.0,
+) -> Path:
+    """Full live race with ``race_euler`` on the production course; returns CSV."""
+    _LOG_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    csv_path = _LOG_DIR / f"race_euler_{platform}_{stamp}.csv"
+    setup_path = _LOG_DIR / f"race_euler_{platform}_{stamp}_setup.json"
+    session = f"e2e_re_{platform}_{stamp[-6:]}"
+    write_race_euler_e2e_setup(
+        setup_path,
+        platform=platform,
+        duration_s=duration_s,
+        gz_model=gz_model,
+    )
+    kill_all_sims()
+    try:
+        launched = run_balloon_race_detached(
+            setup=setup_path,
+            csv_path=csv_path,
+            session=session,
+            duration_s=duration_s,
+            platform=platform,
+        )
+        launch_log = _LOG_DIR / f"race_euler_{platform}_{stamp}_launch.log"
+        launch_log.write_text(
+            f"rc={launched.returncode}\n--- stdout ---\n{launched.stdout}\n"
+            f"--- stderr ---\n{launched.stderr}\n",
+            encoding="utf-8",
+        )
+        if launched.returncode != 0:
+            raise RuntimeError(
+                f"race launch failed rc={launched.returncode}; see {launch_log}"
+            )
+        ok = wait_csv_end(csv_path, timeout_s=float(duration_s) + float(wait_slack_s))
+        if not ok:
+            raise TimeoutError(
+                f"timed out waiting for end_* in {csv_path} "
+                f"(duration={duration_s}s + slack={wait_slack_s}s)"
+            )
+        assert_race_euler_csv_ok(
+            csv_path, min_passes=min_passes, max_miss_m=max_miss_m
+        )
+        return csv_path
+    finally:
+        kill_all_sims()
         subprocess.run(
             ["tmux", "kill-session", "-t", session],
             check=False,

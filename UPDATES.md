@@ -1,5 +1,9 @@
 # Updates
 
+## 0.56.0 - GZ race_euler live e2e (production course)
+- `write_race_euler_e2e_setup` / `run_race_euler_platform_e2e`: same 500/200/10 m course as `flightSetup.json`; `cmd_mode=attitude` euler; ≥3 passes; each 3D miss ≤10 m. Opt-in `FW_SITL_E2E=1 ./python/scripts/run_race_euler_e2e.sh`.
+- Live GZ Cessna `222435`: software passes at 36.6 / 50.4 / 64.6 s, 3D **9.32 / 9.52 / 20.06 m** (ΔD −2.4 / −0.6 / −20.0). Balloon 3 XY ~1 m, 20 m high. Gate failed on balloon 3. CSV `python/logs/e2e/race_euler_gz_20260824_222435.csv`. Did not beat `165855`.
+
 ## 0.55.0 - GZ race_euler center-through guidance
 - `q_des_from_los` adds bank load-pitch only on level/climb LOS so a dive is not held high.
 - Load-pitch gating is shared (`q_des_from_los`), not GZ-only.

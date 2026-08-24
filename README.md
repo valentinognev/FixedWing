@@ -100,6 +100,7 @@ Code defaults for missing keys: controller `pure_pursuit_quat`. Check the checke
 
 cd python && python3 -m unittest discover -s tests
 FW_SITL_E2E=1 ./python/scripts/run_race_quat_e2e.sh   # opt-in live SITL
+FW_SITL_E2E=1 ./python/scripts/run_race_euler_e2e.sh  # GZ race_euler, production 10 m course
 ```
 
 Plant for SID comes from `flightSetup.json`; override with `--gz`/`--yasim`/`--viz`/`--jsbsim`/`--model`. `--waveform sine` is **instead of** chirp (60 s tone per axis from `procedure.json`). Artifacts in `/tmp/fw_calib_<stamp>/` (`_history` / `_step` always, `_fft` unless the log is too short). Interactive matplotlib unless `--no-plot`. Envelope abort recaptures and retries that axis (3 attempts) then skips.
@@ -108,7 +109,7 @@ Full `unittest discover` blocks on race-plot `plt.show(block=True)`. Calibration
 
 ## Known limits
 
-- `race_euler` + `px4_att_cascade`: host-tested; GZ `race_euler` retuned for center-through after inner-loop SID — re-fly to confirm <5 m 3D (baseline `165855`: 9.7/9.5/9.8 m). Load-pitch on down-LOS is skipped in shared `q_des_from_los` (all `race_quat`/`race_euler` plants); JSBSim/YASim dives unflown since.
+- `race_euler` + `px4_att_cascade`: GZ live e2e `222435` 3D miss **9.32 / 9.52 / 20.06 m** (balloon 3 ΔD −20 m, never dived); did **not** beat `165855` 9.7/9.5/9.8 m. `run_race_euler_e2e.sh` gates 3 passes inside 10 m and currently **fails**. Load-pitch on down-LOS is skipped in shared `q_des_from_los` (all `race_quat`/`race_euler` plants); JSBSim/YASim dives unflown since.
 - X-Plane plant is residual (code/tests present; race menu disabled).
 - FG/YASim: EKF is not ground truth — always use GT rebase for chase/plots.
 - OpenCV ≥5 (some conda envs) blacks out `balloon_camera`; race launcher prefers an `opencv-python<5` env when needed.
