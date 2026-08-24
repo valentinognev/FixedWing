@@ -1,7 +1,9 @@
 # Updates
 
-## 0.54.4 - Skip LOS load-pitch on down-LOS
-- `q_des_from_los` applies `LOS_LOAD_PITCH_RAD` nose-up only when `los_el >= 0` (level/climb). Banked dives no longer fight the look-at (GZ `165855` balloon 3 stayed ~9.6 m high).
+## 0.55.0 - GZ race_euler center-through guidance
+- `q_des_from_los` adds bank load-pitch only on level/climb LOS so a dive is not held high.
+- `PlantGains`: `kp_elev`, `los_roll_slew_rad_s`, `los_roll_lpf_tau_s` (defaults 1.0 / 30°/s / 0.20 s).
+- `gz_rc_cessna` `race_euler`: `kp_elev` 1.2, `att_los_max_pitch` 0.35, roll slew 45°/s tau 0.10, approach 10 m/s, `slow_range` 220 m; `FW_P_LIM` ±20. `race_quat` pitch cap on this plant stays 0.26.
 
 ## 0.54.3 - Race contract tests after gz default setup
 - `--model` without `--gz` is allowed when `flightSetup.json` `sim.platform` is already `gz`; `test_model_without_gz_exit_2` now rejects `--yasim --model` instead of launching a race.

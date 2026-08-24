@@ -254,7 +254,8 @@ class TestLoadPlantJsoncFile(unittest.TestCase):
 
     def test_race_euler_shares_outer_gains_with_race_quat_all_plants(self) -> None:
         """Plan-mandated JSONC copy (race_euler = verbatim race_quat outer
-        block) must actually hold for every plant, not just jsbsim_rascal."""
+        block) must hold for every plant except gz_rc_cessna, whose race_euler
+        is retuned for center-through."""
         from fw_sitl.plant_gains import load_plant_gains, KNOWN_PLANT_IDS
 
         shared_attrs = (
