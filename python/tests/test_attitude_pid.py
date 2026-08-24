@@ -154,6 +154,23 @@ class TestQDesFromLos(unittest.TestCase):
         self.assertGreater(abs(_r1), math.radians(15.0))
         self.assertGreater(p_bank - p_level, math.radians(1.5))
 
+    def test_los_bank_does_not_add_nose_up_on_dive(self) -> None:
+        """Bank load-pitch must not fight a down-LOS (GZ 165855 balloon 3 stayed high)."""
+        az = 0.40
+        el = math.radians(-20.0)
+        dir_body = (
+            math.cos(el) * math.cos(az),
+            math.cos(el) * math.sin(az),
+            math.sin(-el),
+        )
+        q_level = q_des_from_los(dir_body, yaw_rad=0.0, kp_heading=0.0)
+        q_bank = q_des_from_los(dir_body, yaw_rad=0.0, kp_heading=1.5)
+        _r0, p_level, _ = rpy_from_quat(q_level)
+        _r1, p_bank, _ = rpy_from_quat(q_bank)
+        self.assertGreater(abs(_r1), math.radians(15.0))
+        self.assertAlmostEqual(p_bank, p_level, places=5)
+        self.assertAlmostEqual(p_level, el, places=2)
+
     def test_los_on_body_x_zero_roll(self) -> None:
         """Balloon along body +X: no bank, even if a track kwarg is omitted."""
         dir_ned = (1.0, 0.0, 0.0)

@@ -102,10 +102,10 @@ def q_des_from_los(
     bearing vs body +X; pitch is elevation vs body +X. Used only while on
     screen.
 
-    Banked flight adds ``LOS_LOAD_PITCH_RAD`` nose-up so the plane does not
-    sag under the balloon in the intercept turn. ``kp_elev`` scales body
-    elevation (1 = match blob; >1 dives/climbs harder because in-view
-    thrust holds current Z).
+    Banked flight adds ``LOS_LOAD_PITCH_RAD`` nose-up on level/climb LOS so
+    the plane does not sag under the balloon in the intercept turn.
+    ``kp_elev`` scales body elevation (1 = match blob; >1 dives/climbs
+    harder because in-view thrust holds current Z).
 
     ``deadband_rad`` optionally zeros bearing below a threshold (default 0:
     body seeker must keep banking on a few degrees of blob offset).
@@ -128,7 +128,8 @@ def q_des_from_los(
     roll = max(-max_roll, min(max_roll, kp_heading * heading_err))
     pitch = float(kp_elev) * los_el
     cphi = math.cos(max(-1.2, min(1.2, roll)))
-    pitch += LOS_LOAD_PITCH_RAD * (1.0 / max(0.35, abs(cphi)) - 1.0)
+    if los_el >= 0.0:
+        pitch += LOS_LOAD_PITCH_RAD * (1.0 / max(0.35, abs(cphi)) - 1.0)
     pitch = max(-max_pitch, min(max_pitch, pitch))
     return from_rpy(roll, pitch, yaw_act)
 

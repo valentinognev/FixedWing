@@ -1,5 +1,8 @@
 # Updates
 
+## 0.54.4 - Skip LOS load-pitch on down-LOS
+- `q_des_from_los` applies `LOS_LOAD_PITCH_RAD` nose-up only when `los_el >= 0` (level/climb). Banked dives no longer fight the look-at (GZ `165855` balloon 3 stayed ~9.6 m high).
+
 ## 0.54.3 - Race contract tests after gz default setup
 - `--model` without `--gz` is allowed when `flightSetup.json` `sim.platform` is already `gz`; `test_model_without_gz_exit_2` now rejects `--yasim --model` instead of launching a race.
 - README chase-controller line names quaternion LOS again (doc contract).
