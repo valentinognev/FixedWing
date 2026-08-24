@@ -327,12 +327,15 @@ class TestGzRaceContracts(unittest.TestCase):
         self.assertIn("--viz and --gz are mutually exclusive", r.stderr)
 
     def test_model_without_gz_exit_2(self) -> None:
+        # --model alone is valid when flightSetup.json sim.platform is gz.
+        # The reject is a non-gz platform flag plus --model.
         r = subprocess.run(
-            ["bash", str(_RACE), "--model", "rc_cessna"],
+            ["bash", str(_RACE), "--yasim", "--model", "rc_cessna"],
             capture_output=True,
             text=True,
         )
         self.assertEqual(r.returncode, 2)
+        self.assertIn("--model requires --gz", r.stderr)
 
     def test_control_prints_ned_pose_each_second(self) -> None:
         ctl = _CTL.read_text(encoding="utf-8")

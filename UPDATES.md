@@ -1,5 +1,9 @@
 # Updates
 
+## 0.54.3 - Race contract tests after gz default setup
+- `--model` without `--gz` is allowed when `flightSetup.json` `sim.platform` is already `gz`; `test_model_without_gz_exit_2` now rejects `--yasim --model` instead of launching a race.
+- README chase-controller line names quaternion LOS again (doc contract).
+
 ## 0.54.2 - Attitude SID: narrower pitch/yaw chirps, unwrap gt at ±π
 - `procedure.json` attitude chirp `f1_hz` pitch 3.0→1.5, yaw 2.0→1.2 (same reason as q/r: do not sweep past useful coherence). `f1_hz.roll` stays 4.0; all attitude `f0_hz` / amplitudes and `window_s` roll/yaw 1.0 / pitch 2.0 unchanged.
 - Live attitude `gt`/`px4` are unwrapped onto `cmd`'s 2π branch. PX4 ATTITUDE Euler is (-π, π]; `cmd = trim + excitation` can sit just past π, and a wrapped `gt` was a 2π step that poisons Wiener.
