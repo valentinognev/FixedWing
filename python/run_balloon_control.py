@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import atexit
 import math
+import os
 import signal
 import sys
 import threading
@@ -33,7 +34,7 @@ from fw_sitl.body_cmd_controllers import make_body_cmd_controller, parse_body_cm
 from fw_sitl.camera_model import (
     CameraModel,
     dir_body_to_ned,
-    dir_ned_to_body,
+    dir_cam_az_el_deg,
     offset_on_screen,
     project_ned_offset_to_pixel,
 )
@@ -691,6 +692,8 @@ def main() -> int:
     camera = CameraModel.from_spec(setup.camera)
     race = RaceGuidance(race_balloons, setup.guidance)
     cmd_mode = parse_body_cmd_mode(setup.guidance.cmd_mode)
+    env_homing = os.environ.get("FW_HOMING_LAW", "").strip()
+    homing_law = env_homing or setup.guidance.homing_law
     controller = make_body_cmd_controller(
         cmd_mode,
         lookahead_m=lookahead_m,
@@ -701,7 +704,13 @@ def main() -> int:
         plant=plant,
         controller=setup.guidance.controller,
         attitude_format=setup.guidance.attitude_format,
+        homing_law=homing_law,
     )
+    if hasattr(controller, "homing_law"):
+        print(
+            f"in-view camera homing_law={controller.homing_law}",
+            flush=True,
+        )
     if hasattr(controller, "_bridge"):
         controller._bridge._alt_hold_z = float(
             z_hold_true if (args.gz or args.xplane) else z_hold
@@ -737,6 +746,7 @@ def main() -> int:
 
     att = (0.0, 0.0, 0.0)
     last_dir_cam: tuple[float, float, float] | None = None
+    last_area_px = 0.0
     last_track_in_view = False
     ignore_next_track = False
     period = 1.0 / rate
@@ -1007,18 +1017,21 @@ def main() -> int:
                     if ignore_next_track:
                         last_track_in_view = False
                         last_dir_cam = None
+                        last_area_px = 0.0
                         ignore_next_track = False
                     else:
                         last_track_in_view = track.in_view
                         if track.in_view and track.dir_cam is not None:
                             last_dir_cam = track.dir_cam
+                            last_area_px = float(track.area_px)
                         else:
                             last_dir_cam = None
+                            last_area_px = 0.0
 
             # HSV blob when the tracker sees the current colour: that is the
             # real optical axis (geometric yaw-vs-bearing can sit at 0° while
-            # the blob is on the right of balloon_camera). Geometric LOS is
-            # the fallback when the balloon still projects but HSV missed.
+            # the blob is on the right of balloon_camera). Without dir_cam,
+            # path-hold at current altitude and bank onto geometric bearing.
             balloon = race.balloon_ned()
             rel_ned = (
                 balloon[0] - pos[0],
@@ -1088,9 +1101,16 @@ def main() -> int:
             approach = chase
             if approach_xy is not None:
                 approach = (approach_xy[0], approach_xy[1], 0.0)
-            if race.check_pass(plane_ned, approach_dir_ned=approach):
+            cam_el_rad = None
+            if tracker_in_view and last_dir_cam is not None:
+                _az_deg, el_deg = dir_cam_az_el_deg(last_dir_cam)
+                cam_el_rad = math.radians(el_deg)
+            if race.check_pass(
+                plane_ned, approach_dir_ned=approach, cam_el_rad=cam_el_rad
+            ):
                 last_track_in_view = False
                 last_dir_cam = None
+                last_area_px = 0.0
                 ignore_next_track = True
                 passed_idx = (
                     race.last_passed_idx
@@ -1103,7 +1123,7 @@ def main() -> int:
                     balloon_idx=passed_idx,
                     color=passed_color,
                     assisted=race.assisted,
-                    pos_ned=plane_ned,
+                    pos_ned=race.last_closest_ned or plane_ned,
                     tgt_ned=race.balloon_ned(passed_idx),
                 )
                 balloon = race.balloon_ned()
@@ -1170,16 +1190,15 @@ def main() -> int:
                 last_published_assisted = race.assisted
                 last_color_pub_t = now_wall
 
-            # Always close chase LOS in body FRD (blob via camera→body mount,
-            # else geometric NED rotated by attitude). Overlay still follows
-            # race.assisted; frozen path is unused.
+            # Homing is HSV dir_cam only. Off-blob: path-hold current z and
+            # bank onto geometric bearing (search). Overlay follows race.assisted.
             yaw_for_sp = None if use_lookat else att[2]
             tgt = race.balloon_ned()
             range_m = math.hypot(pos[0] - tgt[0], pos[1] - tgt[1])
             if tracker_in_view and last_dir_cam is not None:
                 chase_body = camera.dir_cam_to_body(last_dir_cam)
             else:
-                chase_body = dir_ned_to_body(chase, att[0], att[1], att[2])
+                chase_body = None
             if gt_rebase_active and gt_vel is not None:
                 chase_gs = math.hypot(gt_vel[0], gt_vel[1])
                 chase_vx, chase_vy = float(gt_vel[0]), float(gt_vel[1])
@@ -1198,7 +1217,7 @@ def main() -> int:
                 dt=period,
                 groundspeed=chase_gs,
                 in_view=use_lookat,
-                z_target=None if use_lookat else tgt[2],
+                z_target=None if use_lookat else pos[2],
                 vx=chase_vx,
                 vy=chase_vy,
                 vz=chase_vz,
@@ -1207,6 +1226,7 @@ def main() -> int:
                 q_exec=ekf_q if gt_rebase_active and ekf_q is not None else None,
                 range_m=range_m,
                 dir_body=chase_body,
+                area_px=last_area_px if tracker_in_view else 0.0,
             )
             q_plot = getattr(controller, "last_q_des", None)
             if q_plot is None:

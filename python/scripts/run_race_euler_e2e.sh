@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 export FW_SITL_E2E=1
-export FW_SITL_E2E_DURATION_S="${FW_SITL_E2E_DURATION_S:-90}"
+export FW_SITL_E2E_DURATION_S="${FW_SITL_E2E_DURATION_S:-120}"
 export FW_SITL_E2E_WAIT_SLACK_S="${FW_SITL_E2E_WAIT_SLACK_S:-240}"
 export FW_SITL_E2E_PLATFORMS="${FW_SITL_E2E_PLATFORMS:-gz}"
 cd "${PYTHON_ROOT}"

@@ -102,15 +102,19 @@ class TestGzRaceContracts(unittest.TestCase):
         use_at = ctl.index("att = history.last_att_rad")
         self.assertGreater(use_at, poll_at)
         self.assertIn("in_view=use_lookat", ctl)
-        # In-view attitude must not feed balloon Z; path-hold still may.
-        self.assertIn("z_target=None if use_lookat else tgt[2]", ctl)
+        self.assertIn("last_closest_ned", ctl)
+        self.assertIn("cam_el_rad", ctl)
+        # Homing altitude comes from camera LOS. Off-blob path-hold keeps
+        # current z (search), not balloon bookkeeping Z.
+        self.assertIn("z_target=None if use_lookat else pos[2]", ctl)
+        self.assertNotIn("z_target=None if use_lookat else tgt[2]", ctl)
         self.assertIn("range_m=range_m", ctl)
         self.assertIn("if on_screen:", ctl)
         # Geometric-only projection is dead-reckoning, not a real visual track:
         # in_view=False here so race.assisted correctly reports "not tracking".
         self.assertIn("race.update_track(False, race.geometric_los(pos), now_s=now_s)", ctl)
         self.assertIn("camera.dir_cam_to_body(last_dir_cam)", ctl)
-        self.assertIn("dir_ned_to_body", ctl)
+        self.assertNotIn("chase_body = dir_ned_to_body", ctl)
         self.assertIn("dir_body=chase_body", ctl)
         self.assertIn("history.note_cam_los", ctl)
         # Pixel look-at first: geometric on-screen was zeroing PX4 yaw while

@@ -52,6 +52,7 @@ class ChaseController(Protocol):
         q_exec: tuple[float, float, float, float] | None = None,
         range_m: float | None = None,
         dir_body: tuple[float, float, float] | None = None,
+        area_px: float = 0.0,
     ) -> tuple[float, float, float]: ...
 
 
@@ -92,8 +93,9 @@ class VelocityChaseController:
         q_exec: tuple[float, float, float, float] | None = None,
         range_m: float | None = None,
         dir_body: tuple[float, float, float] | None = None,
+        area_px: float = 0.0,
     ) -> tuple[float, float, float]:
-        _ = (in_view, z_target, vx, vy, vz, path_lock_token, visual_lock, q_exec, dir_body)
+        _ = (in_view, z_target, vx, vy, vz, path_lock_token, visual_lock, q_exec, dir_body, area_px)
         course = math.atan2(float(dir_ned[1]), float(dir_ned[0]))
         yaw = float(yaw_rad) if yaw_rad is not None else course
         v_cmd = _commanded_chase_speed(
@@ -147,6 +149,7 @@ class RateChaseController:
         q_exec: tuple[float, float, float, float] | None = None,
         range_m: float | None = None,
         dir_body: tuple[float, float, float] | None = None,
+        area_px: float = 0.0,
     ) -> tuple[float, float, float]:
         raise NotImplementedError("rates body-cmd mode is not implemented")
 
@@ -172,6 +175,7 @@ def make_body_cmd_controller(
     plant: PlantGains | None = None,
     controller: str = DEFAULT_CONTROLLER,
     attitude_format: str = DEFAULT_ATTITUDE_FORMAT,
+    homing_law: str | None = None,
 ) -> ChaseController:
     """Construct the controller for the selected body-cmd mode / chase law."""
     from fw_sitl.controllers import build_controller
@@ -193,6 +197,7 @@ def make_body_cmd_controller(
             plant=plant,
             cmd_mode=resolved.value,
             attitude_format=attitude_format,
+            homing_law=homing_law,
         )
     raise ValueError(f"unhandled body-cmd mode {resolved!r}")
 

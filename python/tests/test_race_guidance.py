@@ -69,18 +69,50 @@ def _race_3d(pass_radius: float = 50.0) -> RaceGuidance:
 class TestRacePass(unittest.TestCase):
     def test_pass_within_radius_cycles(self) -> None:
         race = _race(pass_radius=50.0)
-        passed = race.check_pass((300.0, 40.0, 0.0), approach_dir_ned=(1.0, 0.0, 0.0))
+        self.assertFalse(
+            race.check_pass((300.0, 40.0, 0.0), approach_dir_ned=(1.0, 0.0, 0.0))
+        )
+        passed = race.check_pass((300.0, 43.0, 0.0), approach_dir_ned=(1.0, 0.0, 0.0))
         self.assertTrue(passed)
         self.assertEqual(race.target_idx, 1)
 
-    def test_gate_plane_crossing(self) -> None:
+    def test_inside_sphere_does_not_pass_until_receding(self) -> None:
+        race = _race(pass_radius=10.0)
+        self.assertFalse(race.check_pass((300.0, 0.0, 8.0), approach_dir_ned=(1.0, 0.0, 0.0)))
+        self.assertEqual(race.target_idx, 0)
+
+    def test_receding_after_inside_passes_and_remembers_closest(self) -> None:
+        race = _race(pass_radius=10.0)
+        race.check_pass((300.0, 0.0, 8.0), approach_dir_ned=(1.0, 0.0, 0.0))
+        race.check_pass((300.0, 0.0, 3.0), approach_dir_ned=(1.0, 0.0, 0.0))
+        race.check_pass((300.0, 0.0, 1.0), approach_dir_ned=(1.0, 0.0, 0.0))
+        passed = race.check_pass((300.0, 0.0, 4.0), approach_dir_ned=(1.0, 0.0, 0.0))
+        self.assertTrue(passed)
+        self.assertEqual(race.target_idx, 1)
+        pos = race.last_closest_ned
+        self.assertIsNotNone(pos)
+        self.assertAlmostEqual(pos[2], 1.0, places=5)
+
+    def test_steep_cam_el_inhibits_pass_inside_sphere(self) -> None:
+        """Blob still well below/above center: keep camera homing (223958 B2 cam_el −20°)."""
+        race = _race(pass_radius=10.0)
+        race.check_pass((300.0, 0.0, 1.0), approach_dir_ned=(1.0, 0.0, 0.0), cam_el_rad=math.radians(-20.0))
+        self.assertFalse(
+            race.check_pass((300.0, 0.0, 4.0), approach_dir_ned=(1.0, 0.0, 0.0), cam_el_rad=math.radians(-20.0))
+        )
+        self.assertEqual(race.target_idx, 0)
+        self.assertTrue(
+            race.check_pass((300.0, 0.0, 4.0), approach_dir_ned=(1.0, 0.0, 0.0), cam_el_rad=math.radians(-5.0))
+        )
+
+    def test_gate_plane_crossing_outside_sphere_does_not_pass(self) -> None:
+        """Horizontal gate used to count a 6 m miss as a pass (radius 5 m)."""
         race = _race(pass_radius=5.0)
         race.update_track(False, (1.0, 0.0, 0.0))
         race._prev_gate_dot = -100.0
-        # Outside radius (5 m) but within 1.5*radius gate corridor.
         passed = race.check_pass((306.0, 0.0, 0.0), approach_dir_ned=(1.0, 0.0, 0.0))
-        self.assertTrue(passed)
-        self.assertEqual(race.target_idx, 1)
+        self.assertFalse(passed)
+        self.assertEqual(race.target_idx, 0)
 
     def test_gate_far_from_balloon_ignored(self) -> None:
         race = _race(pass_radius=50.0)
@@ -98,15 +130,15 @@ class TestRacePass(unittest.TestCase):
         self.assertFalse(passed)
         self.assertEqual(race.target_idx, 0)
 
-    def test_closest_approach_after_in_view_advances(self) -> None:
-        """147 m fly-by (GZ race t≈25) must retarget; 50 m radius never fired until t≈115."""
+    def test_closest_approach_outside_sphere_does_not_advance(self) -> None:
+        """147 m fly-by (old 50 m radius GZ) must not count as center-through."""
         race = _race(pass_radius=50.0)
         race.update_track(True, (1.0, 0.0, 0.0))
         self.assertFalse(race.check_pass((300.0, 140.0, 0.0), approach_dir_ned=(1.0, 0.0, 0.0)))
         self.assertEqual(race.target_idx, 0)
         race.update_track(False, (1.0, 0.0, 0.0))
-        self.assertTrue(race.check_pass((300.0, 155.0, 0.0), approach_dir_ned=(1.0, 0.0, 0.0)))
-        self.assertEqual(race.target_idx, 1)
+        self.assertFalse(race.check_pass((300.0, 155.0, 0.0), approach_dir_ned=(1.0, 0.0, 0.0)))
+        self.assertEqual(race.target_idx, 0)
 
     def test_range_increase_without_in_view_does_not_pass(self) -> None:
         race = _race(pass_radius=50.0)
@@ -125,7 +157,8 @@ class TestRacePass(unittest.TestCase):
     def test_advance_clears_in_view_so_chase_follows_new_balloon(self) -> None:
         race = _race()
         race.update_track(True, (1.0, 0.0, 0.0))
-        self.assertTrue(race.check_pass((300.0, 0.0, 0.0), approach_dir_ned=(1.0, 0.0, 0.0)))
+        self.assertFalse(race.check_pass((300.0, 0.0, 0.0), approach_dir_ned=(1.0, 0.0, 0.0)))
+        self.assertTrue(race.check_pass((302.0, 0.0, 0.0), approach_dir_ned=(1.0, 0.0, 0.0)))
         self.assertFalse(race.last_in_view)
         pos = (300.0, 0.0, 0.0)
         got = race.chase_dir_ned(pos, sim_time_s=1.0)
@@ -136,15 +169,33 @@ class TestRacePass(unittest.TestCase):
         for a, b in zip(got, expected):
             self.assertAlmostEqual(a, b, places=6)
 
-    def test_gate_uses_ground_track_not_los_to_balloon(self) -> None:
-        """LOS-as-approach makes gate_dot ≡ −range, so a 60 m abeam fly-by never passed."""
+    def test_horizontal_gate_abeam_does_not_pass(self) -> None:
+        """60 m east fly-by is not through the sphere."""
         race = _race(pass_radius=50.0)
         race.update_track(False, (1.0, 0.0, 0.0))
-        # South of balloon, flying north, 60 m east — inside 1.5*radius corridor.
         race.check_pass((240.0, 60.0, 0.0), approach_dir_ned=(1.0, 0.0, 0.0))
         passed = race.check_pass((360.0, 60.0, 0.0), approach_dir_ned=(1.0, 0.0, 0.0))
-        self.assertTrue(passed)
-        self.assertEqual(race.target_idx, 1)
+        self.assertFalse(passed)
+        self.assertEqual(race.target_idx, 0)
+
+    def test_high_xy_flythrough_does_not_pass(self) -> None:
+        """GZ 222435 balloon 3: XY through, 20 m high, HSV lock, range rising."""
+        race = _race(
+            pass_radius=10.0,
+            balloons=(
+                BalloonSpec(ned=(300.0, 0.0, 20.0), color=(0, 0, 255), diameter_m=10.0),
+                BalloonSpec(ned=(0.0, 0.0, 0.0), color=(255, 0, 0), diameter_m=10.0),
+            ),
+        )
+        race.update_track(True, (0.0, 1.0, 0.0))
+        self.assertFalse(
+            race.check_pass((300.0, -1.0, 0.0), approach_dir_ned=(0.0, 1.0, 0.0))
+        )
+        race.update_track(False, (0.0, 1.0, 0.0))
+        self.assertFalse(
+            race.check_pass((300.0, 25.0, 0.0), approach_dir_ned=(0.0, 1.0, 0.0))
+        )
+        self.assertEqual(race.target_idx, 0)
 
 
 class TestRaceGuidance3DLos(unittest.TestCase):
@@ -167,8 +218,11 @@ class TestRaceGuidance3DLos(unittest.TestCase):
         """Without any TrackMessage, pass must still retarget geometric LOS."""
         race = _race_3d()
         self.assertFalse(race._seen_track)
-        self.assertTrue(
+        self.assertFalse(
             race.check_pass((300.0, 0.0, -40.0), approach_dir_ned=(1.0, 0.0, 0.0))
+        )
+        self.assertTrue(
+            race.check_pass((300.0, 0.0, -38.0), approach_dir_ned=(1.0, 0.0, 0.0))
         )
         self.assertEqual(race.target_idx, 1)
         self.assertFalse(race._seen_track)
@@ -262,14 +316,16 @@ class TestAssistedOverlay(unittest.TestCase):
 
 
 class TestLookatVsAssisted(unittest.TestCase):
-    def test_on_screen_uses_lookat_even_if_tracker_missed(self) -> None:
-        self.assertTrue(chase_uses_lookat(tracker_in_view=False, on_screen=True))
+    def test_on_screen_without_tracker_does_not_lookat(self) -> None:
+        """Geometric projection is search, not homing (GZ 222435 +20° pitch after pass)."""
+        self.assertFalse(chase_uses_lookat(tracker_in_view=False, on_screen=True))
 
-    def test_off_screen_without_blob_still_closes_los(self) -> None:
-        self.assertTrue(chase_uses_lookat(tracker_in_view=False, on_screen=False))
+    def test_off_screen_without_blob_does_not_lookat(self) -> None:
+        self.assertFalse(chase_uses_lookat(tracker_in_view=False, on_screen=False))
 
     def test_tracker_blob_uses_lookat(self) -> None:
         self.assertTrue(chase_uses_lookat(tracker_in_view=True, on_screen=False))
+        self.assertTrue(chase_uses_lookat(tracker_in_view=True, on_screen=True))
 
 
 class TestStaleTrackAssisted(unittest.TestCase):

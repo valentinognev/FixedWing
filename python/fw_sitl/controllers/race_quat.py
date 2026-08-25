@@ -6,6 +6,7 @@ import math
 from pymavlink import mavutil
 
 from fw_sitl.attitude_pid import (
+    CAM_LOS_ALT_PROXY_M,
     AttitudePid,
     q_des_from_los,
     q_des_from_path,
@@ -20,7 +21,9 @@ from fw_sitl.controllers._chase_common import (
     _commanded_chase_speed,
     _los_elev_rad,
     chase_dir_body,
+    speed_range_from_los_el,
 )
+from fw_sitl.controllers.cam_homing import CamHomingState, apply_homing_law, resolve_homing_law
 from fw_sitl.flight_setup import DEFAULT_ATTITUDE_FORMAT
 from fw_sitl.mavlink_io import send_attitude_quat, send_attitude_rates, send_attitude_target
 from fw_sitl.path_geometry import coordinated_heading_rad, ned_velocity_from_course, wrap_pi
@@ -30,10 +33,10 @@ from fw_sitl.quat import conjugate, from_rpy, mul, rpy_from_quat
 
 
 class RaceQuatController:
-    """OFFBOARD SET_ATTITUDE_TARGET chase: LOS look-at in view, path-hold otherwise.
+    """OFFBOARD SET_ATTITUDE_TARGET chase: HSV LOS look-at in view, path-hold otherwise.
 
-    In-view attitude uses body-FRD LOS (camera→body mount, no balloon Z).
-    In-view speed/thrust also follow that elevation (range·sin(el) Δz proxy).
+    In-view attitude uses body-FRD LOS from camera→body mount (not balloon Z).
+    In-view speed/altitude use camera LOS elevation only (80 m proxy; no NED range).
     ``visual_lock`` is accepted for protocol compatibility but unused.
     """
 
@@ -49,6 +52,7 @@ class RaceQuatController:
         cascade: Px4FwAttCascade | None = None,
         cmd_mode: str = "attitude",
         attitude_format: str = DEFAULT_ATTITUDE_FORMAT,
+        homing_law: str | None = None,
     ) -> None:
         self._bridge = bridge
         self._speed_mps = float(speed_mps)
@@ -74,10 +78,13 @@ class RaceQuatController:
         self.last_thrust: float | None = None
         self.last_z_hold: float | None = None
         self.last_law: str | None = None
-        self._path_lock: tuple[object, tuple[float, float], float] | None = None
+        self._path_lock: tuple[object, tuple[float, float], float, float] | None = None
         self._last_roll_cmd: float | None = None
         self._last_pitch_cmd: float | None = None
         self.last_speed_mps: float | None = None
+        self.homing_law = resolve_homing_law(homing_law)
+        self._cam_homing = CamHomingState()
+        self._los_z_hold: float | None = None
 
     def _smooth_axis(
         self,
@@ -155,6 +162,7 @@ class RaceQuatController:
         q_exec: tuple[float, float, float, float] | None = None,
         range_m: float | None = None,
         dir_body: tuple[float, float, float] | None = None,
+        area_px: float = 0.0,
     ) -> tuple[float, float, float]:
         _ = (frame, heading_rad, vz, visual_lock)
         course = math.atan2(float(dir_ned[1]), float(dir_ned[0]))
@@ -171,15 +179,28 @@ class RaceQuatController:
             q_act = from_rpy(0.0, 0.0, yaw)
         _, _, yaw_act = rpy_from_quat(q_act)
         los_el = 0.0
+        speed_scale = 1.0
+        thrust_bias = 0.0
         if in_view:
             self._path_lock = None
             self.last_law = "los"
             los_kw = dict(self._plant.los_kwargs()) if self._plant is not None else {}
-            los_body = chase_dir_body(dir_ned, q_act=q_act, dir_body=dir_body)
-            los_el = _los_elev_rad(los_body)
-            # Homing altitude from LOS elevation — never balloon bookkeeping Z.
-            if range_m is not None and math.isfinite(range_m):
-                z_hold = float(pos_ned[2]) - float(range_m) * math.sin(los_el)
+            raw_los = chase_dir_body(dir_ned, q_act=q_act, dir_body=dir_body)
+            los_el = _los_elev_rad(raw_los)
+            homing = apply_homing_law(
+                self.homing_law,
+                raw_los,
+                dt=dt,
+                state=self._cam_homing,
+                area_px=area_px,
+            )
+            los_body = homing.los_body
+            speed_scale = float(homing.speed_scale)
+            thrust_bias = float(homing.thrust_bias)
+            # Camera proxy only — never geometric NED range while the blob is in view.
+            # z_hold / speed use raw blob elevation, not the principal's seeker el.
+            z_hold = float(pos_ned[2]) - CAM_LOS_ALT_PROXY_M * math.sin(los_el)
+            self._los_z_hold = z_hold
             q_des = q_des_from_los(
                 los_body,
                 yaw_rad=yaw_act,
@@ -196,15 +217,20 @@ class RaceQuatController:
                 self._cascade.reset()
                 q_cmd = q_des
         else:
+            self._cam_homing = CamHomingState()
             heading_ref = coordinated_heading_rad(yaw_act, vx, vy)
             token = path_lock_token
             if self._path_lock is None or self._path_lock[0] != token:
+                if self._los_z_hold is not None:
+                    z_hold = float(self._los_z_hold)
+                    self._los_z_hold = None
                 self._path_lock = (
                     token,
                     (float(pos_ned[0]), float(pos_ned[1])),
                     course,
+                    float(z_hold),
                 )
-            _tok, origin_xy, lock_course = self._path_lock
+            _tok, origin_xy, lock_course, z_hold = self._path_lock
             self.last_law = "path"
             path_kw = self._plant.path_kwargs() if self._plant is not None else {}
             q_des = q_des_from_path(
@@ -229,13 +255,21 @@ class RaceQuatController:
             q_des = q_cmd
         roll_des = rpy_from_quat(q_des)[0]
         heading_err = wrap_pi(course - yaw_act)
+        if self.last_law == "los":
+            slow_r = (
+                self._plant.slow_range_m if self._plant is not None else 150.0
+            )
+            range_for_speed = speed_range_from_los_el(los_el, slow_r)
+        else:
+            range_for_speed = range_m
         v_cmd = _commanded_chase_speed(
-            range_m,
+            range_for_speed,
             cruise_mps=self._speed_mps,
             heading_err_rad=heading_err,
             plant=self._plant,
             elev_rad=los_el if self.last_law == "los" else 0.0,
         )
+        v_cmd *= max(0.2, min(1.0, speed_scale))
         self.last_speed_mps = v_cmd
         thrust_kw = self._plant.thrust_kwargs() if self._plant is not None else {}
         thrust = thrust_for_hold(
@@ -246,6 +280,10 @@ class RaceQuatController:
             roll_rad=roll_des,
             **thrust_kw,
         )
+        if thrust_bias:
+            lo = float(thrust_kw.get("min_t", 0.05))
+            hi = float(thrust_kw.get("max_t", 0.95))
+            thrust = max(lo, min(hi, thrust + thrust_bias))
         if q_exec is not None:
             q_cmd = mul(q_exec, mul(conjugate(q_act), q_cmd))
             roll, pitch, yaw = rpy_from_quat(q_cmd)

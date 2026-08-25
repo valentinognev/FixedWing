@@ -32,6 +32,8 @@ CRUISE_THRUST = 0.62
 CLIMB_THRUST_PER_M = 0.012
 MIN_THRUST = 0.40
 MAX_THRUST = 1.0
+# In-view altitude proxy when NED range is forbidden (camera LOS only).
+CAM_LOS_ALT_PROXY_M = 80.0
 
 
 def q_des_from_path(
@@ -93,6 +95,7 @@ def q_des_from_los(
     heading_rad: float | None = None,
     deadband_rad: float = LOS_HEADING_DEADBAND_RAD,
     kp_elev: float = 1.0,
+    los_el_bank_atten: float = 0.0,
 ) -> Quat:
     """Gazebo FW look-at: bank onto LOS azimuth vs body +X, pitch to elevation.
 
@@ -110,7 +113,9 @@ def q_des_from_los(
     ``deadband_rad`` optionally zeros bearing below a threshold (default 0:
     body seeker must keep banking on a few degrees of blob offset).
     ``heading_rad`` is an optional extra bearing offset (default 0 = body +X).
+    ``los_el_bank_atten`` is accepted from ``PlantGains.los_kwargs()``.
     """
+    _ = los_el_bank_atten
     dx, dy, dz = (float(dir_ned[0]), float(dir_ned[1]), float(dir_ned[2]))
     horiz = math.hypot(dx, dy)
     if q_act is None:
@@ -189,8 +194,6 @@ def chase_speed_mps(
     turn_frac = min(1.0, herr / (math.pi / 2))
     w *= 1.0 - 0.35 * turn_frac
     el_frac = min(1.0, abs(float(elev_rad)) / math.radians(20.0))
-    if float(elev_rad) > 0.0:
-        el_frac *= 0.65
     w *= 1.0 - 0.50 * el_frac
     return approach + w * (cruise - approach)
 

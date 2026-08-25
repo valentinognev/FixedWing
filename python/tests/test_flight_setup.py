@@ -53,6 +53,7 @@ class TestFlightSetupDefaults(unittest.TestCase):
         self.assertEqual(setup.guidance.cmd_mode, DEFAULT_CMD_MODE)
         self.assertEqual(setup.guidance.attitude_format, DEFAULT_ATTITUDE_FORMAT)
         self.assertEqual(setup.guidance.controller, DEFAULT_CONTROLLER)
+        self.assertEqual(setup.guidance.homing_law, "lookat")
         self.assertEqual(setup.sim.platform, DEFAULT_SIM_PLATFORM)
         self.assertEqual(setup.sim.gz_model, DEFAULT_GZ_MODEL)
         self.assertEqual(
@@ -175,6 +176,20 @@ class TestFlightSetupDefaults(unittest.TestCase):
             flight_setup_from_dict({"guidance": {"controller": "pid_only"}})
         self.assertIn("controller", str(ctx.exception).lower())
 
+    def test_guidance_homing_law_defaults_to_lookat(self) -> None:
+        setup = flight_setup_from_dict({"guidance": {}})
+        self.assertEqual(setup.guidance.homing_law, "lookat")
+        self.assertEqual(GuidanceSpec().homing_law, "lookat")
+
+    def test_guidance_homing_law_bias_accepted(self) -> None:
+        setup = flight_setup_from_dict({"guidance": {"homing_law": "bias"}})
+        self.assertEqual(setup.guidance.homing_law, "bias")
+
+    def test_guidance_homing_law_unknown_rejected(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            flight_setup_from_dict({"guidance": {"homing_law": "glide_slope"}})
+        self.assertIn("homing_law", str(ctx.exception).lower())
+
     def test_zmq_pose_overridable(self) -> None:
         setup = flight_setup_from_dict({"zmq": {"pose": "tcp://127.0.0.1:6001"}})
         self.assertEqual(setup.zmq.pose, "tcp://127.0.0.1:6001")
@@ -193,6 +208,7 @@ class TestFlightSetupDefaults(unittest.TestCase):
         self.assertEqual(g.cmd_mode, "velocity")
         self.assertEqual(g.attitude_format, "euler")
         self.assertEqual(g.controller, "pure_pursuit_quat")
+        self.assertEqual(g.homing_law, "lookat")
         self.assertEqual(g.alt_preserve_heading_err_deg, 20.0)
         self.assertEqual(v.pixel_rms_max_px, 15.0)
         self.assertEqual(v.pass_time_tol_s, 5.0)
@@ -294,12 +310,12 @@ class TestFlightSetupDefaults(unittest.TestCase):
         self.assertEqual(setup.guidance.cmd_mode, "attitude")
         self.assertEqual(setup.guidance.attitude_format, "euler")
         self.assertEqual(setup.guidance.controller, "race_euler")
+        self.assertEqual(setup.guidance.homing_law, "bias")
         self.assertEqual(setup.guidance.alt_preserve_heading_err_deg, 20.0)
         self.assertEqual(setup.guidance.laps, 0)
-        self.assertEqual(setup.guidance.duration_s, 60.0)
         self.assertEqual(setup.sim.platform, "gz")
         self.assertEqual(setup.sim.gz_model, "rc_cessna")
-        self.assertEqual(setup.sim.duration_s, 60.0)
+        self.assertEqual(setup.sim.duration_s, 120.0)
         self.assertEqual(setup.guidance.stale_track_warn_s, 10.0)
         self.assertEqual(setup.spawn.ned, (0.0, 0.0, 0.0))
         self.assertEqual(setup.spawn.heading_deg, 10.0)
@@ -312,6 +328,10 @@ class TestFlightSetupDefaults(unittest.TestCase):
         self.assertIn("cmd_mode", text)
         self.assertIn("attitude_format", text)
         self.assertIn("controller", text)
+        self.assertIn("homing_law", text)
+        self.assertIn("lookat", text)
+        self.assertIn("pd_lead", text)
+        self.assertIn("apn", text)
 
     def test_load_flight_setup_accepts_jsonc_comments(self) -> None:
         payload = """

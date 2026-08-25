@@ -257,7 +257,9 @@ class PurePursuitQuatController:
         q_exec: tuple[float, float, float, float] | None = None,
         range_m: float | None = None,
         dir_body: tuple[float, float, float] | None = None,
+        area_px: float = 0.0,
     ) -> tuple[float, float, float]:
+        _ = area_px
         # On-screen: PP accel in body → rotate a_des to NED → attitude/thrust.
         # visual_lock is unused on the PP branch (HSV vs geom only selects û).
         # Off-screen: freeze origin+course, bank-to-turn on ground track.

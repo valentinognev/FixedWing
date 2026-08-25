@@ -1,6 +1,7 @@
 """Live balloon-race e2e helpers (opt-in; needs Docker / SITL)."""
 from __future__ import annotations
 
+import csv
 import json
 import os
 import subprocess
@@ -86,7 +87,7 @@ def write_race_euler_e2e_setup(
     path: Path,
     *,
     platform: str = "gz",
-    duration_s: float = 90.0,
+    duration_s: float = 120.0,
     gz_model: str = "rc_cessna",
     pass_radius_m: float = 10.0,
 ) -> Path:
@@ -252,13 +253,29 @@ def run_race_quat_platform_e2e(
         )
 
 
+def _pass_delta_d_m(csv_path: Path, *, min_passes: int) -> list[tuple[int, float]]:
+    """``(balloon_idx, |pos_d - tgt_d|)`` for the first ``min_passes`` pass rows."""
+    out: list[tuple[int, float]] = []
+    n = int(min_passes)
+    with Path(csv_path).open(encoding="utf-8") as fh:
+        for row in csv.DictReader(fh):
+            if (row.get("event") or "").strip() != "pass":
+                continue
+            idx = int(row["balloon_idx"])
+            delta_d = abs(float(row["pos_d"]) - float(row["tgt_d"]))
+            out.append((idx, delta_d))
+            if len(out) >= n:
+                break
+    return out
+
+
 def assert_race_euler_csv_ok(
     csv_path: Path,
     *,
     min_passes: int = 3,
-    max_miss_m: float = 10.0,
+    max_miss_m: float = 5.0,
 ) -> list[tuple[int, float, bool]]:
-    """Gate: end_*, ≥min_passes, each of the first ``min_passes`` 3D misses ≤ max."""
+    """Gate: end_*, ≥min_passes, first ``min_passes`` 3D and |ΔD| each ≤ max."""
     passes = assert_race_quat_csv_ok(csv_path, min_passes=min_passes)
     scored = passes[: int(min_passes)]
     over = [(idx, miss) for idx, miss, _a in scored if float(miss) > float(max_miss_m)]
@@ -266,17 +283,26 @@ def assert_race_euler_csv_ok(
         raise AssertionError(
             f"3D miss over {max_miss_m} m in {csv_path}: {over} (all={scored})"
         )
+    d_over = [
+        (idx, dd)
+        for idx, dd in _pass_delta_d_m(csv_path, min_passes=min_passes)
+        if float(dd) > float(max_miss_m)
+    ]
+    if d_over:
+        raise AssertionError(
+            f"|ΔD| over {max_miss_m} m in {csv_path}: {d_over}"
+        )
     return passes
 
 
 def run_race_euler_platform_e2e(
     platform: str,
     *,
-    duration_s: float = 90.0,
+    duration_s: float = 120.0,
     min_passes: int = 3,
     wait_slack_s: float = 240.0,
     gz_model: str = "rc_cessna",
-    max_miss_m: float = 10.0,
+    max_miss_m: float = 5.0,
 ) -> Path:
     """Full live race with ``race_euler`` on the production course; returns CSV."""
     _LOG_DIR.mkdir(parents=True, exist_ok=True)

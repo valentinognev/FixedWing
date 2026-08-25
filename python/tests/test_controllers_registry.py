@@ -59,6 +59,34 @@ class TestControllerRegistry(unittest.TestCase):
             )
         self.assertTrue(str(ctrl.last_law).startswith("pp"))
 
+    def test_build_race_euler_honors_homing_law(self) -> None:
+        from fw_sitl.controllers import build_controller
+
+        bridge = BodyCmdBridge(lookahead_m=500.0, speed_mps=30.0)
+        plant = load_plant_gains("jsbsim_rascal", controller="race_euler")
+        ctrl = build_controller(
+            "race_euler",
+            bridge,
+            speed_mps=30.0,
+            plant=plant,
+            homing_law="bias",
+        )
+        self.assertEqual(ctrl.homing_law, "bias")
+
+    def test_build_pp_ignores_homing_law_kwarg(self) -> None:
+        from fw_sitl.controllers import build_controller
+
+        bridge = BodyCmdBridge(lookahead_m=500.0, speed_mps=30.0)
+        plant = load_plant_gains("jsbsim_rascal", controller="pure_pursuit_quat")
+        ctrl = build_controller(
+            "pure_pursuit_quat",
+            bridge,
+            speed_mps=30.0,
+            plant=plant,
+            homing_law="bias",
+        )
+        self.assertFalse(hasattr(ctrl, "homing_law"))
+
     def test_default_controller_id_is_pure_pursuit(self) -> None:
         self.assertEqual(DEFAULT_CONTROLLER, "pure_pursuit_quat")
 
@@ -123,6 +151,109 @@ class TestRaceQuatLos(unittest.TestCase):
         self.assertAlmostEqual(pitch, 0.0, places=2)
         self.assertEqual(ctrl.last_law, "los")
         self.assertAlmostEqual(ctrl.last_z_hold or 0.0, 10.0, places=2)
+
+    def test_path_hold_current_z_does_not_dive_without_tracker(self) -> None:
+        """No HSV: hold current altitude. Balloon Z (+20) must not command a dive."""
+        ctrl = self._build()
+        with patch(
+            "fw_sitl.controllers.race_quat.send_attitude_target", create=True
+        ) as send:
+            ctrl.send_chase_setpoint(
+                MagicMock(),
+                (0.0, 0.0, -17.0),
+                (1.0, 0.0, 0.0),
+                1,
+                yaw_rad=0.0,
+                q_act=from_rpy(0.0, 0.0, 0.0),
+                dt=0.05,
+                in_view=False,
+                z_target=-17.0,
+                vx=16.0,
+                vy=0.0,
+            )
+        _master, _roll, pitch, _yaw, _thrust = send.call_args[0]
+        self.assertEqual(ctrl.last_law, "path")
+        self.assertLess(abs(pitch), math.radians(3.0))
+        self.assertAlmostEqual(ctrl.last_z_hold or 0.0, -17.0, places=2)
+
+    def test_path_hold_freezes_z_when_plant_falls(self) -> None:
+        """Off-blob must not slide z_hold with a descending pos[2] (GZ lookat 003837)."""
+        ctrl = self._build()
+        with patch(
+            "fw_sitl.controllers.race_quat.send_attitude_target", create=True
+        ) as send:
+            ctrl.send_chase_setpoint(
+                MagicMock(),
+                (0.0, 0.0, -17.0),
+                (1.0, 0.0, 0.0),
+                1,
+                yaw_rad=0.0,
+                q_act=from_rpy(0.0, 0.0, 0.0),
+                dt=0.05,
+                in_view=False,
+                z_target=-17.0,
+                vx=16.0,
+                vy=0.0,
+                path_lock_token=0,
+            )
+            ctrl.send_chase_setpoint(
+                MagicMock(),
+                (0.0, 0.0, 50.0),
+                (1.0, 0.0, 0.0),
+                1,
+                yaw_rad=0.0,
+                q_act=from_rpy(0.0, 0.0, 0.0),
+                dt=0.05,
+                in_view=False,
+                z_target=50.0,
+                vx=16.0,
+                vy=0.0,
+                path_lock_token=0,
+            )
+        self.assertEqual(ctrl.last_law, "path")
+        self.assertAlmostEqual(ctrl.last_z_hold or 0.0, -17.0, places=2)
+        _master, _roll, pitch, _yaw, _thrust = send.call_args[0]
+        self.assertGreater(pitch, 0.0)
+
+    def test_path_hold_after_los_keeps_camera_proxy_z(self) -> None:
+        """HSV drop mid-dive must keep the camera z proxy, not freeze at pos_z (B3)."""
+        ctl = self._build(speed=18.0)
+        el = math.radians(-20.0)
+        dir_body = (math.cos(el), 0.0, -math.sin(el))
+        pos_z = 5.0
+        with patch(
+            "fw_sitl.controllers.race_quat.send_attitude_target", create=True
+        ):
+            ctl.send_chase_setpoint(
+                MagicMock(),
+                (0.0, 0.0, pos_z),
+                (1.0, 0.0, 0.0),
+                1,
+                yaw_rad=0.0,
+                q_act=from_rpy(0.0, 0.0, 0.0),
+                dt=0.05,
+                in_view=True,
+                dir_body=dir_body,
+                path_lock_token=2,
+            )
+            proxy = ctl.last_z_hold
+            ctl.send_chase_setpoint(
+                MagicMock(),
+                (0.0, 0.0, pos_z),
+                (1.0, 0.0, 0.0),
+                1,
+                yaw_rad=0.0,
+                q_act=from_rpy(0.0, 0.0, 0.0),
+                dt=0.05,
+                in_view=False,
+                z_target=pos_z,
+                vx=16.0,
+                vy=0.0,
+                path_lock_token=2,
+            )
+        self.assertEqual(ctl.last_law, "path")
+        self.assertAlmostEqual(ctl.last_z_hold or 0.0, proxy or 0.0, places=2)
+        self.assertGreater(ctl.last_z_hold or 0.0, pos_z + 10.0)
 
     def test_in_view_steep_los_uses_los_pitch_cap(self) -> None:
         plant = load_plant_gains("jsbsim_rascal", controller="race_quat")
@@ -279,6 +410,198 @@ class TestRaceQuatLos(unittest.TestCase):
         # 45°/s * 0.05s = 2.25°; LPF also pulls toward target. Must exceed 30°/s cap (1.5°).
         self.assertGreater(stepped, math.radians(1.5) + 1e-6)
         self.assertLessEqual(stepped, math.radians(45.0) * 0.05 + 1e-6)
+
+    def test_in_view_z_hold_uses_cam_proxy_not_ned_range(self) -> None:
+        """NED range 200 m must not set z_hold; 80 m proxy × sin(el) does."""
+        ctl = self._build(speed=18.0)
+        el = math.radians(-20.0)
+        dir_body = (math.cos(el), 0.0, -math.sin(el))
+        pos_z = -17.0
+        with patch(
+            "fw_sitl.controllers.race_quat.send_attitude_target", create=True
+        ):
+            ctl.send_chase_setpoint(
+                MagicMock(),
+                (0.0, 0.0, pos_z),
+                (1.0, 0.0, 0.0),
+                1,
+                yaw_rad=0.0,
+                q_act=from_rpy(0.0, 0.0, 0.0),
+                dt=0.05,
+                in_view=True,
+                range_m=200.0,
+                dir_body=dir_body,
+            )
+        self.assertEqual(ctl.last_law, "los")
+        proxy_z = pos_z - 80.0 * math.sin(el)
+        ned_z = pos_z - 200.0 * math.sin(el)
+        self.assertAlmostEqual(ctl.last_z_hold or 0.0, proxy_z, delta=0.2)
+        self.assertGreater(abs((ctl.last_z_hold or 0.0) - ned_z), 1.0)
+
+    def test_in_view_speed_uses_los_el_not_ned_range(self) -> None:
+        """Steep blob at NED 200 m must command approach, not the NED-range blend."""
+        from fw_sitl.attitude_pid import chase_speed_mps
+
+        ctl = self._build(speed=18.0)
+        plant = load_plant_gains("jsbsim_rascal", controller="race_quat")
+        el = math.radians(-20.0)
+        dir_body = (math.cos(el), 0.0, -math.sin(el))
+        with patch(
+            "fw_sitl.controllers.race_quat.send_attitude_target", create=True
+        ):
+            ctl.send_chase_setpoint(
+                MagicMock(),
+                (0.0, 0.0, -17.0),
+                (1.0, 0.0, 0.0),
+                1,
+                yaw_rad=0.0,
+                q_act=from_rpy(0.0, 0.0, 0.0),
+                dt=0.05,
+                in_view=True,
+                range_m=200.0,
+                dir_body=dir_body,
+                vx=18.0,
+                vy=0.0,
+            )
+        self.assertEqual(ctl.last_law, "los")
+        want = chase_speed_mps(
+            0.0,
+            cruise_mps=plant.speed_mps,
+            approach_mps=plant.approach_speed_mps,
+            slow_range_m=plant.slow_range_m,
+            heading_err_rad=0.0,
+            elev_rad=el,
+        )
+        ned_v = chase_speed_mps(
+            200.0,
+            cruise_mps=plant.speed_mps,
+            approach_mps=plant.approach_speed_mps,
+            slow_range_m=plant.slow_range_m,
+            heading_err_rad=0.0,
+            elev_rad=el,
+        )
+        self.assertAlmostEqual(ctl.last_speed_mps or 0.0, want, places=2)
+        self.assertNotAlmostEqual(want, ned_v, places=2)
+
+    def test_path_hold_speed_still_uses_ned_range(self) -> None:
+        """Off-view search still blends on caller range_m."""
+        from fw_sitl.attitude_pid import chase_speed_mps
+
+        ctl = self._build(speed=18.0)
+        plant = load_plant_gains("jsbsim_rascal", controller="race_quat")
+        with patch(
+            "fw_sitl.controllers.race_quat.send_attitude_target", create=True
+        ):
+            ctl.send_chase_setpoint(
+                MagicMock(),
+                (0.0, 0.0, -17.0),
+                (1.0, 0.0, 0.0),
+                1,
+                yaw_rad=0.0,
+                q_act=from_rpy(0.0, 0.0, 0.0),
+                dt=0.05,
+                in_view=False,
+                z_target=-17.0,
+                range_m=200.0,
+                vx=18.0,
+                vy=0.0,
+            )
+        self.assertEqual(ctl.last_law, "path")
+        want = chase_speed_mps(
+            200.0,
+            cruise_mps=plant.speed_mps,
+            approach_mps=plant.approach_speed_mps,
+            slow_range_m=plant.slow_range_m,
+            heading_err_rad=0.0,
+            elev_rad=0.0,
+        )
+        self.assertAlmostEqual(ctl.last_speed_mps or 0.0, want, places=2)
+
+    def _send_in_view(
+        self,
+        ctl,
+        *,
+        dir_body: tuple[float, float, float],
+        area_px: float = 0.0,
+        dt: float = 0.05,
+        repeat: int = 1,
+    ):
+        from unittest.mock import MagicMock, patch
+
+        send = None
+        with patch(
+            "fw_sitl.controllers.race_quat.send_attitude_target", create=True
+        ) as send:
+            for _ in range(int(repeat)):
+                ctl.send_chase_setpoint(
+                    MagicMock(),
+                    (0.0, 0.0, -17.0),
+                    (1.0, 0.0, 0.0),
+                    1,
+                    yaw_rad=0.0,
+                    q_act=from_rpy(0.0, 0.0, 0.0),
+                    dt=dt,
+                    in_view=True,
+                    dir_body=dir_body,
+                    area_px=area_px,
+                    vx=18.0,
+                    vy=0.0,
+                    groundspeed=18.0,
+                )
+        return send
+
+    def test_bang_homing_saturates_pitch_on_steep_blob(self) -> None:
+        """Principal: command ±pitch lim, not 1:1 look-at, while blob is off boresight."""
+        from fw_sitl.controllers.race_quat import RaceQuatController
+
+        ctl = self._build(speed=18.0)
+        self.assertIsInstance(ctl, RaceQuatController)
+        ctl.homing_law = "bang"
+        el = math.radians(-8.0)
+        dir_body = (math.cos(el), 0.0, -math.sin(el))
+        send = self._send_in_view(ctl, dir_body=dir_body)
+        _master, _roll, pitch, _yaw, _thrust = send.call_args[0]
+        self.assertLess(pitch, math.radians(-18.0))
+
+    def test_area_slow_homing_cuts_speed_when_blob_grows(self) -> None:
+        """Principal: camera area_px is the only close-in range proxy."""
+        ctl_far = self._build(speed=18.0)
+        ctl_near = self._build(speed=18.0)
+        ctl_far.homing_law = "area_slow"
+        ctl_near.homing_law = "area_slow"
+        dir_body = (1.0, 0.0, 0.0)
+        self._send_in_view(ctl_far, dir_body=dir_body, area_px=10.0)
+        self._send_in_view(ctl_near, dir_body=dir_body, area_px=2000.0)
+        self.assertGreater(ctl_far.last_speed_mps or 0.0, ctl_near.last_speed_mps or 0.0)
+        self.assertLess(ctl_near.last_speed_mps or 0.0, 0.85 * (ctl_far.last_speed_mps or 1.0))
+
+    def test_fpa_thrust_homing_adds_climb_thrust(self) -> None:
+        """Principal: extra thrust so FPA can follow a climb LOS (GZ B1 pitch lag)."""
+        ctl_look = self._build(speed=18.0)
+        ctl_fpa = self._build(speed=18.0)
+        ctl_look.homing_law = "lookat"
+        ctl_fpa.homing_law = "fpa_thrust"
+        el = math.radians(15.0)
+        dir_body = (math.cos(el), 0.0, -math.sin(el))
+        self._send_in_view(ctl_look, dir_body=dir_body)
+        self._send_in_view(ctl_fpa, dir_body=dir_body)
+        self.assertGreater(ctl_fpa.last_thrust or 0.0, ctl_look.last_thrust or 0.0)
+
+    def test_el_first_homing_holds_wings_level_on_steep_el(self) -> None:
+        """Principal: close camera elevation before banking onto azimuth."""
+        ctl = self._build()
+        ctl.homing_law = "el_first"
+        az = 0.40
+        el = math.radians(-15.0)
+        dir_body = (
+            math.cos(el) * math.cos(az),
+            math.cos(el) * math.sin(az),
+            -math.sin(el),
+        )
+        send = self._send_in_view(ctl, dir_body=dir_body)
+        _master, roll, pitch, _yaw, _thrust = send.call_args[0]
+        self.assertLess(abs(roll), math.radians(2.0))
+        self.assertLess(pitch, math.radians(-8.0))
 
 
 class TestMakeBodyCmdControllerControllerArg(unittest.TestCase):

@@ -7,8 +7,8 @@ PX4 fixed-wing SITL testbed for OFFBOARD guidance. Primary workload is a **ballo
 
 Control stack (outer → inner):
 
-1. **Guidance** — `race_guidance` + balloon pass logic; `flightSetup.json` selects plant, duration, `cmd_mode`, controller.
-2. **Chase controllers** (`fw_sitl/controllers/`) — registry: `pure_pursuit_quat` (PP `a_des`→attitude→governor), `race_quat` (quaternion LOS `q_des_from_los`), `race_euler` (same LOS; in-view keeps cascade I-state under `cmd_mode=attitude`). In-view `race_*` speed/thrust follow LOS elevation (`range·sin(el)`), not balloon Z.
+1. **Guidance** — `race_guidance` + balloon pass logic; `flightSetup.json` selects plant, duration, `cmd_mode`, controller, `homing_law`. A pass is enter 3D `pass_radius_m` then recede 2 m (`PASS_THROUGH_HYST_M`); `|cam_el| > 12°` keeps homing. `race_*` look-at/homing is HSV `dir_cam` only; off-blob is path-hold at current altitude plus bank onto geometric bearing.
+2. **Chase controllers** (`fw_sitl/controllers/`) — registry: `pure_pursuit_quat` (PP `a_des`→attitude→governor), `race_quat` (quaternion LOS `q_des_from_los`), `race_euler` (same LOS; in-view keeps cascade I-state under `cmd_mode=attitude`). In-view `race_*` speed/altitude follow camera LOS elevation only (`CAM_LOS_ALT_PROXY_M=80` × sin(el); no NED range). Off-blob search still uses caller range. In-view seeker is `guidance.homing_law` / `FW_HOMING_LAW` (see Config). Path-hold freezes z at search start; HSV drop reseeds z from the last camera proxy.
 3. **Attitude cascade** — `px4_att_cascade` (Euler PID → `q_cmd` / body rates). `cmd_mode=attitude` packs quat|euler; `rates` sends body rates from φ̇θ̇ψ̇; `velocity` is locked-line TECS path setpoints.
 4. **Plant gains** — `platforms/<family>/{plant_id}.jsonc` → `load_plant_gains(plant_id, controller=…)`; shared top-level + `controllers.*` blocks; PX4 `FW_*` overlay at arm.
 5. **PX4 SITL** — OFFBOARD over MAVLink; optional mavlink-server fan-out.
@@ -66,18 +66,33 @@ Straight flight: `run_straight_flight_{jsbsim,yasim,gz}.py`.
 - `sim.platform` — `jsbsim`\|`viz`\|`yasim`\|`gz`; `sim.gz_model`; `sim.duration_s` (`0` = no limit; CLI `--duration` overrides).
 - `camera` — FOV, mount `azimuth_deg`/`elevation_deg`, resolution, FG window pattern.
 - `guidance.controller` — `pure_pursuit_quat`\|`race_quat`\|`race_euler`.
+- `guidance.homing_law` — in-view HSV seeker (`race_*` only). `FW_HOMING_LAW` overrides JSON when set. Parser default `lookat`; shipped JSON `bias`. Pitch still ±20°.
+
+| `homing_law` | What it does |
+|--------------|----------------|
+| `lookat` | Point body +X at the blob. |
+| `pd_lead` | Look-at plus PD lead on az/el rates (`kd=0.35 s`). |
+| `pn` | Rate-only PNG (`N=4`); ignores boresight. Misses balloon 0 in GZ. |
+| `bias` | Look-at plus same-sign **12°** elev intercept; slow on steep el. Best B3 (~8 m). |
+| `el_first` | Wings-level, pitch-only until abs(el) > 8°. |
+| `bang` | Saturate ±20° pitch when abs(el) > 3°. Tightest B0/B1. |
+| `area_slow` | Look-at; speed from blob `area_px` (ref 400 px). |
+| `fpa_thrust` | Look-at plus thrust ∝ `sin(el)` (gain 0.35). |
+| `filter` | LPF `dir_cam` (`τ=0.25 s`) then look-at. |
+| `apn` | PN plus +5° nose-up. Misses balloon 0 in GZ. |
+
 - `guidance.cmd_mode` — `velocity`\|`attitude`\|`rates`; `attitude_format` quat\|euler (meaningful for `attitude`).
 - `guidance.laps` — `0` = cycle until duration; `N>0` = end after N circuits.
 - `verification.*` — offline parity thresholds for `compare_balloon_runs.py`.
 
 **Plant JSONC** — `python/fw_sitl/platforms/<family>/{plant_id}.jsonc`. Family from plant-id prefix (`jsbsim_`, `yasim_`, `gz_`, `xplane_`). Top-level: airspeeds, lookahead, `px4_inner`. Per-controller outer gains under `controllers.<id>`; PP-only aero/governor keys may be inherited by `race_*` from sibling `pure_pursuit_quat`.
 
-Code defaults for missing keys: controller `pure_pursuit_quat`. Check the checked-in `flightSetup.json` for the active race defaults (may differ).
+Code defaults for missing keys: controller `pure_pursuit_quat`, homing_law `lookat`. Check the checked-in `flightSetup.json` for the active race defaults (may differ).
 
 ## Frames
 
 - **NED** — balloons, spawn, chase targets, CSV/plots (`+z` down; race balloons at local `z≈0` cruise).
-- **Body FRD** — in-view homing closes LOS vs body +X (camera→body via mount; else NED→body by attitude).
+- **Body FRD** — in-view homing closes camera LOS vs body +X (HSV `dir_cam` → mount). Off-blob search uses path-hold, not geometric elevation.
 - **Camera** — OpenCV optical (+Z boresight); mount azimuth+/elevation+ vs body FRD (`camera_model.py`).
 - **`--viz`/`--yasim`** — PX4 EKF dead-reckons and drifts; guidance rebases from FG telnet GT (`--ekf-fix gps` disabled / exit 2).
 - **`--gz`** — race NED = EKF − constant origin bias locked from first good mesh pose (ZMQ pose stream, not per-tick `docker exec` poll).
@@ -109,7 +124,7 @@ Full `unittest discover` blocks on race-plot `plt.show(block=True)`. Calibration
 
 ## Known limits
 
-- `race_euler` + `px4_att_cascade`: GZ live e2e `222435` 3D miss **9.32 / 9.52 / 20.06 m** (balloon 3 ΔD −20 m, never dived); did **not** beat `165855` 9.7/9.5/9.8 m. `run_race_euler_e2e.sh` gates 3 passes inside 10 m and currently **fails**. Load-pitch on down-LOS is skipped in shared `q_des_from_los` (all `race_quat`/`race_euler` plants); JSBSim/YASim dives unflown since.
+- `race_euler` + `px4_att_cascade`: GZ `./run_balloon_race.sh --gz` with `FW_HOMING_LAW=bias` hits balloon 0/1 at **&lt;2 m** 3D; balloon 3 stays **~8.5 m high** (20° pitch cap; HSV drops at cam_el≈−32°). Ten-law sweep: `bias`/`bang` best; `pn`/`apn` miss balloon 0. Closest three-pass balance (`012817` 12° bias + area-slow): **5.92 / 5.39 / 5.88 m**, just outside 5 m. Load-pitch on down-LOS is skipped in shared `q_des_from_los`.
 - X-Plane plant is residual (code/tests present; race menu disabled).
 - FG/YASim: EKF is not ground truth — always use GT rebase for chase/plots.
 - OpenCV ≥5 (some conda envs) blacks out `balloon_camera`; race launcher prefers an `opencv-python<5` env when needed.

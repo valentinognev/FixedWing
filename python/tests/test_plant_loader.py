@@ -95,10 +95,12 @@ class TestPlantGainsFromDict(unittest.TestCase):
         self.assertNotIn("kp_elev", flat)
         self.assertNotIn("los_roll_slew_rad_s", flat)
         self.assertNotIn("los_roll_lpf_tau_s", flat)
+        self.assertNotIn("los_el_bank_atten", flat)
         p = plant_gains_from_dict(flat)
         self.assertAlmostEqual(p.kp_elev, 1.0)
         self.assertAlmostEqual(p.los_roll_slew_rad_s, math.radians(30.0))
         self.assertAlmostEqual(p.los_roll_lpf_tau_s, 0.20)
+        self.assertAlmostEqual(p.los_el_bank_atten, 0.0)
 
     def test_explicit_kp_elev_and_los_roll_override_defaults(self) -> None:
         flat = merge_plant_controller(self._nested(), "race_quat")

@@ -372,7 +372,7 @@ class TestChaseSpeedMps(unittest.TestCase):
         self.assertLess(steep, flat)
 
     def test_dive_slows_more_than_climb_at_same_elev(self) -> None:
-        """Climbing LOS keeps more energy; a dive can bleed speed."""
+        """Climb and dive use the same elevation blend (no 0.65 climb discount)."""
         climb = chase_speed_mps(
             90.0,
             cruise_mps=18.0,
@@ -389,7 +389,14 @@ class TestChaseSpeedMps(unittest.TestCase):
             heading_err_rad=0.0,
             elev_rad=math.radians(-20.0),
         )
-        self.assertLess(dive, climb)
+        self.assertAlmostEqual(dive, climb, places=5)
+
+    def test_chase_speed_slows_climb_as_much_as_dive(self) -> None:
+        v_up = chase_speed_mps(80.0, cruise_mps=16.0, approach_mps=8.0, slow_range_m=220.0, elev_rad=math.radians(20.0))
+        v_dn = chase_speed_mps(80.0, cruise_mps=16.0, approach_mps=8.0, slow_range_m=220.0, elev_rad=math.radians(-20.0))
+        self.assertAlmostEqual(v_up, v_dn, places=5)
+        v_level = chase_speed_mps(80.0, cruise_mps=16.0, approach_mps=8.0, slow_range_m=220.0, elev_rad=0.0)
+        self.assertLess(v_up, v_level)
 
 
 if __name__ == "__main__":

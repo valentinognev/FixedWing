@@ -18,6 +18,19 @@ from fw_sitl.race_csv import RaceCsvLogger
 from fw_sitl.race_guidance import RaceGuidance, race_end_reason
 
 
+def _pass_through(race: RaceGuidance) -> bool:
+    """Enter the pass sphere then recede so through-center hysteresis fires."""
+    balloon = race.balloon_ned()
+    race.check_pass(
+        (balloon[0], balloon[1], balloon[2]),
+        approach_dir_ned=(1.0, 0.0, 0.0),
+    )
+    return race.check_pass(
+        (balloon[0], balloon[1] + 2.5, balloon[2]),
+        approach_dir_ned=(1.0, 0.0, 0.0),
+    )
+
+
 def _race(n: int = 3, laps: int = 1) -> RaceGuidance:
     balloons = tuple(
         BalloonSpec(
@@ -116,11 +129,7 @@ class TestLapCounting(unittest.TestCase):
         race = _race(n=3, laps=1)
         for i in range(3):
             self.assertEqual(race.laps_completed, 0)
-            balloon = race.balloon_ned()
-            passed = race.check_pass(
-                (balloon[0], balloon[1], balloon[2]),
-                approach_dir_ned=(1.0, 0.0, 0.0),
-            )
+            passed = _pass_through(race)
             self.assertTrue(passed)
             self.assertEqual(race.last_passed_idx, i)
         self.assertEqual(race.target_idx, 0)
@@ -139,24 +148,14 @@ class TestLapCounting(unittest.TestCase):
     def test_two_laps_need_six_passes(self) -> None:
         race = _race(n=3, laps=2)
         for _ in range(6):
-            balloon = race.balloon_ned()
-            race.check_pass(
-                (balloon[0], balloon[1], balloon[2]),
-                approach_dir_ned=(1.0, 0.0, 0.0),
-            )
+            _pass_through(race)
         self.assertEqual(race.laps_completed, 2)
         self.assertEqual(race.pass_count, 6)
 
     def test_laps_zero_wrap_keeps_targeting_red(self) -> None:
         race = _race(n=3, laps=0)
         for i in range(3):
-            balloon = race.balloon_ned()
-            self.assertTrue(
-                race.check_pass(
-                    (balloon[0], balloon[1], balloon[2]),
-                    approach_dir_ned=(1.0, 0.0, 0.0),
-                )
-            )
+            self.assertTrue(_pass_through(race))
             self.assertEqual(race.last_passed_idx, i)
         self.assertEqual(race.target_idx, 0)
         self.assertEqual(race.laps_completed, 1)

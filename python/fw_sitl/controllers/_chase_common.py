@@ -24,8 +24,8 @@ def chase_dir_body(
 ) -> tuple[float, float, float]:
     """In-view homing LOS in body FRD.
 
-    Prefer ``dir_body`` (camera→body via mount az/el). Otherwise rotate
-    NED LOS by ``q_act`` so geometric chase uses the same body look-at law.
+    Prefer ``dir_body`` (camera→body via mount az/el). Geometric NED is
+    not a homing source — callers pass ``dir_body`` only from HSV ``dir_cam``.
     """
     if dir_body is not None:
         return (
@@ -42,6 +42,13 @@ def _los_elev_rad(dir_body: tuple[float, float, float]) -> float:
     dx, dy, dz = (float(dir_body[0]), float(dir_body[1]), float(dir_body[2]))
     horiz = math.hypot(dx, dy)
     return math.atan2(-dz, horiz)
+
+
+def speed_range_from_los_el(los_el: float, slow_range_m: float) -> float:
+    """Synthetic range for in-view speed: steep blob → 0 (approach), level → slow_range (cruise)."""
+    return float(slow_range_m) * (
+        1.0 - min(1.0, abs(float(los_el)) / math.radians(20.0))
+    )
 
 
 def _commanded_chase_speed(

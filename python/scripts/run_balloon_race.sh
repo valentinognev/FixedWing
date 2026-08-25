@@ -303,7 +303,7 @@ esac
 GZ_MODEL="${RESOLVED_GZ_MODEL}"
 DURATION="${RESOLVED_DURATION}"
 
-echo "Race sim: platform=${RESOLVED_PLATFORM} gz_model=${GZ_MODEL} duration_s=${DURATION}"
+echo "Race sim: platform=${RESOLVED_PLATFORM} gz_model=${GZ_MODEL} duration_s=${DURATION} homing_law=${FW_HOMING_LAW:-<flightSetup.json>}"
 
 RACE_CSV="${BALLOON_RACE_CSV:-/tmp/balloon_race_$(date +%Y%m%d_%H%M%S).csv}"
 
@@ -345,6 +345,9 @@ if [[ "${BALLOON_CAMERA_NO_DISPLAY:-0}" == "1" ]]; then
   CAM_CMD+=" --no-display"
 fi
 CTL_CMD="DISPLAY=${DISPLAY:-:0} MPLBACKEND=${MPLBACKEND:-Agg} PYTHONUNBUFFERED=1 ${PYTHON} -u ${PYTHON_ROOT}/run_balloon_control.py --setup ${SETUP} --udp ${MAVLINK_CONTROL_PORT}"
+if [[ -n "${FW_HOMING_LAW:-}" ]]; then
+  CTL_CMD="FW_HOMING_LAW=${FW_HOMING_LAW} ${CTL_CMD}"
+fi
 if [[ "${NO_PLOT}" -eq 1 ]]; then
   CTL_CMD+=" --no-plot"
 fi

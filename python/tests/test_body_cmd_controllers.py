@@ -983,6 +983,16 @@ class TestMakeBodyCmdController(unittest.TestCase):
         self.assertIsInstance(ctrl, RaceQuatController)
         self.assertNotIsInstance(ctrl, RateChaseController)
 
+    def test_homing_law_forwarded_to_race_controller(self) -> None:
+        ctrl = make_body_cmd_controller(
+            "attitude",
+            lookahead_m=500.0,
+            speed_mps=30.0,
+            controller="race_euler",
+            homing_law="bias",
+        )
+        self.assertEqual(ctrl.homing_law, "bias")
+
     def test_unknown_mode_raises(self) -> None:
         with self.assertRaises(ValueError):
             make_body_cmd_controller("bogus", lookahead_m=500.0, speed_mps=30.0)

@@ -1,5 +1,35 @@
 # Updates
 
+## 0.62.0 - Homing laws in flightSetup.json
+- `guidance.homing_law` in `flightSetup.json` (JSONC comments for all 10 options). Parser default `lookat`; shipped value `bias`. `FW_HOMING_LAW` overrides JSON only when set (launcher no longer forces `bias`).
+- Wired through `make_body_cmd_controller` / `build_controller` for `race_quat`/`race_euler` only.
+
+## 0.61.0 - Ten camera homing principals; path z-freeze
+- `fw_sitl/controllers/cam_homing.py`: 10 in-view HSV principals (`lookat` `pd_lead` `pn` `bias` `el_first` `bang` `area_slow` `fpa_thrust` `filter` `apn`). `FW_HOMING_LAW` (launcher default `bias`, 12° elev intercept + slow on steep el). Tracker `area_px` is wired. No balloon NED range while in view.
+- Path-hold freezes `z_hold` at search start (GZ `003837` slid z 57→212 m before lock). HSV drop reseeds from last camera proxy, not `pos_z`.
+- Live GZ `./run_balloon_race.sh --gz` 10-law sweep: B0/B1 **&lt;2 m** on `lookat`/`pd_lead`/`bias`/`bang`/`el_first`/`fpa_thrust`/`filter`; B3 **8.4 m** best (`bias` `005338`) / **9.3 m** (`bang`) / **11–18 m** others. `pn`/`apn` never passed balloon 0. 12° `bias` `013130`: **0.54 / 0.88 / 8.59 m**. 12°+area-slow `012817`: **5.92 / 5.39 / 5.88 m** (B3 best; B0/B1 sag). Still not 3× ≤5 m. Pitch stays ±20°.
+
+## 0.60.0 - E2E gate 5 m 3D and |ΔD|
+- `assert_race_euler_csv_ok`: after 3D, first `min_passes` must also have `|pos_d − tgt_d| ≤ max_miss_m`. Default `max_miss_m=5.0` (was 10) on the assert and on `run_race_euler_platform_e2e`.
+
+## 0.59.0 - Camera-only in-view speed and altitude
+- In-view `race_*` ignore NED `range_m` for z_hold and speed. `z_hold = pos_z − CAM_LOS_ALT_PROXY_M(80) × sin(los_el)` (`los_el` +up). Speed uses synthetic range `slow_range_m × (1 − min(1, |el|/20°))` then `chase_speed_mps`.
+- Removed climb `el_frac *= 0.65`; climb and dive slow the same.
+- GZ `race_euler` only: `approach_speed_mps` 8.0, `slow_range_m` 280, `kp_elev` 1.5. `race_quat` on that plant unchanged.
+- Off-view path-hold still uses caller `range_m`.
+
+## 0.58.0 - Through-center pass + camera-el inhibit
+- `check_pass` no longer advances on first `dist ≤ pass_radius_m` (sphere surface). Enter the sphere, then recede `PASS_THROUGH_HYST_M` (2 m) from closest 3D range. `|cam_el| > 12°` (`PASS_CAM_EL_RAD`) keeps homing so a still-diving/climbing blob is not retargeted (GZ 223958 B2). `cam_el_rad=None` does not inhibit.
+- `last_closest_ned` is the closest approach of the balloon just passed; CSV `pos_ned` uses that (else plane NED).
+- Did not restore 4× fly-by / horizontal gate. 0.57.0 HSV `dir_cam` look-at unchanged.
+
+## 0.57.0 - Camera-tracker homing; pass is 3D sphere only
+- `chase_uses_lookat` is True only when HSV has `dir_cam`. Geometric NED is search (path-hold current z + bank onto bearing), not pitch homing. GZ `222435` after balloon 1 commanded +20° pitch with no blob.
+- `check_pass` advances only when 3D range ≤ `pass_radius_m`. Dropped 4× closest-approach and horizontal-gate fly-bys (balloon 3 counted as a pass 20 m high).
+- `run_balloon_control`: `z_target=pos[2]` off-blob; `dir_body` from camera only.
+- Race length 60→120 s (`flightSetup.json` + `run_race_euler_e2e.sh`) so a missed first intercept can turn around.
+- Live GZ `223958`: 3 passes at 75.0 / 88.0 / 100.7 s, 3D **9.83 / 9.61 / 9.71 m** (balloon 3 ΔD −7.5 m, HSV lock). Beat `222435` balloon 3 (20.06 m). Still outside the &lt;5 m center-through target. CSV `python/logs/e2e/race_euler_gz_20260824_223958.csv`.
+
 ## 0.56.0 - GZ race_euler live e2e (production course)
 - `write_race_euler_e2e_setup` / `run_race_euler_platform_e2e`: same 500/200/10 m course as `flightSetup.json`; `cmd_mode=attitude` euler; ≥3 passes; each 3D miss ≤10 m. Opt-in `FW_SITL_E2E=1 ./python/scripts/run_race_euler_e2e.sh`.
 - Live GZ Cessna `222435`: software passes at 36.6 / 50.4 / 64.6 s, 3D **9.32 / 9.52 / 20.06 m** (ΔD −2.4 / −0.6 / −20.0). Balloon 3 XY ~1 m, 20 m high. Gate failed on balloon 3. CSV `python/logs/e2e/race_euler_gz_20260824_222435.csv`. Did not beat `165855`.

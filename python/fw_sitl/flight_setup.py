@@ -39,6 +39,24 @@ DEFAULT_CMD_MODE = "velocity"
 DEFAULT_ATTITUDE_FORMAT = "euler"
 # Chase attitude law selected via guidance.controller (plant JSONC controllers.*).
 DEFAULT_CONTROLLER = "pure_pursuit_quat"
+# In-view HSV seeker principal (guidance.homing_law). FW_HOMING_LAW overrides.
+# Keep names in sync with fw_sitl.controllers.cam_homing.KNOWN_HOMING_LAWS.
+DEFAULT_HOMING_LAW = "lookat"
+KNOWN_HOMING_LAWS = frozenset(
+    {
+        "lookat",
+        "pd_lead",
+        "pn",
+        "bias",
+        "el_first",
+        "bang",
+        "area_slow",
+        "fpa_thrust",
+        "filter",
+        "apn",
+    }
+)
+
 # During large heading error, hold altitude instead of chasing aim Z (level turn).
 DEFAULT_ALT_PRESERVE_HEADING_ERR_DEG = 20.0
 DEFAULT_BALLOON_DIAMETER_M = 10.0
@@ -139,6 +157,9 @@ class GuidanceSpec:
     attitude_format: str = DEFAULT_ATTITUDE_FORMAT
     # Attitude chase law id (race_quat | pure_pursuit_quat | race_euler).
     controller: str = DEFAULT_CONTROLLER
+    # In-view camera seeker (lookat | pd_lead | pn | bias | el_first | bang |
+    # area_slow | fpa_thrust | filter | apn). HSV dir_cam only.
+    homing_law: str = DEFAULT_HOMING_LAW
     # |course−yaw| ≥ this (deg) → z_hold = current altitude during the turn.
     alt_preserve_heading_err_deg: float = DEFAULT_ALT_PRESERVE_HEADING_ERR_DEG
 
@@ -353,6 +374,9 @@ def _parse_guidance(raw: Any) -> GuidanceSpec:
     controller = _as_str(
         data.get("controller", DEFAULT_CONTROLLER), "guidance.controller"
     ).strip()
+    homing_law = _as_str(
+        data.get("homing_law", DEFAULT_HOMING_LAW), "guidance.homing_law"
+    ).strip().lower()
     alt_preserve_err_deg = _as_float(
         data.get(
             "alt_preserve_heading_err_deg", DEFAULT_ALT_PRESERVE_HEADING_ERR_DEG
@@ -392,6 +416,12 @@ def _parse_guidance(raw: Any) -> GuidanceSpec:
             + "|".join(sorted(KNOWN_CONTROLLER_IDS))
             + f", got {controller!r}"
         )
+    if homing_law not in KNOWN_HOMING_LAWS:
+        raise ValueError(
+            "guidance.homing_law must be one of "
+            + "|".join(sorted(KNOWN_HOMING_LAWS))
+            + f", got {homing_law!r}"
+        )
     if alt_preserve_err_deg < 0.0:
         raise ValueError("guidance.alt_preserve_heading_err_deg must be >= 0")
     return GuidanceSpec(
@@ -406,6 +436,7 @@ def _parse_guidance(raw: Any) -> GuidanceSpec:
         cmd_mode=cmd_mode,
         attitude_format=attitude_format,
         controller=controller,
+        homing_law=homing_law,
         alt_preserve_heading_err_deg=alt_preserve_err_deg,
     )
 

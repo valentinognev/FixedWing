@@ -57,6 +57,7 @@ _ALLOWED_ROOT_KEYS = _TOP_LEVEL_KEYS | frozenset({"controllers"})
 
 _OPTIONAL_PLANT_DEFAULTS = {
     "kp_elev": 1.0,
+    "los_el_bank_atten": 0.0,
     "los_roll_slew_rad_s": math.radians(30.0),
     "los_roll_lpf_tau_s": 0.20,
 }

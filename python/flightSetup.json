@@ -21,7 +21,7 @@
     // only used when platform=gz (or CLI --gz): rc_cessna | advanced_plane
     "gz_model": "rc_cessna",
     // 0 = no time limit; >0 = stop after that many seconds (CLI --duration overrides)
-    "duration_s": 60
+    "duration_s": 120
   },
   "camera": {
     "hfov_deg": 90, "vfov_deg": 70,
@@ -59,6 +59,19 @@
     // both (send_attitude_rates always uses cascade_out.body_rates: des vs act /
     // roll_tc,pitch_tc — never q_cmd or I-state).
     "controller": "race_euler",
+    // In-view HSV seeker (race_quat / race_euler). Camera dir_cam only; no balloon NED range.
+    // FW_HOMING_LAW env overrides this key when set. Pitch still clipped to ±20°.
+    //    lookat     = point body +X at the blob (pure camera look-at)
+    //    pd_lead    = look-at plus PD lead on az/el rates (kd = 0.35 s)
+    //    pn         = rate-only proportional navigation (N=4); ignores boresight
+    //    bias       = look-at plus same-sign 12° elev intercept; slow on steep el (GZ default)
+    //    el_first   = wings-level, pitch-only until |el| > 8°, then look-at
+    //    bang       = saturate ±20° pitch when |el| > 3°; else hold level pitch
+    //    area_slow  = look-at; commanded speed scales with blob area_px (ref 400 px)
+    //    fpa_thrust = look-at plus thrust bias ∝ sin(el) (gain 0.35)
+    //    filter     = LPF dir_cam (τ = 0.25 s) then look-at
+    //    apn        = pn plus +5° nose-up (gravity bias)
+    "homing_law": "bias",
     "alt_preserve_heading_err_deg": 20
   },
   "verification": {

@@ -35,6 +35,7 @@ def build_controller(
     cascade: Px4FwAttCascade | None = None,
     cmd_mode: str = "attitude",
     attitude_format: str = DEFAULT_ATTITUDE_FORMAT,
+    homing_law: str | None = None,
 ) -> Any:
     """Construct a chase attitude controller by registry name."""
     key = str(name).strip()
@@ -44,15 +45,18 @@ def build_controller(
             f"unknown controller {name!r}; expected one of: {known}"
         )
     cls = CONTROLLER_REGISTRY[key]
-    return cls(
-        bridge,
-        speed_mps=speed_mps,
-        plant=plant,
-        pid=pid,
-        cascade=cascade,
-        cmd_mode=cmd_mode,
-        attitude_format=attitude_format,
-    )
+    kwargs: dict[str, Any] = {
+        "speed_mps": speed_mps,
+        "plant": plant,
+        "pid": pid,
+        "cascade": cascade,
+        "cmd_mode": cmd_mode,
+        "attitude_format": attitude_format,
+    }
+    # PP ctor has no homing_law; race_* apply the in-view HSV seeker.
+    if key in ("race_quat", "race_euler") and homing_law is not None:
+        kwargs["homing_law"] = homing_law
+    return cls(bridge, **kwargs)
 
 
 __all__ = [

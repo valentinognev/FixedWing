@@ -12,12 +12,14 @@ from fw_sitl.path_geometry import wrap_pi
 _G_MPS2 = 9.81
 
 ASSISTED_OVERLAY_TEXT = "assisted guidance"
-# After a lock, range rising by this much within 4× pass_radius counts as a fly-by.
-PASS_CLOSEST_HYST_M = 10.0
-PASS_MISS_MULT = 4.0
 # Hold last HSV LOS briefly when the blob flickers off (pickle 122330: ~100 ms
 # cam_az nan↔finite flipped roll ±max).
 VISUAL_HOLD_S = 0.35
+# Recede this far past the closest 3D range after entering the pass sphere
+# before counting a through-center pass (first dist≤radius is the surface).
+PASS_THROUGH_HYST_M = 2.0
+# While |cam_el| exceeds this, keep homing (223958 B2 was −20° at retarget).
+PASS_CAM_EL_RAD = math.radians(12.0)
 
 
 def format_ned_pos_line(
@@ -49,13 +51,15 @@ def show_assisted_overlay(*, assisted: bool, in_view: bool) -> bool:
 
 
 def chase_uses_lookat(*, tracker_in_view: bool, on_screen: bool) -> bool:
-    """Bank onto chase LOS whenever we have a target (blob or geometric).
+    """LOS look-at only when HSV has ``dir_cam``.
 
-    Off-screen used to freeze a path line. If engage already passed the
-    balloon, that line never puts the blob in the camera. Always close the
-    LOS angle; tracker dir still preferred at the call site when in view.
+    Geometric NED rotated by attitude is search (path-hold + bank onto
+    bearing), not homing. Banked geometric elevation flipped sign after
+    GZ 222435 balloon-1 pass and commanded +20° pitch while 40 m high.
+    ``on_screen`` is unused (kept so call sites stay stable).
     """
-    return True
+    _ = on_screen
+    return bool(tracker_in_view)
 
 
 def rebase_balloons_to_local_z(
@@ -145,13 +149,6 @@ def _normalize3(v: tuple[float, float, float]) -> tuple[float, float, float]:
     if n < 1e-9:
         return (1.0, 0.0, 0.0)
     return (v[0] / n, v[1] / n, v[2] / n)
-
-
-def _horizontal_unit(v: tuple[float, float, float]) -> tuple[float, float, float]:
-    n = math.hypot(v[0], v[1])
-    if n < 1e-9:
-        return (1.0, 0.0, 0.0)
-    return (v[0] / n, v[1] / n, 0.0)
 
 
 def coordinated_turn_radius_m(speed_mps: float, max_roll_rad: float) -> float:
@@ -268,10 +265,11 @@ class RaceGuidance:
     _last_track_time_s: float | None = None
     _last_assisted_print: float = field(default_factory=lambda: -1e9)
     _last_stale_warn: float = field(default_factory=lambda: -1e9)
-    _prev_gate_dot: float | None = None
-    _min_dist: float | None = None
-    _saw_in_view: bool = False
     _visual_hold_until_s: float = 0.0
+    _min_dist: float | None = None
+    _min_pos: tuple[float, float, float] | None = None
+    _inside_sphere: bool = False
+    last_closest_ned: tuple[float, float, float] | None = None
 
     @property
     def active_balloon(self) -> BalloonSpec:
@@ -385,7 +383,7 @@ class RaceGuidance:
                 return _los_to_balloon(pos_ned, nxt)
 
         # No camera track yet: geometric LOS to the *active* balloon (not hard-coded
-        # 0). After a radius/gate pass without ever receiving track, target_idx advances
+        # 0). After a radius pass without ever receiving track, target_idx advances
         # but we must chase the new balloon — balloon_ned(0) caused orbiting the old one.
         if not self._seen_track:
             return self._assisted_los(pos_ned, self.balloon_ned(), now)
@@ -420,48 +418,40 @@ class RaceGuidance:
         pos_ned: tuple[float, float, float],
         *,
         approach_dir_ned: tuple[float, float, float] | None = None,
+        cam_el_rad: float | None = None,
     ) -> bool:
-        """True if within pass_radius, closest-approach fly-by, or gate crossing.
+        """True after entering the pass sphere and receding by hysteresis.
 
-        ``approach_dir_ned`` must be ground track (velocity), not camera LOS:
-        LOS·(pos−balloon) is identically −range so a gate never fires.
+        First ``dist <= pass_radius_m`` is the surface. GZ 223958 B2 0.15 s
+        later was ΔD −0.5 m / 3D 6.2 m; retargeting while |cam_el| is large
+        aborts the dive/climb. ``cam_el_rad=None`` (no blob / omitted) does
+        not inhibit. Do not restore 4× fly-by / horizontal gate.
+        ``approach_dir_ned`` is kept for callers.
         """
+        _ = approach_dir_ned
         balloon = self.balloon_ned()
         dx = pos_ned[0] - balloon[0]
         dy = pos_ned[1] - balloon[1]
         dz = pos_ned[2] - balloon[2]
         dist = math.sqrt(dx * dx + dy * dy + dz * dz)
-        if self.last_in_view:
-            self._saw_in_view = True
         if self._min_dist is None or dist < self._min_dist:
             self._min_dist = dist
-        miss_lim = PASS_MISS_MULT * self.guidance.pass_radius_m
-        reason: str | None = None
+            self._min_pos = (float(pos_ned[0]), float(pos_ned[1]), float(pos_ned[2]))
+            self.last_closest_ned = self._min_pos
         if dist <= self.guidance.pass_radius_m:
-            reason = "radius"
-        elif (
-            self._saw_in_view
-            and self._min_dist is not None
-            and self._min_dist <= miss_lim
-            and dist >= self._min_dist + PASS_CLOSEST_HYST_M
-        ):
-            reason = "closest"
-        approach = approach_dir_ned or self.last_dir_ned
-        normal = _horizontal_unit(approach)
-        gate_dot = dx * normal[0] + dy * normal[1]
-        horiz = math.hypot(dx, dy)
-        near_gate = horiz <= miss_lim
+            self._inside_sphere = True
         if (
-            reason is None
-            and near_gate
-            and self._prev_gate_dot is not None
-            and self._prev_gate_dot < 0.0
-            and gate_dot >= 0.0
+            cam_el_rad is not None
+            and math.isfinite(cam_el_rad)
+            and abs(cam_el_rad) > PASS_CAM_EL_RAD
         ):
-            reason = "gate"
-        self._prev_gate_dot = gate_dot
-        if reason is not None:
-            self._advance_target(reason)
+            return False
+        if (
+            self._inside_sphere
+            and self._min_dist is not None
+            and dist >= self._min_dist + PASS_THROUGH_HYST_M
+        ):
+            self._advance_target("through")
             return True
         return False
 
@@ -474,11 +464,11 @@ class RaceGuidance:
         # Full cycle through all balloons (wrap last → 0) completes one lap.
         if self.target_idx == 0:
             self.laps_completed += 1
-        self._prev_gate_dot = None
-        self._min_dist = None
-        self._saw_in_view = False
         self.last_in_view = False
         self._visual_hold_until_s = 0.0
+        self._min_dist = None
+        self._min_pos = None
+        self._inside_sphere = False
         print(
             f"Passed balloon {old} ({reason}) → targeting balloon {self.target_idx} "
             f"color=RGB{self.active_color} "
