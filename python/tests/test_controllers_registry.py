@@ -603,6 +603,39 @@ class TestRaceQuatLos(unittest.TestCase):
         self.assertLess(abs(roll), math.radians(2.0))
         self.assertLess(pitch, math.radians(-8.0))
 
+    def test_pn_passes_pqr_and_airspeed_into_homing(self) -> None:
+        from fw_sitl.controllers.cam_homing import apply_homing_law as real
+
+        captured: list[tuple[object, object]] = []
+
+        def _cap(*args, **kwargs):
+            captured.append((kwargs.get("speed_mps"), kwargs.get("pqr")))
+            return real(*args, **kwargs)
+
+        ctl = self._build()
+        ctl.homing_law = "pn"
+        with patch(
+            "fw_sitl.controllers.race_quat.send_attitude_target", create=True
+        ), patch(
+            "fw_sitl.controllers.race_quat.apply_homing_law", side_effect=_cap
+        ):
+            ctl.send_chase_setpoint(
+                MagicMock(),
+                (0.0, 0.0, -10.0),
+                (1.0, 0.0, 0.0),
+                1,
+                yaw_rad=0.0,
+                q_act=from_rpy(0.0, 0.0, 0.0),
+                dt=0.05,
+                in_view=True,
+                dir_body=(1.0, 0.0, 0.0),
+                airspeed=18.0,
+                groundspeed=5.0,
+                pqr=(0.01, 0.02, 0.03),
+            )
+        self.assertEqual(captured[-1][0], 18.0)
+        self.assertEqual(captured[-1][1], (0.01, 0.02, 0.03))
+
 
 class TestMakeBodyCmdControllerControllerArg(unittest.TestCase):
     def test_attitude_factory_accepts_controller(self) -> None:

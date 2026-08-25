@@ -3,6 +3,7 @@
 ## 0.63.0 - Inertial seeker PN
 - `pn`/`apn` are classical seeker PN: λ̇_az/el = ε̇_body + (r, q), a = N V λ̇ (APN adds +g on el), θ = (a/V) τ. LPF on λ̇ (τ=0.15 s), |a|≤2g. Env: `FW_PN_N`, `FW_PN_TAU_S`, `FW_PN_LPF_TAU_S`, `FW_PN_A_MAX`.
 - `apply_homing_law(..., speed_mps, pqr)`. Default V=30 m/s if omitted; pqr=None → body rates 0 (no IMU cancel until callers pass ATTITUDE). Dropped `_APN_GRAVITY_EL_RAD`.
+- Wired `send_chase_setpoint(..., airspeed=history.last_airspeed, pqr=history.last_pqr)`. In-view `pn`/`apn` V is IAS else GS. Default `homing_law` unchanged.
 
 ## 0.62.0 - Homing laws in flightSetup.json
 - `guidance.homing_law` in `flightSetup.json` (JSONC comments for all 10 options). Parser default `lookat`; shipped value `bias`. `FW_HOMING_LAW` overrides JSON only when set (launcher no longer forces `bias`).

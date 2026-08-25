@@ -41,6 +41,8 @@ class ChaseController(Protocol):
         q_act: tuple[float, float, float, float] | None = None,
         dt: float = 0.05,
         groundspeed: float | None = None,
+        airspeed: float | None = None,
+        pqr: tuple[float, float, float] | None = None,
         heading_rad: float | None = None,
         in_view: bool = False,
         z_target: float | None = None,
@@ -82,6 +84,8 @@ class VelocityChaseController:
         q_act: tuple[float, float, float, float] | None = None,
         dt: float = 0.05,
         groundspeed: float | None = None,
+        airspeed: float | None = None,
+        pqr: tuple[float, float, float] | None = None,
         heading_rad: float | None = None,
         in_view: bool = False,
         z_target: float | None = None,
@@ -95,7 +99,7 @@ class VelocityChaseController:
         dir_body: tuple[float, float, float] | None = None,
         area_px: float = 0.0,
     ) -> tuple[float, float, float]:
-        _ = (in_view, z_target, vx, vy, vz, path_lock_token, visual_lock, q_exec, dir_body, area_px)
+        _ = (in_view, z_target, vx, vy, vz, path_lock_token, visual_lock, q_exec, dir_body, area_px, airspeed, pqr)
         course = math.atan2(float(dir_ned[1]), float(dir_ned[0]))
         yaw = float(yaw_rad) if yaw_rad is not None else course
         v_cmd = _commanded_chase_speed(
@@ -138,6 +142,8 @@ class RateChaseController:
         q_act: tuple[float, float, float, float] | None = None,
         dt: float = 0.05,
         groundspeed: float | None = None,
+        airspeed: float | None = None,
+        pqr: tuple[float, float, float] | None = None,
         heading_rad: float | None = None,
         in_view: bool = False,
         z_target: float | None = None,
@@ -151,6 +157,7 @@ class RateChaseController:
         dir_body: tuple[float, float, float] | None = None,
         area_px: float = 0.0,
     ) -> tuple[float, float, float]:
+        _ = (airspeed, pqr)
         raise NotImplementedError("rates body-cmd mode is not implemented")
 
 

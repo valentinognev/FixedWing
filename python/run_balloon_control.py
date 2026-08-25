@@ -1216,6 +1216,8 @@ def main() -> int:
                 q_act=from_rpy(*att) if gt_rebase_active else history.last_q,
                 dt=period,
                 groundspeed=chase_gs,
+                airspeed=history.last_airspeed,
+                pqr=history.last_pqr,
                 in_view=use_lookat,
                 z_target=None if use_lookat else pos[2],
                 vx=chase_vx,

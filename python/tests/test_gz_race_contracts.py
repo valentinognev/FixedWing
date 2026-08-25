@@ -102,6 +102,13 @@ class TestGzRaceContracts(unittest.TestCase):
         use_at = ctl.index("att = history.last_att_rad")
         self.assertGreater(use_at, poll_at)
         self.assertIn("in_view=use_lookat", ctl)
+        self.assertIn("pqr=history.last_pqr", ctl)
+        self.assertIn("airspeed=history.last_airspeed", ctl)
+        rq = (_PYTHON_ROOT / "fw_sitl" / "controllers" / "race_quat.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("speed_mps=", rq)
+        self.assertIn("pqr=pqr", rq)
         self.assertIn("last_closest_ned", ctl)
         self.assertIn("cam_el_rad", ctl)
         # Homing altitude comes from camera LOS. Off-blob path-hold keeps

@@ -151,6 +151,8 @@ class RaceQuatController:
         q_act: tuple[float, float, float, float] | None = None,
         dt: float = 0.05,
         groundspeed: float | None = None,
+        airspeed: float | None = None,
+        pqr: tuple[float, float, float] | None = None,
         heading_rad: float | None = None,
         in_view: bool = False,
         z_target: float | None = None,
@@ -187,12 +189,20 @@ class RaceQuatController:
             los_kw = dict(self._plant.los_kwargs()) if self._plant is not None else {}
             raw_los = chase_dir_body(dir_ned, q_act=q_act, dir_body=dir_body)
             los_el = _los_elev_rad(raw_los)
+            v_pn = airspeed
+            try:
+                if v_pn is None or not math.isfinite(float(v_pn)) or float(v_pn) <= 0.0:
+                    v_pn = groundspeed
+            except (TypeError, ValueError):
+                v_pn = groundspeed
             homing = apply_homing_law(
                 self.homing_law,
                 raw_los,
                 dt=dt,
                 state=self._cam_homing,
                 area_px=area_px,
+                speed_mps=v_pn,
+                pqr=pqr,
             )
             los_body = homing.los_body
             speed_scale = float(homing.speed_scale)
