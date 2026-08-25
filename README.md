@@ -72,14 +72,14 @@ Straight flight: `run_straight_flight_{jsbsim,yasim,gz}.py`.
 |--------------|----------------|
 | `lookat` | Point body +X at the blob. |
 | `pd_lead` | Look-at plus PD lead on az/el rates (`kd=0.35 s`). |
-| `pn` | Rate-only PNG (`N=4`); ignores boresight. Misses balloon 0 in GZ. |
+| `pn` | Seeker PN: inertial λ̇ = ε̇_body + (r, q), a = N V λ̇ (`N=4`, |a|≤2g, LPF τ=0.15 s), look-lead θ=(a/V)τ. Needs caller `speed_mps`/`pqr`. |
 | `bias` | Look-at plus same-sign **12°** elev intercept; slow on steep el. Best B3 (~8 m). |
 | `el_first` | Wings-level, pitch-only until abs(el) > 8°. |
 | `bang` | Saturate ±20° pitch when abs(el) > 3°. Tightest B0/B1. |
 | `area_slow` | Look-at; speed from blob `area_px` (ref 400 px). |
 | `fpa_thrust` | Look-at plus thrust ∝ `sin(el)` (gain 0.35). |
 | `filter` | LPF `dir_cam` (`τ=0.25 s`) then look-at. |
-| `apn` | PN plus +5° nose-up. Misses balloon 0 in GZ. |
+| `apn` | Same as `pn` plus +1 g on elev accel (not a fixed +5°). |
 
 - `guidance.cmd_mode` — `velocity`\|`attitude`\|`rates`; `attitude_format` quat\|euler (meaningful for `attitude`).
 - `guidance.laps` — `0` = cycle until duration; `N>0` = end after N circuits.

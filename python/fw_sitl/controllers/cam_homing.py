@@ -28,6 +28,12 @@ DEFAULT_HOMING_LAW = "lookat"
 ENV_HOMING_LAW = "FW_HOMING_LAW"
 
 _PN_NAV_RATIO = 4.0
+_G_MPS2 = 9.81
+_PN_TAU_S = 0.15
+_PN_LPF_TAU_S = 0.15
+_PN_A_MAX_MPS2 = 2.0 * _G_MPS2
+_PN_V_MIN_MPS = 1.0
+_PN_V_DEFAULT_MPS = 30.0
 _PD_KD_S = 0.35
 _BIAS_RAD = math.radians(12.0)
 _EL_FIRST_RAD = math.radians(8.0)
@@ -35,7 +41,6 @@ _BANG_DEADBAND_RAD = math.radians(3.0)
 _FILTER_TAU_S = 0.25
 _AREA_REF_PX = 400.0
 _FPA_THRUST_GAIN = 0.35
-_APN_GRAVITY_EL_RAD = math.radians(5.0)
 _MAX_EL_RAD = math.radians(20.0)
 
 
@@ -86,6 +91,8 @@ class CamHomingState:
     prev_el: float | None = None
     filt_az: float | None = None
     filt_el: float | None = None
+    filt_lam_az: float | None = None
+    filt_lam_el: float | None = None
     prev_area: float = 0.0
     az_dot: float = 0.0
     el_dot: float = 0.0
@@ -121,6 +128,72 @@ class CamHomingState:
         return az, el
 
 
+def _env_float(key: str, default: float) -> float:
+    raw = os.environ.get(key, "").strip()
+    if not raw:
+        return float(default)
+    try:
+        v = float(raw)
+    except ValueError:
+        return float(default)
+    return v if math.isfinite(v) else float(default)
+
+
+def _pn_speed(speed_mps: float | None) -> float:
+    if speed_mps is None:
+        return _PN_V_DEFAULT_MPS
+    try:
+        v = float(speed_mps)
+    except (TypeError, ValueError):
+        return _PN_V_DEFAULT_MPS
+    if not math.isfinite(v) or v <= 0.0:
+        return _PN_V_DEFAULT_MPS
+    return v
+
+
+def _lpf(prev: float | None, x: float, dt: float, tau: float) -> float:
+    if prev is None:
+        return float(x)
+    t = max(float(tau), 1e-3)
+    a = float(dt) / (t + float(dt))
+    return float(prev) + a * (float(x) - float(prev))
+
+
+def _pn_cmd(
+    state: CamHomingState,
+    *,
+    dt: float,
+    speed_mps: float | None,
+    pqr: tuple[float, float, float] | None,
+    gravity: bool,
+) -> tuple[float, float]:
+    p = q = r = 0.0
+    if pqr is not None and len(pqr) >= 3:
+        try:
+            p, q, r = float(pqr[0]), float(pqr[1]), float(pqr[2])
+        except (TypeError, ValueError):
+            p = q = r = 0.0
+        if not all(math.isfinite(x) for x in (p, q, r)):
+            p = q = r = 0.0
+    lam_az = float(state.az_dot) + r
+    lam_el = float(state.el_dot) + q
+    tau_lpf = max(1e-3, _env_float("FW_PN_LPF_TAU_S", _PN_LPF_TAU_S))
+    state.filt_lam_az = _lpf(state.filt_lam_az, lam_az, dt, tau_lpf)
+    state.filt_lam_el = _lpf(state.filt_lam_el, lam_el, dt, tau_lpf)
+    n = max(0.1, _env_float("FW_PN_N", _PN_NAV_RATIO))
+    v = max(_PN_V_MIN_MPS, _pn_speed(speed_mps))
+    a_max = max(0.1, _env_float("FW_PN_A_MAX", _PN_A_MAX_MPS2))
+    a_az = max(-a_max, min(a_max, n * v * float(state.filt_lam_az)))
+    a_el = n * v * float(state.filt_lam_el)
+    if gravity:
+        a_el += _G_MPS2
+    a_el = max(-a_max, min(a_max, a_el))
+    tau = max(1e-3, _env_float("FW_PN_TAU_S", _PN_TAU_S))
+    az_cmd = (a_az / v) * tau
+    el_cmd = (a_el / v) * tau
+    return az_cmd, _clip_el(el_cmd)
+
+
 def apply_homing_law(
     law: str,
     dir_body: tuple[float, float, float],
@@ -128,6 +201,8 @@ def apply_homing_law(
     dt: float,
     state: CamHomingState,
     area_px: float = 0.0,
+    speed_mps: float | None = None,
+    pqr: tuple[float, float, float] | None = None,
 ) -> HomingCmd:
     """Apply one camera-only principal. ``dir_body`` is HSV body FRD LOS."""
     key = resolve_homing_law(law)
@@ -141,8 +216,9 @@ def apply_homing_law(
         cmd.los_body = _dir_from_az_el(az_cmd, el_cmd)
         return cmd
     if key == "pn":
-        el_cmd = _clip_el(_PN_NAV_RATIO * state.el_dot * 0.15)
-        az_cmd = _PN_NAV_RATIO * state.az_dot * 0.15
+        az_cmd, el_cmd = _pn_cmd(
+            state, dt=dt, speed_mps=speed_mps, pqr=pqr, gravity=False
+        )
         cmd.los_body = _dir_from_az_el(az_cmd, el_cmd)
         return cmd
     if key == "bias":
@@ -176,8 +252,9 @@ def apply_homing_law(
         cmd.los_body = _dir_from_az_el(faz, fel)
         return cmd
     if key == "apn":
-        el_cmd = _clip_el(_PN_NAV_RATIO * state.el_dot * 0.15 + _APN_GRAVITY_EL_RAD)
-        az_cmd = _PN_NAV_RATIO * state.az_dot * 0.15
+        az_cmd, el_cmd = _pn_cmd(
+            state, dt=dt, speed_mps=speed_mps, pqr=pqr, gravity=True
+        )
         cmd.los_body = _dir_from_az_el(az_cmd, el_cmd)
         return cmd
     return cmd
