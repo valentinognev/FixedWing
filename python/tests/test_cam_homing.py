@@ -184,8 +184,8 @@ class TestHomingLaws(unittest.TestCase):
         huge = apply_homing_law(
             "pn", _dir(0.0, math.radians(20.0)), dt=0.05, state=st, speed_mps=30.0
         )
-        # |a|≤2g, τ=0.15, V=30 → |el| ≤ 2*9.81/30*0.15 ≈ 0.098 rad
-        self.assertLessEqual(abs(_el(huge.los_body)), 0.12)
+        # |a|≤2g, τ=0.25, V=30 → |el| ≤ 2*9.81/30*0.25 ≈ 0.164 rad
+        self.assertLessEqual(abs(_el(huge.los_body)), 0.18)
 
     def test_pn_lpf_lags_lambda_dot(self) -> None:
         st_f = CamHomingState()
@@ -193,8 +193,8 @@ class TestHomingLaws(unittest.TestCase):
         cmd = apply_homing_law(
             "pn", _dir(0.0, math.radians(0.2)), dt=0.05, state=st_f, speed_mps=30.0
         )
-        # One 0.05 s step with τ=0.15 cannot reach the full unfiltered lead.
-        unf = 4.0 * (math.radians(0.2) / 0.05) * 0.15  # N * λ̇ * τ, no LPF
+        # One 0.05 s LPF step cannot reach the full unfiltered lead.
+        unf = 4.0 * (math.radians(0.2) / 0.05) * 0.25  # N * λ̇ * τ, no LPF
         self.assertLess(abs(_el(cmd.los_body)), abs(unf) - 0.005)
 
     def test_apn_gravity_bias_when_lambda_zero(self) -> None:

@@ -72,7 +72,7 @@ Straight flight: `run_straight_flight_{jsbsim,yasim,gz}.py`.
 |--------------|----------------|
 | `lookat` | Point body +X at the blob. |
 | `pd_lead` | Look-at plus PD lead on az/el rates (`kd=0.35 s`). |
-| `pn` | Seeker PN: inertial λ̇ = ε̇_body + (r, q), a = N V λ̇ (`N=4`, |a|≤2g, LPF τ=0.15 s), look-lead θ=(a/V)τ. Needs caller `speed_mps`/`pqr`. |
+| `pn` | Seeker PN: inertial λ̇ = ε̇_body + (r, q), a = N V λ̇ (`N=4`, |a|≤2g, LPF τ=0.15 s), look-lead θ=(a/V)τ with **τ=0.25 s** (GZ cal). Needs caller `speed_mps`/`pqr`. |
 | `bias` | Look-at plus same-sign **12°** elev intercept; slow on steep el. Best B3 (~8 m). |
 | `el_first` | Wings-level, pitch-only until abs(el) > 8°. |
 | `bang` | Saturate ±20° pitch when abs(el) > 3°. Tightest B0/B1. |
