@@ -348,6 +348,12 @@ CTL_CMD="DISPLAY=${DISPLAY:-:0} MPLBACKEND=${MPLBACKEND:-Agg} PYTHONUNBUFFERED=1
 if [[ -n "${FW_HOMING_LAW:-}" ]]; then
   CTL_CMD="FW_HOMING_LAW=${FW_HOMING_LAW} ${CTL_CMD}"
 fi
+# Prefix PN tunables onto CTL_CMD: tmux server env may predate this shell.
+for _pn_k in FW_PN_N FW_PN_TAU_S FW_PN_LPF_TAU_S FW_PN_A_MAX; do
+  if [[ -n "${!_pn_k:-}" ]]; then
+    CTL_CMD="${_pn_k}=${!_pn_k} ${CTL_CMD}"
+  fi
+done
 if [[ "${NO_PLOT}" -eq 1 ]]; then
   CTL_CMD+=" --no-plot"
 fi

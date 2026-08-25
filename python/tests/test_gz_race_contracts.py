@@ -28,6 +28,8 @@ class TestGzRaceContracts(unittest.TestCase):
         self.assertIn("--all", text)
         self.assertIn("--duration", text)
         self.assertIn("--setup", text)
+        self.assertIn("FW_PN_N", text)
+        self.assertIn("FW_PN_TAU_S", text)
         self.assertIn("px4-noble-gz-plane", text)
         self.assertIn('runSimJsbsimRascal.sh --setup ${SETUP}', text)
         self.assertIn('runSimYasimRascal.sh --setup ${SETUP}', text)
