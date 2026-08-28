@@ -172,6 +172,7 @@ def engage_offboard_asap(
     *,
     arm_timeout_s: float = 12.0,
     accept_unhealthy: bool = False,
+    on_statustext: Callable[[str], None] | None = None,
 ) -> bool:
     """Force-arm ASAP under path OFFBOARD; lock origin/course/Z at arm.
 
@@ -236,11 +237,14 @@ def engage_offboard_asap(
                 text_s = msg.text if isinstance(msg.text, str) else msg.text.decode(
                     "utf-8", errors="replace"
                 )
+                stripped = text_s.strip()
+                if on_statustext is not None:
+                    on_statustext(stripped)
                 if any(
                     k in text_s
                     for k in ("Arm", "Preflight", "Failsafe", "offboard", "Offboard")
                 ):
-                    print(f"  ST: {text_s.strip()}")
+                    print(f"  ST: {stripped}")
                 continue
             if mtype == "HEARTBEAT":
                 if msg.get_srcSystem() != master.target_system:
@@ -370,6 +374,7 @@ def engage_offboard_with_retries(
     sim_extra_args: list[str] | None = None,
     skip_reboot: bool = False,
     plant: PlantGains,
+    on_statustext: Callable[[str], None] | None = None,
 ) -> mavutil.mavfile:
     """Engage; on failure, optionally restart sim or reboot and retry.
 
@@ -398,6 +403,7 @@ def engage_offboard_with_retries(
             rate,
             arm_timeout_s=arm_timeout_s,
             accept_unhealthy=accept_unhealthy,
+            on_statustext=on_statustext,
         )
         if ok:
             return master

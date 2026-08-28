@@ -34,6 +34,43 @@ MIN_THRUST = 0.40
 MAX_THRUST = 1.0
 # In-view altitude proxy when NED range is forbidden (camera LOS only).
 CAM_LOS_ALT_PROXY_M = 80.0
+# NED +vz (down) adds thrust. Kills phugoid from pitch/throttle fighting.
+THRUST_VZ_GAIN = 0.05
+THRUST_VZ_CLIP_MPS = 6.0
+# NED +vz (down) adds nose-up. Damps the high-alt look-at bob that throttle D missed.
+PITCH_VZ_GAIN = 0.03
+PITCH_VZ_CLIP_MPS = 6.0
+
+
+_PITCH_VZ_LOS_EL_RAD = math.radians(8.0)
+
+
+def pitch_with_vz_damp(
+    pitch: float,
+    vz: float | None,
+    *,
+    max_pitch: float,
+    los_el: float | None = None,
+) -> float:
+    """Ease look-at pitch against measured NED vertical rate.
+
+    Skip when ``|los_el|`` is steep: intercept dives/climbs must not be
+    fought by the high-alt boresight bob damper.
+    """
+    out = float(pitch)
+    if (
+        vz is not None
+        and math.isfinite(float(vz))
+        and (
+            los_el is None
+            or not math.isfinite(float(los_el))
+            or abs(float(los_el)) <= _PITCH_VZ_LOS_EL_RAD
+        )
+    ):
+        vz_c = max(-PITCH_VZ_CLIP_MPS, min(PITCH_VZ_CLIP_MPS, float(vz)))
+        out += PITCH_VZ_GAIN * vz_c
+    lim = abs(float(max_pitch))
+    return max(-lim, min(lim, out))
 
 
 def q_des_from_path(
@@ -151,8 +188,10 @@ def thrust_for_hold(
     max_t: float = MAX_THRUST,
     roll_rad: float = 0.0,
     speed_gain: float = 0.04,
+    vz: float | None = None,
+    vz_gain: float = THRUST_VZ_GAIN,
 ) -> float:
-    """Thrust for altitude, load factor, and speed error (slow on final)."""
+    """Thrust for altitude, load factor, speed error, and vertical-rate damp."""
     alt_err = float(z_ned) - float(z_hold)
     thrust = float(cruise) + float(climb_gain) * alt_err
     cphi = math.cos(max(-1.2, min(1.2, float(roll_rad))))
@@ -165,6 +204,9 @@ def thrust_for_hold(
         and math.isfinite(speed_gain)
     ):
         thrust += float(speed_gain) * (float(speed_mps) - float(groundspeed))
+    if vz is not None and math.isfinite(float(vz)) and math.isfinite(float(vz_gain)):
+        vz_clip = max(-THRUST_VZ_CLIP_MPS, min(THRUST_VZ_CLIP_MPS, float(vz)))
+        thrust += float(vz_gain) * vz_clip
     return max(float(min_t), min(float(max_t), thrust))
 
 

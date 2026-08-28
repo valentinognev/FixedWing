@@ -8,6 +8,7 @@ from pymavlink import mavutil
 from fw_sitl.attitude_pid import (
     CAM_LOS_ALT_PROXY_M,
     AttitudePid,
+    pitch_with_vz_damp,
     q_des_from_los,
     q_des_from_path,
     thrust_for_hold,
@@ -85,6 +86,7 @@ class RaceQuatController:
         self.homing_law = resolve_homing_law(homing_law)
         self._cam_homing = CamHomingState()
         self._los_z_hold: float | None = None
+        self._los_z_token: object | None = None
 
     def _smooth_axis(
         self,
@@ -126,11 +128,15 @@ class RaceQuatController:
         )
 
     def _smooth_pitch(self, pitch: float, dt: float) -> float:
+        if self._plant is not None:
+            tau = self._plant.los_pitch_lpf_tau_s
+        else:
+            tau = LOS_PITCH_LPF_TAU_S
         return self._smooth_axis(
             "_last_pitch_cmd",
             pitch,
             dt,
-            tau=LOS_PITCH_LPF_TAU_S,
+            tau=tau,
             slew_rad_s=LOS_PITCH_SLEW_RAD_S,
         )
 
@@ -166,7 +172,7 @@ class RaceQuatController:
         dir_body: tuple[float, float, float] | None = None,
         area_px: float = 0.0,
     ) -> tuple[float, float, float]:
-        _ = (frame, heading_rad, vz, visual_lock)
+        _ = (frame, heading_rad, visual_lock)
         course = math.atan2(float(dir_ned[1]), float(dir_ned[0]))
         z_hold = float(pos_ned[2])
         if not in_view:
@@ -203,19 +209,31 @@ class RaceQuatController:
                 area_px=area_px,
                 speed_mps=v_pn,
                 pqr=pqr,
+                q_act=q_act,
             )
             los_body = homing.los_body
             speed_scale = float(homing.speed_scale)
             thrust_bias = float(homing.thrust_bias)
             # Camera proxy only — never geometric NED range while the blob is in view.
-            # z_hold / speed use raw blob elevation, not the principal's seeker el.
-            z_hold = float(pos_ned[2]) - CAM_LOS_ALT_PROXY_M * math.sin(los_el)
-            self._los_z_hold = z_hold
+            # Throttle does not track 80·sin(el): that is a second elevator and pumps vz.
+            # last_z_hold stays the proxy so path-hold can reseed after HSV drop.
+            self._los_z_hold = float(pos_ned[2]) - CAM_LOS_ALT_PROXY_M * math.sin(
+                los_el
+            )
+            self._los_z_token = path_lock_token
+            z_hold = float(pos_ned[2])
             q_des = q_des_from_los(
                 los_body,
                 yaw_rad=yaw_act,
                 q_act=q_act,
                 **los_kw,
+            )
+            max_p = float(los_kw.get("max_pitch", math.radians(20.0)))
+            roll_d, pitch_d, yaw_d = rpy_from_quat(q_des)
+            q_des = from_rpy(
+                roll_d,
+                pitch_with_vz_damp(pitch_d, vz, max_pitch=max_p, los_el=los_el),
+                yaw_d,
             )
             cascade_out = self._cascade.command(q_des, q_act, dt, groundspeed=groundspeed)
             if self._close_in_view_euler:
@@ -231,9 +249,13 @@ class RaceQuatController:
             heading_ref = coordinated_heading_rad(yaw_act, vx, vy)
             token = path_lock_token
             if self._path_lock is None or self._path_lock[0] != token:
-                if self._los_z_hold is not None:
+                if (
+                    self._los_z_hold is not None
+                    and self._los_z_token == token
+                ):
                     z_hold = float(self._los_z_hold)
-                    self._los_z_hold = None
+                self._los_z_hold = None
+                self._los_z_token = None
                 self._path_lock = (
                     token,
                     (float(pos_ned[0]), float(pos_ned[1])),
@@ -288,6 +310,7 @@ class RaceQuatController:
             groundspeed=groundspeed,
             speed_mps=v_cmd,
             roll_rad=roll_des,
+            vz=vz,
             **thrust_kw,
         )
         if thrust_bias:
@@ -306,5 +329,8 @@ class RaceQuatController:
         self.last_q_des = q_des
         self.last_q_cmd = q_cmd
         self.last_thrust = thrust
-        self.last_z_hold = z_hold
+        if self.last_law == "los" and self._los_z_hold is not None:
+            self.last_z_hold = self._los_z_hold
+        else:
+            self.last_z_hold = z_hold
         return ned_velocity_from_course(v_cmd, course)

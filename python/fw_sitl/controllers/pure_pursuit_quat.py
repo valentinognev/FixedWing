@@ -117,11 +117,15 @@ class PurePursuitQuatController:
 
     def _smooth_pitch(self, pitch: float, dt: float) -> float:
         """Keep pitch from jumping when LOS elevation steps."""
+        if self._plant is not None:
+            tau = self._plant.los_pitch_lpf_tau_s
+        else:
+            tau = LOS_PITCH_LPF_TAU_S
         return self._smooth_axis(
             "_last_pitch_cmd",
             pitch,
             dt,
-            tau=LOS_PITCH_LPF_TAU_S,
+            tau=tau,
             slew_rad_s=LOS_PITCH_SLEW_RAD_S,
         )
 

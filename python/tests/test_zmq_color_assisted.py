@@ -147,6 +147,62 @@ class TestColorAssistedZmq(unittest.TestCase):
             ((200.0, 0.0, 61.7), (200.0, 200.0, 1.7)),
         )
 
+    def test_send_color_includes_warn(self) -> None:
+        sock = MagicMock()
+        send_color(
+            sock,
+            TargetColor(
+                r=255,
+                g=0,
+                b=0,
+                stamp=1.5,
+                warn="Arming denied: Resolve system health failures first",
+            ),
+        )
+        data = json.loads(sock.send_multipart.call_args[0][0][1].decode("utf-8"))
+        self.assertEqual(
+            data["warn"],
+            "Arming denied: Resolve system health failures first",
+        )
+
+    def test_recv_color_reads_warn(self) -> None:
+        payload = json.dumps(
+            {
+                "r": 255,
+                "g": 0,
+                "b": 0,
+                "stamp": 1.0,
+                "assisted": False,
+                "warn": "Arming denied: Resolve system health failures first",
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+        sock = MagicMock()
+        sock.recv_multipart.return_value = [TOPIC_COLOR, payload]
+        color = recv_color(sock)
+        assert color is not None
+        self.assertEqual(
+            color.warn,
+            "Arming denied: Resolve system health failures first",
+        )
+
+    def test_recv_color_defaults_warn_none_for_legacy(self) -> None:
+        payload = json.dumps(
+            {"r": 1, "g": 2, "b": 3, "stamp": 0.0, "assisted": False},
+            separators=(",", ":"),
+        ).encode("utf-8")
+        sock = MagicMock()
+        sock.recv_multipart.return_value = [TOPIC_COLOR, payload]
+        color = recv_color(sock)
+        assert color is not None
+        self.assertIsNone(color.warn)
+
+    def test_send_color_omits_warn_when_none(self) -> None:
+        sock = MagicMock()
+        send_color(sock, TargetColor(r=255, g=0, b=0, stamp=1.0))
+        data = json.loads(sock.send_multipart.call_args[0][0][1].decode("utf-8"))
+        self.assertNotIn("warn", data)
+
     def test_recv_color_legacy_balloons_ned_none(self) -> None:
         payload = json.dumps(
             {"r": 1, "g": 2, "b": 3, "stamp": 0.0, "assisted": False},

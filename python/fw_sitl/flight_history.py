@@ -37,6 +37,31 @@ def unwrap_deg_list(vals: list[float]) -> list[float]:
     return out
 
 
+PLOT_MIN_DT_S = 0.02
+
+
+def plot_keep_indices(
+    t: Sequence[float], *, min_dt: float = PLOT_MIN_DT_S
+) -> list[int]:
+    """Keep samples ≥ ``min_dt`` apart so MAVLink LOCAL_POSITION bursts do not
+    draw a fake high-frequency velocity/attitude ribbon (pickle 215054: 50% of
+    intervals were <2 ms with Δv=0).
+    """
+    n = len(t)
+    if n == 0:
+        return []
+    keep = [0]
+    last = float(t[0])
+    for i in range(1, n):
+        ti = float(t[i])
+        if ti - last >= float(min_dt):
+            keep.append(i)
+            last = ti
+    if keep[-1] != n - 1:
+        keep.append(n - 1)
+    return keep
+
+
 def wrap_deg(angle: float) -> float:
     """Wrap degrees to (-180, 180]."""
     a = float(angle)
@@ -1009,29 +1034,37 @@ class FlightHistory:
         )
         fig.suptitle(title)
 
+        keep = plot_keep_indices(self.t)
+        tt = [self.t[i] for i in keep]
+
+        def _tk(seq: Sequence[float]) -> list[float]:
+            if len(seq) != len(self.t):
+                return list(seq)
+            return [seq[i] for i in keep]
+
         ax = axes[0]
         ax.plot(
-            self.t, self.x, color="C0", linestyle=":", alpha=0.7, label="EKF N"
+            tt, _tk(self.x), color="C0", linestyle=":", alpha=0.7, label="EKF N"
         )
         ax.plot(
-            self.t, self.y, color="C1", linestyle=":", alpha=0.7, label="EKF E"
+            tt, _tk(self.y), color="C1", linestyle=":", alpha=0.7, label="EKF E"
         )
         ax.plot(
-            self.t, self.z, color="C2", linestyle=":", alpha=0.7, label="EKF D"
+            tt, _tk(self.z), color="C2", linestyle=":", alpha=0.7, label="EKF D"
         )
         if self._has_sim_series():
-            ax.plot(self.t, self.sim_x, color="C0", label="sim N")
-            ax.plot(self.t, self.sim_y, color="C1", label="sim E")
-            ax.plot(self.t, self.sim_z, color="C2", label="sim D")
+            ax.plot(tt, _tk(self.sim_x), color="C0", label="sim N")
+            ax.plot(tt, _tk(self.sim_y), color="C1", label="sim E")
+            ax.plot(tt, _tk(self.sim_z), color="C2", label="sim D")
         if self._has_target_series():
             ax.plot(
-                self.t, self.tgt_x, color="C0", linestyle="--", label="tgt x (N)"
+                tt, _tk(self.tgt_x), color="C0", linestyle="--", label="tgt x (N)"
             )
             ax.plot(
-                self.t, self.tgt_y, color="C1", linestyle="--", label="tgt y (E)"
+                tt, _tk(self.tgt_y), color="C1", linestyle="--", label="tgt y (E)"
             )
             ax.plot(
-                self.t, self.tgt_z, color="C2", linestyle="--", label="tgt z (D)"
+                tt, _tk(self.tgt_z), color="C2", linestyle="--", label="tgt z (D)"
             )
         ax.set_ylabel("NED position [m]")
         ax.grid(True, alpha=0.3)
@@ -1045,8 +1078,8 @@ class FlightHistory:
         if path is not None:
             along, cross = path
             ax = axes[row]
-            ax.plot(self.t, along, label="along-track", color="C0")
-            ax.plot(self.t, cross, label="cross-track", color="C1")
+            ax.plot(tt, _tk(along), label="along-track", color="C0")
+            ax.plot(tt, _tk(cross), label="cross-track", color="C1")
             ax.axhline(0.0, color="k", linewidth=0.8, alpha=0.4)
             ax.set_ylabel("Path frame [m]")
             ax.grid(True, alpha=0.3)
@@ -1055,36 +1088,36 @@ class FlightHistory:
             row += 1
 
         ax = axes[row]
-        ax.plot(self.t, self.vx, label="vx")
-        ax.plot(self.t, self.vy, label="vy")
-        ax.plot(self.t, self.vz, label="vz")
+        ax.plot(tt, _tk(self.vx), label="vx")
+        ax.plot(tt, _tk(self.vy), label="vy")
+        ax.plot(tt, _tk(self.vz), label="vz")
         ax.set_ylabel("Velocity [m/s]")
         ax.grid(True, alpha=0.3)
         ax.legend(loc="best")
         row += 1
 
         ax = axes[row]
-        ax.plot(self.t, self.roll_deg, color="C0", label="roll")
-        ax.plot(self.t, self.pitch_deg, color="C1", label="pitch")
-        ax.plot(self.t, unwrap_deg_list(self.yaw_deg), color="C2", label="yaw")
+        ax.plot(tt, _tk(self.roll_deg), color="C0", label="roll")
+        ax.plot(tt, _tk(self.pitch_deg), color="C1", label="pitch")
+        ax.plot(tt, _tk(unwrap_deg_list(self.yaw_deg)), color="C2", label="yaw")
         if self._has_attitude_cmd_series():
             ax.plot(
-                self.t,
-                self.roll_cmd_deg,
+                tt,
+                _tk(self.roll_cmd_deg),
                 color="C0",
                 linestyle="--",
                 label="roll cmd",
             )
             ax.plot(
-                self.t,
-                self.pitch_cmd_deg,
+                tt,
+                _tk(self.pitch_cmd_deg),
                 color="C1",
                 linestyle="--",
                 label="pitch cmd",
             )
             ax.plot(
-                self.t,
-                unwrap_deg_list(self.yaw_cmd_deg),
+                tt,
+                _tk(unwrap_deg_list(self.yaw_cmd_deg)),
                 color="C2",
                 linestyle="--",
                 label="yaw cmd",
@@ -1098,8 +1131,8 @@ class FlightHistory:
         if los is not None and delta is not None:
             az, el = los
             ax = axes[row]
-            ax.plot(self.t, unwrap_deg_list(az), label="LOS az")
-            ax.plot(self.t, el, label="LOS el")
+            ax.plot(tt, _tk(unwrap_deg_list(az)), label="LOS az")
+            ax.plot(tt, _tk(el), label="LOS el")
             ax.axhline(0.0, color="k", linewidth=0.8, alpha=0.4)
             ax.set_ylabel("LOS [deg]")
             ax.set_title(
@@ -1111,9 +1144,9 @@ class FlightHistory:
             row += 1
             dn, de, dd = delta
             ax = axes[row]
-            ax.plot(self.t, dn, label="ΔN")
-            ax.plot(self.t, de, label="ΔE")
-            ax.plot(self.t, dd, label="ΔD")
+            ax.plot(tt, _tk(dn), label="ΔN")
+            ax.plot(tt, _tk(de), label="ΔE")
+            ax.plot(tt, _tk(dd), label="ΔD")
             ax.set_ylabel("Plane − target [m]")
             ax.set_title(
                 "NED distance of the plane from the current target (sim pose)"

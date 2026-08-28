@@ -12,6 +12,21 @@ from fw_sitl.path_geometry import wrap_pi
 _G_MPS2 = 9.81
 
 ASSISTED_OVERLAY_TEXT = "assisted guidance"
+
+
+def statustext_arming_warn(text: str | None) -> str | None:
+    """PX4 STATUSTEXT to paint on balloon_camera, or None if not an arm deny.
+
+    Live GZ 212524 sat on ``Arming denied: Resolve system health failures first``
+    for 12 s while the unarmed Cessna fell; that line was only on the control
+    pane unless forwarded onto the camera overlay.
+    """
+    if text is None:
+        return None
+    stripped = str(text).replace("\x00", "").strip()
+    if "Arming denied" not in stripped:
+        return None
+    return stripped
 # Hold last HSV LOS briefly when the blob flickers off (pickle 122330: ~100 ms
 # cam_az nan↔finite flipped roll ±max).
 VISUAL_HOLD_S = 0.35
@@ -60,6 +75,37 @@ def chase_uses_lookat(*, tracker_in_view: bool, on_screen: bool) -> bool:
     """
     _ = on_screen
     return bool(tracker_in_view)
+
+
+LOOKAT_ALT_STEP_M = 10.0
+LOOKAT_EL_MIN_RAD = math.radians(12.0)
+
+
+def lookat_clears_alt_step(
+    el_rad: float | None,
+    pos_z: float,
+    tgt_z: float,
+    *,
+    step_m: float = LOOKAT_ALT_STEP_M,
+    el_min_rad: float = LOOKAT_EL_MIN_RAD,
+) -> bool:
+    """Keep path-hold through an altitude step until HSV matches the needed dive/climb.
+
+    After a pass, path-hold dives/climbs to the next balloon's z. A shallow or
+    opposite-sign HSV lock (live ``000631`` el=+15° while 30 m high) commands
+    the opposite pitch and stalls the capture. Co-altitude (``|Δz|≤step_m``)
+    always allows look-at.
+    """
+    need = float(tgt_z) - float(pos_z)
+    if abs(need) <= float(step_m):
+        return True
+    if el_rad is None or not math.isfinite(float(el_rad)):
+        return False
+    el = float(el_rad)
+    lo = float(el_min_rad)
+    if need > 0.0:
+        return el <= -lo
+    return el >= lo
 
 
 def rebase_balloons_to_local_z(

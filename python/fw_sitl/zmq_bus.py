@@ -76,6 +76,7 @@ class TargetColor:
     t_s: float | None = None
     pos_ned: tuple[float, float, float] | None = None
     balloons_ned: tuple[tuple[float, float, float], ...] | None = None
+    warn: str | None = None
 
     def as_tuple(self) -> tuple[int, int, int]:
         return (int(self.r), int(self.g), int(self.b))
@@ -186,6 +187,8 @@ def send_color(sock: zmq.Socket, color: TargetColor | RgbLike) -> None:
             payload["pos_d"] = float(color.pos_ned[2])
         if color.balloons_ned is not None:
             payload["balloons"] = [list(map(float, p)) for p in color.balloons_ned]
+        if color.warn:
+            payload["warn"] = str(color.warn)
     else:
         r, g, b = color
         payload = {
@@ -230,6 +233,7 @@ def recv_color(sock: zmq.Socket, flags: int = 0) -> TargetColor | None:
         t_s=float(t_raw) if t_raw is not None else None,
         pos_ned=pos_ned,
         balloons_ned=balloons_ned,
+        warn=str(data["warn"]) if data.get("warn") else None,
     )
 
 

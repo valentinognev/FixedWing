@@ -512,6 +512,14 @@ class TestPlotVelocityAndYawGlitch(unittest.TestCase):
         out = unwrap_deg_list([170.0, 179.0, -170.0])
         self.assertAlmostEqual(out[2], 190.0, places=5)
 
+    def test_plot_keep_indices_drops_mavlink_bursts(self) -> None:
+        from fw_sitl.flight_history import plot_keep_indices
+
+        t = [0.0, 0.001, 0.002, 0.05, 0.051, 0.10]
+        self.assertEqual(plot_keep_indices(t), [0, 3, 5])
+        self.assertEqual(plot_keep_indices([]), [])
+        self.assertEqual(plot_keep_indices([1.0]), [0])
+
 
 class TestAttitudeCmdSeries(unittest.TestCase):
     def test_apply_cmd_fills_burst(self) -> None:

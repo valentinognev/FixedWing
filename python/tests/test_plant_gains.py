@@ -144,6 +144,7 @@ class TestPlantGainsRegistry(unittest.TestCase):
         self.assertAlmostEqual(p.los_kwargs()["kp_elev"], 1.0)
         self.assertAlmostEqual(p.los_roll_slew_rad_s, math.radians(30.0))
         self.assertAlmostEqual(p.los_roll_lpf_tau_s, 0.20)
+        self.assertAlmostEqual(p.los_pitch_lpf_tau_s, 0.50)
 
     def test_fingerprint_includes_kp_elev_and_los_roll(self) -> None:
         p = load_plant_gains("jsbsim_rascal", controller="race_quat")
@@ -155,6 +156,10 @@ class TestPlantGainsRegistry(unittest.TestCase):
         self.assertNotEqual(
             p.fingerprint(),
             replace(p, los_roll_lpf_tau_s=0.5).fingerprint(),
+        )
+        self.assertNotEqual(
+            p.fingerprint(),
+            replace(p, los_pitch_lpf_tau_s=0.8).fingerprint(),
         )
 
     def test_jsbsim_race_quat_leads_body_az(self) -> None:
@@ -300,9 +305,11 @@ class TestPlantGainsRegistry(unittest.TestCase):
         self.assertAlmostEqual(euler.att_los_max_pitch_rad, 0.35)
         self.assertAlmostEqual(euler.los_roll_slew_rad_s, math.radians(45.0))
         self.assertAlmostEqual(euler.los_roll_lpf_tau_s, 0.10)
+        self.assertAlmostEqual(euler.los_pitch_lpf_tau_s, 0.50)
         self.assertAlmostEqual(euler.approach_speed_mps, 8.0)
         self.assertAlmostEqual(euler.slow_range_m, 280.0)
-        self.assertAlmostEqual(euler.speed_mps, 16.0)
+        self.assertAlmostEqual(euler.speed_mps, 14.0)
+        self.assertAlmostEqual(euler.cruise_thrust, 0.65)
         self.assertGreaterEqual(euler.approach_speed_mps, euler.fw_airspd_min)
         self.assertAlmostEqual(euler.bank_kp_heading, 1.4)
         self.assertAlmostEqual(race.att_los_max_pitch_rad, 0.26)

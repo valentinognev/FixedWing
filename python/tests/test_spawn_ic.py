@@ -48,6 +48,16 @@ class TestGzHeadingAndPose(unittest.TestCase):
         self.assertEqual((roll, pitch), (0.0, 0.0))
         self.assertAlmostEqual(yaw, math.pi / 2, places=5)
 
+    def test_gz_spawn_velocity_uses_setup_speed_not_plant_cruise(self) -> None:
+        """Live 091727: speed_mps 14 stalled spawn; plane flew 12 m under B0."""
+        from fw_sitl.flight_setup import load_flight_setup
+        from fw_sitl.spawn_ic import gz_spawn_velocity_enu
+
+        setup = load_flight_setup(_PYTHON_ROOT / "flightSetup.json")
+        self.assertAlmostEqual(setup.guidance.speed_mps, 30.0)
+        vx, vy, vz = gz_spawn_velocity_enu(setup)
+        self.assertAlmostEqual(math.hypot(vx, vy, vz), 30.0, places=5)
+
 
 class TestJsbAndFgIc(unittest.TestCase):
     def test_jsb_xml_heading_and_offset_from_lszh(self) -> None:

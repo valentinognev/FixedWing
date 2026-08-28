@@ -17,6 +17,7 @@ from fw_sitl.flight_setup import BalloonSpec, GuidanceSpec
 from fw_sitl.race_guidance import (
     RaceGuidance,
     chase_uses_lookat,
+    lookat_clears_alt_step,
     coordinated_turn_radius_m,
     flyby_closing_ahead,
     flyby_radius_from_speed,
@@ -26,6 +27,7 @@ from fw_sitl.race_guidance import (
     rebase_balloons_to_local_z,
     balloons_with_xy,
     show_assisted_overlay,
+    statustext_arming_warn,
     translate_balloons_ned,
 )
 
@@ -306,6 +308,17 @@ class TestNedPosLine(unittest.TestCase):
 
 
 class TestAssistedOverlay(unittest.TestCase):
+    def test_statustext_arming_denied_is_camera_warn(self) -> None:
+        text = "Arming denied: Resolve system health failures first"
+        self.assertEqual(statustext_arming_warn(text), text)
+        self.assertEqual(
+            statustext_arming_warn("  Arming denied: Resolve system health failures firs\x00"),
+            "Arming denied: Resolve system health failures firs",
+        )
+        self.assertIsNone(statustext_arming_warn("Preflight Fail: ekf2"))
+        self.assertIsNone(statustext_arming_warn(""))
+        self.assertIsNone(statustext_arming_warn(None))  # type: ignore[arg-type]
+
     def test_overlay_follows_assisted_flag_only(self) -> None:
         # Balloon can be painted while the HSV tracker misses; overlay must
         # not say "assisted" unless control is actually in assisted path.
@@ -326,6 +339,44 @@ class TestLookatVsAssisted(unittest.TestCase):
     def test_tracker_blob_uses_lookat(self) -> None:
         self.assertTrue(chase_uses_lookat(tracker_in_view=True, on_screen=False))
         self.assertTrue(chase_uses_lookat(tracker_in_view=True, on_screen=True))
+
+    def test_lookat_clears_coaltitude_any_el(self) -> None:
+        self.assertTrue(
+            lookat_clears_alt_step(math.radians(15.0), pos_z=0.0, tgt_z=5.0)
+        )
+        self.assertTrue(
+            lookat_clears_alt_step(math.radians(-15.0), pos_z=0.0, tgt_z=-5.0)
+        )
+
+    def test_lookat_rejects_up_el_while_needing_dive(self) -> None:
+        """Live 000631 t=59: el=+15° while 30 m above B2 pulled up and stalled the dive."""
+        self.assertFalse(
+            lookat_clears_alt_step(
+                math.radians(15.0), pos_z=-10.0, tgt_z=20.0
+            )
+        )
+
+    def test_lookat_rejects_shallow_el_on_alt_step(self) -> None:
+        self.assertFalse(
+            lookat_clears_alt_step(
+                math.radians(-5.0), pos_z=-10.0, tgt_z=20.0
+            )
+        )
+
+    def test_lookat_accepts_steep_down_el_for_dive(self) -> None:
+        self.assertTrue(
+            lookat_clears_alt_step(
+                math.radians(-15.0), pos_z=-10.0, tgt_z=20.0
+            )
+        )
+
+    def test_lookat_accepts_steep_up_el_for_climb(self) -> None:
+        self.assertTrue(
+            lookat_clears_alt_step(math.radians(15.0), pos_z=20.0, tgt_z=-20.0)
+        )
+        self.assertFalse(
+            lookat_clears_alt_step(math.radians(-15.0), pos_z=20.0, tgt_z=-20.0)
+        )
 
 
 class TestStaleTrackAssisted(unittest.TestCase):

@@ -43,6 +43,16 @@ class TestGzRaceContracts(unittest.TestCase):
         self.assertIn("DISPLAY=${DISPLAY", text)
         self.assertIn("MPLBACKEND", text)
 
+    def test_launcher_reaps_leftover_host_camera(self) -> None:
+        """E2E --no-display camera held 5557; interactive balloon_camera never
+        bound track PUB (Address already in use) so the window never started."""
+        text = _RACE.read_text(encoding="utf-8")
+        self.assertIn("pkill -f '[r]un_balloon_camera.py'", text)
+        self.assertIn("Address already in use", text)
+        cam = text.index("pkill -f '[r]un_balloon_camera.py'")
+        start = text.index("CAM_CMD=")
+        self.assertLess(cam, start)
+
     def test_control_stop_sim_on_exit_and_duration_zero(self) -> None:
         ctl = _CTL.read_text(encoding="utf-8")
         self.assertIn('add_argument(', ctl)
@@ -111,12 +121,14 @@ class TestGzRaceContracts(unittest.TestCase):
         )
         self.assertIn("speed_mps=", rq)
         self.assertIn("pqr=pqr", rq)
+        self.assertIn("q_act=q_act", rq)
         self.assertIn("last_closest_ned", ctl)
         self.assertIn("cam_el_rad", ctl)
-        # Homing altitude comes from camera LOS. Off-blob path-hold keeps
-        # current z (search), not balloon bookkeeping Z.
-        self.assertIn("z_target=None if use_lookat else pos[2]", ctl)
-        self.assertNotIn("z_target=None if use_lookat else tgt[2]", ctl)
+        # Homing altitude comes from camera LOS while in view. Off-blob
+        # path-hold flies to the next balloon's z so a 40 m step (B1→B2)
+        # is a path descent, not a last-second 20° dive after HSV lock.
+        self.assertIn("z_target=None if use_lookat else tgt[2]", ctl)
+        self.assertNotIn("z_target=None if use_lookat else pos[2]", ctl)
         self.assertIn("range_m=range_m", ctl)
         self.assertIn("if on_screen:", ctl)
         # Geometric-only projection is dead-reckoning, not a real visual track:
@@ -146,6 +158,7 @@ class TestGzRaceContracts(unittest.TestCase):
         self.assertIn("args.viz", gate)
         self.assertIn("args.gz", gate)
         self.assertIn("args.yasim", gate)
+        self.assertIn("lookat_clears_alt_step", ctl)
         self.assertIn("project_ned_offset_to_pixel", ctl)
         self.assertIn("approach_xy", ctl)
         self.assertIn("history.last_vx", ctl)
@@ -359,6 +372,26 @@ class TestGzRaceContracts(unittest.TestCase):
         cam = _CAM.read_text(encoding="utf-8")
         self.assertIn("format_ned_pos_line", cam)
         self.assertIn("latest_color.pos_ned", cam)
+
+    def test_camera_shows_arming_denied_statustext(self) -> None:
+        """Unarmed GZ fall: PX4 STATUSTEXT is only on the control pane unless
+        forwarded on the color ZMQ channel onto balloon_camera."""
+        ctl = _CTL.read_text(encoding="utf-8")
+        core = (
+            Path(__file__).resolve().parents[1] / "fw_sitl" / "straight_flight_core.py"
+        ).read_text(encoding="utf-8")
+        cam = _CAM.read_text(encoding="utf-8")
+        self.assertIn("on_statustext=", ctl)
+        self.assertIn("statustext_arming_warn", ctl)
+        self.assertIn("ColorPublisher(setup.zmq.color)", ctl)
+        self.assertLess(
+            ctl.index("color_pub = ColorPublisher(setup.zmq.color)"),
+            ctl.index("engage_offboard_with_retries("),
+        )
+        self.assertIn("on_statustext", core)
+        self.assertIn("on_statustext is not None", core)
+        self.assertIn("latest_color.warn", cam)
+        self.assertIn("statustext_arming_warn", cam)
 
     def test_camera_window_is_simple_gui_not_qt_expanded(self) -> None:
         """WINDOW_NORMAL==0 also means WINDOW_GUI_EXPANDED; that Qt chrome

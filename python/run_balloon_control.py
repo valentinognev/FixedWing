@@ -57,10 +57,12 @@ from fw_sitl.race_guidance import (
     RaceGuidance,
     balloons_with_xy,
     chase_uses_lookat,
+    lookat_clears_alt_step,
     format_ned_pos_line,
     offset_balloons_ned,
     race_end_reason,
     rebase_balloons_to_local_z,
+    statustext_arming_warn,
     translate_balloons_ned,
 )
 from fw_sitl.quat import from_rpy, rpy_from_quat
@@ -502,6 +504,17 @@ def main() -> int:
         f"Engage for balloon race @ {rate} Hz, speed={speed_mps:.1f} m/s "
         f"plant={plant.plant_id}"
     )
+    color_pub = ColorPublisher(setup.zmq.color)
+    balloon0_rgb = tuple(int(c) for c in setup.balloons[0].color)
+
+    def _on_statustext(text: str) -> None:
+        warn = statustext_arming_warn(text)
+        if warn is None:
+            return
+        color_pub.publish(
+            TargetColor(*balloon0_rgb, stamp=time.time(), warn=warn)
+        )
+
     try:
         master = engage_offboard_with_retries(
             master,
@@ -522,11 +535,14 @@ def main() -> int:
             full_sim_restart=(not args.viz) and (not args.gz) and (not args.yasim) and (not args.xplane) and (not args.no_sim),
             accept_unhealthy=True,
             plant=plant,
+            on_statustext=_on_statustext,
         )
     except EngageError as exc:
         print(f"Engage failed: {exc}", file=sys.stderr)
+        color_pub.close()
         _stop_sim()
         return 1
+    color_pub.publish(TargetColor(*balloon0_rgb, stamp=time.time()))
 
     z_hold = z_box[0]
     course_rad = course_box[0]
@@ -715,7 +731,6 @@ def main() -> int:
         controller._bridge._alt_hold_z = float(
             z_hold_true if (args.gz or args.xplane) else z_hold
         )
-    color_pub = ColorPublisher(setup.zmq.color)
     track_sub = TrackSubscriber(setup.zmq.track)
     stale_age_s = STALE_TRACK_CAMERA_PERIODS / setup.camera.rate_hz
     last_published_color = race.active_color
@@ -1105,6 +1120,11 @@ def main() -> int:
             if tracker_in_view and last_dir_cam is not None:
                 _az_deg, el_deg = dir_cam_az_el_deg(last_dir_cam)
                 cam_el_rad = math.radians(el_deg)
+            tgt_z = race.balloon_ned()[2]
+            if use_lookat and not lookat_clears_alt_step(
+                cam_el_rad, pos[2], tgt_z
+            ):
+                use_lookat = False
             if race.check_pass(
                 plane_ned, approach_dir_ned=approach, cam_el_rad=cam_el_rad
             ):
@@ -1190,8 +1210,9 @@ def main() -> int:
                 last_published_assisted = race.assisted
                 last_color_pub_t = now_wall
 
-            # Homing is HSV dir_cam only. Off-blob: path-hold current z and
-            # bank onto geometric bearing (search). Overlay follows race.assisted.
+            # Homing is HSV dir_cam only. Off-blob: path-hold the next balloon's
+            # z and bank onto geometric bearing (search). A 40 m step after a
+            # pass cannot wait for HSV — camera VFOV only sees it ~60 m out.
             yaw_for_sp = None if use_lookat else att[2]
             tgt = race.balloon_ned()
             range_m = math.hypot(pos[0] - tgt[0], pos[1] - tgt[1])
@@ -1219,7 +1240,7 @@ def main() -> int:
                 airspeed=history.last_airspeed,
                 pqr=history.last_pqr,
                 in_view=use_lookat,
-                z_target=None if use_lookat else pos[2],
+                z_target=None if use_lookat else tgt[2],
                 vx=chase_vx,
                 vy=chase_vy,
                 vz=chase_vz,

@@ -11,7 +11,7 @@ from fw_sitl.quat import rpy_from_quat
 LOS_ROLL_SLEW_RAD_S = math.radians(30.0)
 LOS_ROLL_LPF_TAU_S = 0.20
 LOS_PITCH_SLEW_RAD_S = math.radians(30.0)
-LOS_PITCH_LPF_TAU_S = 0.20
+LOS_PITCH_LPF_TAU_S = 0.50
 _PP_MIN_SPEED_MPS = 0.5
 _VERTICAL_LOS_HORIZ_EPS = 1e-3
 

@@ -17,6 +17,7 @@ from fw_sitl.controllers.cam_homing import (
     apply_homing_law,
     resolve_homing_law,
 )
+from fw_sitl.quat import from_rpy, rotate_ned_to_body
 
 
 def _dir(az: float, el: float) -> tuple[float, float, float]:
@@ -53,18 +54,27 @@ class TestHomingLaws(unittest.TestCase):
         )
         self.assertGreater(_el(cmd.los_body), math.radians(10.0) - 1e-6)
 
-    def test_pn_uses_rate_not_angle(self) -> None:
+    def test_pn_held_inertial_los_keeps_lookat(self) -> None:
+        """λ̇=0 must hold the inertial LOS (the balloon), not snap to boresight."""
         st = CamHomingState()
-        apply_homing_law("pn", _dir(0.0, math.radians(15.0)), dt=0.05, state=st)
-        held = apply_homing_law(
-            "pn", _dir(0.0, math.radians(15.0)), dt=0.05, state=st
-        )
-        self.assertLess(abs(_el(held.los_body)), math.radians(2.0))
+        d = _dir(0.0, math.radians(15.0))
+        apply_homing_law("pn", d, dt=0.05, state=st, speed_mps=30.0)
+        held = apply_homing_law("pn", d, dt=0.05, state=st, speed_mps=30.0)
+        self.assertAlmostEqual(_el(held.los_body), math.radians(15.0), places=2)
 
     def test_bias_extends_same_sign_el(self) -> None:
         d = _dir(0.0, math.radians(10.0))
         cmd = apply_homing_law("bias", d, dt=0.05, state=CamHomingState())
         self.assertGreater(_el(cmd.los_body), math.radians(10.0))
+
+    def test_bias_fades_near_boresight(self) -> None:
+        """±12° extra at el≈0 is a pitch relay and pumps vz once level with the balloon."""
+        cmd = apply_homing_law(
+            "bias", _dir(0.0, math.radians(2.0)), dt=0.05, state=CamHomingState()
+        )
+        el_cmd = _el(cmd.los_body)
+        self.assertGreater(el_cmd, math.radians(2.0))
+        self.assertLess(el_cmd, math.radians(8.0))
 
     def test_bias_slows_when_el_steep(self) -> None:
         flat = apply_homing_law(
@@ -140,32 +150,80 @@ class TestHomingLaws(unittest.TestCase):
         apn = apply_homing_law("apn", d1, dt=0.05, state=st_apn)
         self.assertGreater(_el(apn.los_body), _el(pn.los_body))
 
-    def test_pn_imu_pitch_rate_commands_el_when_blob_held(self) -> None:
-        """Held blob + q>0 must produce inertial λ̇ and a nose command (not 0)."""
+    def test_pn_body_rate_does_not_invent_lambda_dot(self) -> None:
+        """Same inertial LOS: IMU q must not fake λ̇ (body/camera rates are not inertial)."""
         st = CamHomingState()
         d = _dir(0.0, 0.0)
-        apply_homing_law("pn", d, dt=0.05, state=st, speed_mps=30.0, pqr=(0.0, 0.0, 0.0))
-        cmd = apply_homing_law(
-            "pn", d, dt=0.05, state=st, speed_mps=30.0, pqr=(0.0, 0.4, 0.0)
-        )
-        self.assertGreater(_el(cmd.los_body), math.radians(1.0))
-
-    def test_pn_cancels_own_pitch_in_epsilon_dot(self) -> None:
-        """If camera el drops at the pitch rate, inertial λ̇ is ~0."""
-        st = CamHomingState()
+        q_act = from_rpy(0.0, 0.0, 0.0)
         apply_homing_law(
-            "pn", _dir(0.0, 0.0), dt=0.05, state=st, speed_mps=30.0, pqr=(0.0, 0.0, 0.0)
+            "pn",
+            d,
+            dt=0.05,
+            state=st,
+            speed_mps=30.0,
+            pqr=(0.0, 0.0, 0.0),
+            q_act=q_act,
         )
-        # el_dot = -0.4 rad/s; q = +0.4 → λ̇_el ≈ 0
         cmd = apply_homing_law(
             "pn",
-            _dir(0.0, -0.4 * 0.05),
+            d,
             dt=0.05,
             state=st,
             speed_mps=30.0,
             pqr=(0.0, 0.4, 0.0),
+            q_act=q_act,
         )
         self.assertLess(abs(_el(cmd.los_body)), math.radians(1.0))
+
+    def test_pn_constant_ned_los_while_pitching_holds(self) -> None:
+        """Collision course: NED λ fixed while the aircraft pitches → inertial λ̇=0."""
+        lam_ned = (1.0, 0.0, 0.0)
+        st = CamHomingState()
+        q0 = from_rpy(0.0, 0.0, 0.0)
+        apply_homing_law(
+            "pn",
+            rotate_ned_to_body(q0, lam_ned),
+            dt=0.05,
+            state=st,
+            speed_mps=30.0,
+            q_act=q0,
+        )
+        q1 = from_rpy(0.0, math.radians(8.0), 0.0)
+        d1 = rotate_ned_to_body(q1, lam_ned)
+        cmd = apply_homing_law(
+            "pn", d1, dt=0.05, state=st, speed_mps=30.0, q_act=q1
+        )
+        self.assertAlmostEqual(_el(cmd.los_body), _el(d1), delta=math.radians(2.0))
+
+    def test_pn_roll_around_fixed_ned_los_holds(self) -> None:
+        """Banking around a fixed NED LOS must not invent λ̇ from body az/el mix."""
+        lam_ned = (1.0, 0.0, 0.0)
+        st = CamHomingState()
+        q0 = from_rpy(0.0, 0.0, 0.0)
+        apply_homing_law(
+            "pn",
+            rotate_ned_to_body(q0, lam_ned),
+            dt=0.05,
+            state=st,
+            speed_mps=30.0,
+            q_act=q0,
+        )
+        q1 = from_rpy(math.radians(25.0), 0.0, 0.0)
+        d1 = rotate_ned_to_body(q1, lam_ned)
+        cmd = apply_homing_law(
+            "pn", d1, dt=0.05, state=st, speed_mps=30.0, q_act=q1
+        )
+        self.assertAlmostEqual(_az(cmd.los_body), _az(d1), delta=math.radians(2.0))
+        self.assertAlmostEqual(_el(cmd.los_body), _el(d1), delta=math.radians(2.0))
+
+    def test_pn_inertial_lead_adds_to_ned_los(self) -> None:
+        """a = N V λ̇ is applied along inertial λ, not as a boresight-relative angle."""
+        st = CamHomingState()
+        d0 = _dir(0.0, math.radians(10.0))
+        d1 = _dir(0.0, math.radians(10.2))
+        apply_homing_law("pn", d0, dt=0.05, state=st, speed_mps=30.0)
+        cmd = apply_homing_law("pn", d1, dt=0.05, state=st, speed_mps=30.0)
+        self.assertGreater(_el(cmd.los_body), math.radians(10.0))
 
     def test_pn_angle_independent_of_v_until_saturation(self) -> None:
         st10 = CamHomingState()
@@ -181,11 +239,10 @@ class TestHomingLaws(unittest.TestCase):
     def test_pn_saturates_accel(self) -> None:
         st = CamHomingState()
         apply_homing_law("pn", _dir(0.0, 0.0), dt=0.05, state=st, speed_mps=30.0)
-        huge = apply_homing_law(
-            "pn", _dir(0.0, math.radians(20.0)), dt=0.05, state=st, speed_mps=30.0
-        )
-        # |a|≤2g, τ=0.25, V=30 → |el| ≤ 2*9.81/30*0.25 ≈ 0.164 rad
-        self.assertLessEqual(abs(_el(huge.los_body)), 0.18)
+        blob = _dir(0.0, math.radians(5.0))
+        huge = apply_homing_law("pn", blob, dt=0.05, state=st, speed_mps=30.0)
+        # |a|≤2g, τ=0.25, V=30 → lead beyond inertial LOS ≤ 2*9.81/30*0.25 ≈ 0.164 rad
+        self.assertLessEqual(_el(huge.los_body) - _el(blob), 0.18)
 
     def test_pn_lpf_lags_lambda_dot(self) -> None:
         st_f = CamHomingState()
@@ -193,9 +250,10 @@ class TestHomingLaws(unittest.TestCase):
         cmd = apply_homing_law(
             "pn", _dir(0.0, math.radians(0.2)), dt=0.05, state=st_f, speed_mps=30.0
         )
-        # One 0.05 s LPF step cannot reach the full unfiltered lead.
-        unf = 4.0 * (math.radians(0.2) / 0.05) * 0.25  # N * λ̇ * τ, no LPF
-        self.assertLess(abs(_el(cmd.los_body)), abs(unf) - 0.005)
+        # One 0.05 s LPF step cannot reach blob + full unfiltered lead.
+        blob_el = math.radians(0.2)
+        unf = blob_el + 4.0 * (blob_el / 0.05) * 0.25  # el + N * λ̇ * τ, no LPF
+        self.assertLess(_el(cmd.los_body), unf - 0.005)
 
     def test_apn_gravity_bias_when_lambda_zero(self) -> None:
         st_pn = CamHomingState()

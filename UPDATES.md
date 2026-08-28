@@ -1,11 +1,57 @@
 # Updates
 
+## 0.66.4 - flightSetup.speed_mps is GZ spawn IC, not chase V
+- Live `091727` after 0.66.3 set that key to 14: spawn stalled, held z≈+35 m, CPA **12 m under** B0 (no pass). Sweep 08 and morning 083510 spawned at **30** with plant chase 14.
+- Revert `guidance.speed_mps` to 30. `gz_spawn_velocity_enu` reads it; chase still uses plant `race_euler` 0.65/14.
+
+## 0.66.3 - flightSetup.speed_mps matches plant 14
+- Shipped `flightSetup.json` `guidance.speed_mps` 30→14. Race chase still reads `gz_rc_cessna` `race_euler` (`cruise_thrust` 0.65, `speed_mps` 14).
+
+## 0.66.2 - GZ race_euler: 0.65 thrust + 14 m/s cruise
+- 12× 120 s GZ Cessna `pn` grid on cruise thrust / speed P / `kp_elev` / V / pitch-vz D. Jitter = 20 Hz `vz` sign-flips; accuracy = first-circuit 3D ≤5 m.
+- Winner `thr=0.65 V=14` (keep speed P 0.07, `kp_elev` 1.5, pitch-vz 0.03): B0 **1.47** / B1 **1.00** / B2 **3.10** m; flips **21** vs baseline 0.80/16 **67** (B2 9.04 m). Soft speed P or 0.55 thrust alone missed the circuit; V=14 with 0.80 thrust departed.
+
+## 0.66.1 - Launcher reaps leftover host camera before bind
+- Live: e2e `--no-display` camera kept `tcp://127.0.0.1:5557`; interactive `balloon_camera` died `Address already in use` and never opened a window. `kill.sh` only removes Docker.
+- `run_balloon_race.sh` pkill leftover `run_balloon_{camera,control,image_source,gz_pose}.py` before starting panes.
+
+## 0.66.0 - Pitch LPF is a plant gain; 0.80 s lagged B0
+- `PlantGains.los_pitch_lpf_tau_s` (default 0.50). `race_quat` / `pure_pursuit_quat` read it.
+- Live GZ `pitch_lpf_080_221408` at **0.80 s**: first B0 **6.13 m** (ΔD −5.5) vs **4.94 m** at 0.50; 20 Hz pitch HF 0.41→0.29 but **vz std 2.64→2.75**. Shipped `gz_rc_cessna` `race_euler` stays **0.50 s**.
+- History time-series plots keep ≥20 ms spacing so LOCAL_POSITION bursts do not draw a fake velocity ribbon.
+
+## 0.65.0 - Camera overlay shows PX4 arming denied
+- Control binds the color ZMQ PUB before engage and forwards STATUSTEXT containing `Arming denied` onto `TargetColor.warn`.
+- `balloon_camera` paints that line in red (also on the waiting-for-image placeholder). Cleared once armed.
+
+## 0.64.1 - Off-blob flies next balloon z; steep dive not vz-damped
+- Live NED PN `pn_ned_080513`: B0 **0.54 m** / B1 **0.93 m**; B2 overflew **21.7 m** high (XY 5.7 m). After B1, path-hold froze the B1 camera proxy (z≈−20) while tgt_d=+20; HSV only saw B2 ~60 m out. vz-damp then added ~+9° on the dive (`vz≈+5`, cmd −14° vs el −31°).
+- Off-blob `z_target=tgt[2]`. Camera proxy reseeds path-hold only when `path_lock_token` matches (HSV drop, same balloon). New balloon discards the old proxy.
+- `pitch_with_vz_damp` skips when `|los_el|>8°`.
+- Live `pn_ned_000631` after that: B0 **1.06 m** / B1 **1.02 m**; B2 still **16.6 m** high. Path-hold dove to z≈−10 then HSV at el=+15° commanded +20° and stalled. `lookat_clears_alt_step`: while `|Δz|>10 m`, HSV look-at only if |el|≥12° with the needed sign.
+- Live `pn_ned_001310` first circuit: B0 **5.23 m** (XY 0.77, ΔD −5.18) / B1 **0.60 m** / B2 **2.80 m**. All three passed; B2 is a hit. Second lap B0 **4.76 m** / B1 **1.77 m**.
+
+## 0.64.0 - PN λ̇ is NED, not body/camera
+- `pn`/`apn` rotate HSV LOS into NED with `q_act` and differentiate λ there. Body `ε̇+ω` invented λ̇ under pitch/roll, so inertial LOS rate never held and the plane missed.
+- a = N V λ̇ in NED; look-lead is along inertial λ (λ̇=0 keeps look-at the balloon, not boresight). APN gravity is NED a_z − g. `pqr` unused. `apply_homing_law(..., q_act=)`.
+
+## 0.63.1 - Shipped race uses seeker PN
+- `python/flightSetup.json` `guidance.homing_law` is `pn` (was `bang` locally / `bias` in older check-ins). Comments match inertial PNG; `apn` is +g not +5°.
+
 ## 0.63.0 - Inertial seeker PN
 - `pn`/`apn` are classical seeker PN: λ̇_az/el = ε̇_body + (r, q), a = N V λ̇ (APN adds +g on el), θ = (a/V) τ. LPF on λ̇ (τ=0.15 s), |a|≤2g. Lead **τ=0.25 s** after GZ sweep (was 0.15). Env: `FW_PN_N`, `FW_PN_TAU_S`, `FW_PN_LPF_TAU_S`, `FW_PN_A_MAX`.
 - `apply_homing_law(..., speed_mps, pqr)`. Default V=30 m/s if omitted; pqr=None → body rates 0 (no IMU cancel until callers pass ATTITUDE). Dropped `_APN_GRAVITY_EL_RAD`.
 - Wired `send_chase_setpoint(..., airspeed=history.last_airspeed, pqr=history.last_pqr)`. In-view `pn`/`apn` V is IAS else GS. Default `homing_law` unchanged.
 - Race launcher prefixes `FW_PN_N`/`FW_PN_TAU_S`/`FW_PN_LPF_TAU_S`/`FW_PN_A_MAX` onto the control pane (tmux server env is sticky).
 - GZ Cessna 10× 120 s `race_euler` sweep (`FW_HOMING_LAW=pn|apn`). Only **N=4, τ=0.25, LPF=0.15, 2g** passed balloon 0 (3D 4.61 m, 1/3 balloons). Other 9 configs: 0 passes. Still ignores boresight; `bang` remains the shipped default.
+
+## 0.62.2 - Damp remaining high-alt look-at bob
+- Live after 0.62.1 (`205431`): vz_rms **2.22** vs **2.30** before; 28 sign-flips unchanged. Throttle D was not the leftover driver.
+- `bias` extra pitch now scales 0→12° over |el| 0→8° (was a ±12° relay at boresight). Look-at pitch `+= 0.03·vz` (NED +down). Pitch LPF τ 0.20→0.50 s.
+
+## 0.62.1 - In-view thrust no longer tracks camera-el altitude
+- In-view `race_*` throttle used `alt_err = 80·sin(el)` while pitch already tracked the same `el` → vz chatter (live `202709`: 27 vz sign-flips / 90 s). Thrust now holds speed with NED `vz` damping (`THRUST_VZ_GAIN=0.05`). Camera proxy still reseeds path-hold after HSV drop.
+- `homing_law=fpa_thrust` still adds `sin(el)` thrust bias.
 
 ## 0.62.0 - Homing laws in flightSetup.json
 - `guidance.homing_law` in `flightSetup.json` (JSONC comments for all 10 options). Parser default `lookat`; shipped value `bias`. `FW_HOMING_LAW` overrides JSON only when set (launcher no longer forces `bias`).

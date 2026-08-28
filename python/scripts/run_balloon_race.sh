@@ -310,6 +310,15 @@ RACE_CSV="${BALLOON_RACE_CSV:-/tmp/balloon_race_$(date +%Y%m%d_%H%M%S).csv}"
 # Quiet when no tmux server yet (fresh machine / after kill-server).
 tmux kill-session -t "${SESSION}" 2>/dev/null || true
 
+# Another tmux session (e2e --detach --no-display) can leave camera PUB on
+# tcp://127.0.0.1:5557. The new balloon_camera then dies with Address already in use
+# and never opens a window. kill.sh only removes Docker, not host python.
+echo "Stopping leftover host race python (camera/control/image/pose)..."
+pkill -f '[r]un_balloon_camera.py' 2>/dev/null || true
+pkill -f '[r]un_balloon_control.py' 2>/dev/null || true
+pkill -f '[r]un_balloon_image_source.py' 2>/dev/null || true
+pkill -f '[r]un_balloon_gz_pose.py' 2>/dev/null || true
+
 if [[ "${NO_SIM}" -eq 0 ]]; then
   echo "Removing leftover SITL docker stacks..."
   bash "${SCRIPT_DIR}/kill.sh" --all || true

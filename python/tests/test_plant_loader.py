@@ -95,11 +95,13 @@ class TestPlantGainsFromDict(unittest.TestCase):
         self.assertNotIn("kp_elev", flat)
         self.assertNotIn("los_roll_slew_rad_s", flat)
         self.assertNotIn("los_roll_lpf_tau_s", flat)
+        self.assertNotIn("los_pitch_lpf_tau_s", flat)
         self.assertNotIn("los_el_bank_atten", flat)
         p = plant_gains_from_dict(flat)
         self.assertAlmostEqual(p.kp_elev, 1.0)
         self.assertAlmostEqual(p.los_roll_slew_rad_s, math.radians(30.0))
         self.assertAlmostEqual(p.los_roll_lpf_tau_s, 0.20)
+        self.assertAlmostEqual(p.los_pitch_lpf_tau_s, 0.50)
         self.assertAlmostEqual(p.los_el_bank_atten, 0.0)
 
     def test_explicit_kp_elev_and_los_roll_override_defaults(self) -> None:
@@ -107,10 +109,12 @@ class TestPlantGainsFromDict(unittest.TestCase):
         flat["kp_elev"] = 1.8
         flat["los_roll_slew_rad_s"] = math.radians(45.0)
         flat["los_roll_lpf_tau_s"] = 0.10
+        flat["los_pitch_lpf_tau_s"] = 0.80
         p = plant_gains_from_dict(flat)
         self.assertAlmostEqual(p.kp_elev, 1.8)
         self.assertAlmostEqual(p.los_roll_slew_rad_s, math.radians(45.0))
         self.assertAlmostEqual(p.los_roll_lpf_tau_s, 0.10)
+        self.assertAlmostEqual(p.los_pitch_lpf_tau_s, 0.80)
 
     def test_builds_plant_via_merge_pp(self) -> None:
         flat = merge_plant_controller(self._nested(), "pure_pursuit_quat")
@@ -257,7 +261,7 @@ class TestLoadPlantJsoncFile(unittest.TestCase):
     def test_race_euler_shares_outer_gains_with_race_quat_all_plants(self) -> None:
         """Plan-mandated JSONC copy (race_euler = verbatim race_quat outer
         block) must hold for every plant except gz_rc_cessna, whose race_euler
-        is retuned for center-through."""
+        is retuned for center-through and 0.65/14 phugoid."""
         from fw_sitl.plant_gains import load_plant_gains, KNOWN_PLANT_IDS
 
         shared_attrs = (
@@ -282,7 +286,8 @@ class TestLoadPlantJsoncFile(unittest.TestCase):
             "slow_range_m",
             "speed_thrust_per_mps",
         )
-        # GZ race_euler is retuned for center-through; keep PID/bank/thrust parity only.
+        # GZ race_euler is retuned for center-through + phugoid (0.65/14);
+        # keep PID/bank/speed-P parity with race_quat.
         gz_shared_attrs = (
             "pid_kp",
             "pid_ki",
@@ -296,7 +301,6 @@ class TestLoadPlantJsoncFile(unittest.TestCase):
             "bank_kp_alt",
             "bank_max_pitch_rad",
             "att_max_pitch_rad",
-            "cruise_thrust",
             "climb_thrust_per_m",
             "min_thrust",
             "max_thrust",

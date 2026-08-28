@@ -34,6 +34,7 @@
   "render_rate_hz": 20,
   "guidance": {
     "control_rate_hz": 20,
+    // GZ in-air spawn IC (gz_spawn_velocity_enu). Chase V is plant race_euler 14.
     "speed_mps": 30,
     "pass_radius_m": 10,
     "lookahead_m": 500,
@@ -63,15 +64,15 @@
     // FW_HOMING_LAW env overrides this key when set. Pitch still clipped to ±20°.
     //    lookat     = point body +X at the blob (pure camera look-at)
     //    pd_lead    = look-at plus PD lead on az/el rates (kd = 0.35 s)
-    //    pn         = rate-only proportional navigation (N=4); ignores boresight
-    //    bias       = look-at plus same-sign 12° elev intercept; slow on steep el (GZ default)
+    //    pn         = NED PNG: λ from camera LOS×attitude, a=N V λ̇, look-lead along inertial λ (N=4, τ=0.25 s, |a|≤2g)
+    //    bias       = look-at plus 12° elev intercept faded to 0 by |el|<8°; slow on steep el
     //    el_first   = wings-level, pitch-only until |el| > 8°, then look-at
     //    bang       = saturate ±20° pitch when |el| > 3°; else hold level pitch
     //    area_slow  = look-at; commanded speed scales with blob area_px (ref 400 px)
     //    fpa_thrust = look-at plus thrust bias ∝ sin(el) (gain 0.35)
     //    filter     = LPF dir_cam (τ = 0.25 s) then look-at
-    //    apn        = pn plus +5° nose-up (gravity bias)
-    "homing_law": "bias",
+    //    apn        = pn plus +g upward in NED (a_z − g; not a fixed +5°)
+    "homing_law": "pn",
     "alt_preserve_heading_err_deg": 20
   },
   "verification": {

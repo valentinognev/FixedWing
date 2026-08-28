@@ -260,6 +260,15 @@ class TestThrustForHold(unittest.TestCase):
         self.assertGreater(climb, cruise)
         self.assertGreaterEqual(climb, 0.85)
 
+    def test_thrust_increases_when_falling(self) -> None:
+        level = thrust_for_hold(
+            z_ned=-100.0, z_hold=-100.0, groundspeed=30.0, speed_mps=30.0, vz=0.0
+        )
+        falling = thrust_for_hold(
+            z_ned=-100.0, z_hold=-100.0, groundspeed=30.0, speed_mps=30.0, vz=5.0
+        )
+        self.assertGreater(falling, level)
+
     def test_thrust_increases_when_banked(self) -> None:
         level = thrust_for_hold(
             z_ned=-100.0, z_hold=-100.0, groundspeed=30.0, speed_mps=30.0, roll_rad=0.0

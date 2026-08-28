@@ -25,8 +25,66 @@ from fw_sitl.platforms.yasim.fg_camera import (
     virtual_screen_rect,
 )
 from fw_sitl.flight_setup import load_flight_setup
-from fw_sitl.race_guidance import ASSISTED_OVERLAY_TEXT, format_ned_pos_line, show_assisted_overlay
+from fw_sitl.race_guidance import (
+    ASSISTED_OVERLAY_TEXT,
+    format_ned_pos_line,
+    show_assisted_overlay,
+    statustext_arming_warn,
+)
 from fw_sitl.zmq_bus import ColorSubscriber, ImageSubscriber, TrackPublisher
+
+_WARN_BGR = (0, 0, 255)
+
+
+def _draw_camera_hud(
+    display,
+    *,
+    warn_line: str | None,
+    assisted_flag: bool,
+    in_view: bool,
+    target_rgb: tuple[int, int, int],
+    pos_line: str | None,
+) -> None:
+    if warn_line:
+        cv2.putText(
+            display,
+            warn_line,
+            (10, 24),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            _WARN_BGR,
+            2,
+        )
+    elif show_assisted_overlay(assisted=assisted_flag, in_view=in_view):
+        cv2.putText(
+            display,
+            ASSISTED_OVERLAY_TEXT,
+            (10, 24),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0, 200, 255),
+            2,
+        )
+    elif in_view:
+        cv2.putText(
+            display,
+            f"track RGB{target_rgb}",
+            (10, 24),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 255, 255),
+            2,
+        )
+    if pos_line is not None:
+        cv2.putText(
+            display,
+            pos_line,
+            (10, 48),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (255, 255, 255),
+            2,
+        )
 
 
 def main() -> int:
@@ -103,6 +161,17 @@ def main() -> int:
         if latest_color is not None:
             target_rgb = latest_color.as_tuple()
             assisted_flag = latest_color.assisted
+        warn_line = (
+            statustext_arming_warn(latest_color.warn)
+            if latest_color is not None
+            else None
+        )
+        pos_line = None
+        if latest_color is not None and latest_color.pos_ned is not None:
+            t_s = (
+                float(latest_color.t_s) if latest_color.t_s is not None else 0.0
+            )
+            pos_line = format_ned_pos_line(t_s, latest_color.pos_ned)
 
         img_sub.poll_and_update()
         latest = img_sub.latest()
@@ -126,42 +195,28 @@ def main() -> int:
                 if result.in_view and result.centroid_uv is not None:
                     cx, cy = result.centroid_uv
                     cv2.circle(display, (int(cx), int(cy)), 8, (0, 255, 255), 2)
-                if show_assisted_overlay(assisted=assisted_flag, in_view=result.in_view):
-                    cv2.putText(
-                        display,
-                        ASSISTED_OVERLAY_TEXT,
-                        (10, 24),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6,
-                        (0, 200, 255),
-                        2,
-                    )
-                elif result.in_view:
-                    cv2.putText(
-                        display,
-                        f"track RGB{target_rgb}",
-                        (10, 24),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6,
-                        (255, 255, 255),
-                        2,
-                    )
-                if latest_color is not None and latest_color.pos_ned is not None:
-                    t_s = (
-                        float(latest_color.t_s)
-                        if latest_color.t_s is not None
-                        else 0.0
-                    )
-                    cv2.putText(
-                        display,
-                        format_ned_pos_line(t_s, latest_color.pos_ned),
-                        (10, 48),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.55,
-                        (255, 255, 255),
-                        2,
-                    )
+                _draw_camera_hud(
+                    display,
+                    warn_line=warn_line,
+                    assisted_flag=assisted_flag,
+                    in_view=result.in_view,
+                    target_rgb=target_rgb,
+                    pos_line=pos_line,
+                )
                 cv2.imshow(win, display)
+        elif show_ui and warn_line:
+            placeholder = np.zeros(
+                (camera.height_px, camera.width_px, 3), dtype=np.uint8
+            )
+            _draw_camera_hud(
+                placeholder,
+                warn_line=warn_line,
+                assisted_flag=assisted_flag,
+                in_view=False,
+                target_rgb=target_rgb,
+                pos_line=pos_line,
+            )
+            cv2.imshow(win, placeholder)
         next_t += period
         sleep = next_t - time.time()
         if show_ui:

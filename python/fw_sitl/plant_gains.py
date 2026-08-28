@@ -73,6 +73,7 @@ class PlantGains:
     los_el_bank_atten: float
     los_roll_slew_rad_s: float
     los_roll_lpf_tau_s: float
+    los_pitch_lpf_tau_s: float
     cruise_thrust: float
     climb_thrust_per_m: float
     min_thrust: float
@@ -121,6 +122,7 @@ class PlantGains:
             self.los_el_bank_atten,
             self.los_roll_slew_rad_s,
             self.los_roll_lpf_tau_s,
+            self.los_pitch_lpf_tau_s,
             self.cruise_thrust,
             self.climb_thrust_per_m,
             self.min_thrust,

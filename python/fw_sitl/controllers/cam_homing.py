@@ -1,7 +1,8 @@
-"""Camera-only in-view homing principals (no balloon / aircraft NED range).
+"""In-view homing principals (no balloon / aircraft NED *range*).
 
 Each named law maps HSV body-FRD LOS (+ optional blob area and LOS rates)
-into a seeker direction plus speed/thrust extras. Switch with
+into a seeker direction plus speed/thrust extras. ``pn``/``apn`` then
+rotate that LOS into NED and run PN on inertial λ̇. Switch with
 ``FW_HOMING_LAW`` or ``RaceQuatController.homing_law``.
 """
 from __future__ import annotations
@@ -11,6 +12,7 @@ import os
 from dataclasses import dataclass, field
 
 from fw_sitl.path_geometry import wrap_pi
+from fw_sitl.quat import IDENTITY, rotate_body_to_ned, rotate_ned_to_body
 
 KNOWN_HOMING_LAWS: tuple[str, ...] = (
     "lookat",
@@ -36,6 +38,7 @@ _PN_V_MIN_MPS = 1.0
 _PN_V_DEFAULT_MPS = 30.0
 _PD_KD_S = 0.35
 _BIAS_RAD = math.radians(12.0)
+_BIAS_FADE_RAD = math.radians(8.0)
 _EL_FIRST_RAD = math.radians(8.0)
 _BANG_DEADBAND_RAD = math.radians(3.0)
 _FILTER_TAU_S = 0.25
@@ -91,8 +94,8 @@ class CamHomingState:
     prev_el: float | None = None
     filt_az: float | None = None
     filt_el: float | None = None
-    filt_lam_az: float | None = None
-    filt_lam_el: float | None = None
+    prev_lam_ned: tuple[float, float, float] | None = None
+    filt_lam_ned: tuple[float, float, float] | None = None
     prev_area: float = 0.0
     az_dot: float = 0.0
     el_dot: float = 0.0
@@ -159,39 +162,86 @@ def _lpf(prev: float | None, x: float, dt: float, tau: float) -> float:
     return float(prev) + a * (float(x) - float(prev))
 
 
+def _unit3(v: tuple[float, float, float]) -> tuple[float, float, float]:
+    n = math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
+    if n < 1e-12:
+        return (1.0, 0.0, 0.0)
+    return (v[0] / n, v[1] / n, v[2] / n)
+
+
+def _lam_ned(
+    dir_body: tuple[float, float, float],
+    q_act: tuple[float, float, float, float] | None,
+) -> tuple[float, float, float]:
+    q = IDENTITY if q_act is None else q_act
+    return _unit3(rotate_body_to_ned(q, dir_body))
+
+
+def _clip_vec(
+    v: tuple[float, float, float], limit: float
+) -> tuple[float, float, float]:
+    mag = math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
+    if mag <= limit or mag < 1e-12:
+        return v
+    s = float(limit) / mag
+    return (v[0] * s, v[1] * s, v[2] * s)
+
+
 def _pn_cmd(
     state: CamHomingState,
+    dir_body: tuple[float, float, float],
     *,
     dt: float,
     speed_mps: float | None,
-    pqr: tuple[float, float, float] | None,
+    q_act: tuple[float, float, float, float] | None,
     gravity: bool,
-) -> tuple[float, float]:
-    p = q = r = 0.0
-    if pqr is not None and len(pqr) >= 3:
-        try:
-            p, q, r = float(pqr[0]), float(pqr[1]), float(pqr[2])
-        except (TypeError, ValueError):
-            p = q = r = 0.0
-        if not all(math.isfinite(x) for x in (p, q, r)):
-            p = q = r = 0.0
-    lam_az = float(state.az_dot) + r
-    lam_el = float(state.el_dot) + q
+) -> tuple[float, float, float]:
+    """Classical PN in NED: λ̇ from inertial LOS, a = N V λ̇, look-lead along λ."""
+    lam = _lam_ned(dir_body, q_act)
+    dt = max(float(dt), 1e-3)
+    prev = state.prev_lam_ned
+    if prev is None:
+        lam_dot = (0.0, 0.0, 0.0)
+    else:
+        dlam = (
+            (lam[0] - prev[0]) / dt,
+            (lam[1] - prev[1]) / dt,
+            (lam[2] - prev[2]) / dt,
+        )
+        radial = dlam[0] * lam[0] + dlam[1] * lam[1] + dlam[2] * lam[2]
+        lam_dot = (
+            dlam[0] - radial * lam[0],
+            dlam[1] - radial * lam[1],
+            dlam[2] - radial * lam[2],
+        )
+        lam_dot = _clip_vec(lam_dot, 2.0)
+    state.prev_lam_ned = lam
     tau_lpf = max(1e-3, _env_float("FW_PN_LPF_TAU_S", _PN_LPF_TAU_S))
-    state.filt_lam_az = _lpf(state.filt_lam_az, lam_az, dt, tau_lpf)
-    state.filt_lam_el = _lpf(state.filt_lam_el, lam_el, dt, tau_lpf)
+    prev_f = state.filt_lam_ned
+    if prev_f is None:
+        filt = lam_dot
+    else:
+        filt = (
+            _lpf(prev_f[0], lam_dot[0], dt, tau_lpf),
+            _lpf(prev_f[1], lam_dot[1], dt, tau_lpf),
+            _lpf(prev_f[2], lam_dot[2], dt, tau_lpf),
+        )
+    state.filt_lam_ned = filt
     n = max(0.1, _env_float("FW_PN_N", _PN_NAV_RATIO))
     v = max(_PN_V_MIN_MPS, _pn_speed(speed_mps))
     a_max = max(0.1, _env_float("FW_PN_A_MAX", _PN_A_MAX_MPS2))
-    a_az = max(-a_max, min(a_max, n * v * float(state.filt_lam_az)))
-    a_el = n * v * float(state.filt_lam_el)
+    a = (n * v * filt[0], n * v * filt[1], n * v * filt[2])
     if gravity:
-        a_el += _G_MPS2
-    a_el = max(-a_max, min(a_max, a_el))
+        # NED +z down: APN gravity bias is extra upward accel.
+        a = (a[0], a[1], a[2] - _G_MPS2)
+    a = _clip_vec(a, a_max)
     tau = max(1e-3, _env_float("FW_PN_TAU_S", _PN_TAU_S))
-    az_cmd = (a_az / v) * tau
-    el_cmd = (a_el / v) * tau
-    return az_cmd, _clip_el(el_cmd)
+    lead = ((a[0] / v) * tau, (a[1] / v) * tau, (a[2] / v) * tau)
+    lam_cmd = _unit3((lam[0] + lead[0], lam[1] + lead[1], lam[2] + lead[2]))
+    q = IDENTITY if q_act is None else q_act
+    los_body = rotate_ned_to_body(q, lam_cmd)
+    az, el = _az_el(los_body)
+    return _dir_from_az_el(az, el)
 
 
 def apply_homing_law(
@@ -203,8 +253,15 @@ def apply_homing_law(
     area_px: float = 0.0,
     speed_mps: float | None = None,
     pqr: tuple[float, float, float] | None = None,
+    q_act: tuple[float, float, float, float] | None = None,
 ) -> HomingCmd:
-    """Apply one camera-only principal. ``dir_body`` is HSV body FRD LOS."""
+    """Apply one camera-only principal. ``dir_body`` is HSV body FRD LOS.
+
+    ``pn``/``apn`` rotate that LOS into NED with ``q_act`` and differentiate
+    there. ``pqr`` is accepted for caller compatibility and unused (body
+    rates are not inertial λ̇).
+    """
+    _ = pqr
     key = resolve_homing_law(law)
     az, el = state.observe(dir_body, dt, area_px=area_px)
     cmd = HomingCmd(los_body=dir_body)
@@ -216,13 +273,18 @@ def apply_homing_law(
         cmd.los_body = _dir_from_az_el(az_cmd, el_cmd)
         return cmd
     if key == "pn":
-        az_cmd, el_cmd = _pn_cmd(
-            state, dt=dt, speed_mps=speed_mps, pqr=pqr, gravity=False
+        cmd.los_body = _pn_cmd(
+            state,
+            dir_body,
+            dt=dt,
+            speed_mps=speed_mps,
+            q_act=q_act,
+            gravity=False,
         )
-        cmd.los_body = _dir_from_az_el(az_cmd, el_cmd)
         return cmd
     if key == "bias":
-        extra = math.copysign(_BIAS_RAD, el) if abs(el) > 1e-6 else 0.0
+        fade = min(1.0, abs(el) / _BIAS_FADE_RAD)
+        extra = math.copysign(_BIAS_RAD * fade, el) if abs(el) > 1e-6 else 0.0
         cmd.los_body = _dir_from_az_el(az, _clip_el(el + extra))
         el_frac = min(1.0, abs(el) / _MAX_EL_RAD)
         cmd.speed_scale = max(0.45, 1.0 - 0.55 * el_frac)
@@ -252,9 +314,13 @@ def apply_homing_law(
         cmd.los_body = _dir_from_az_el(faz, fel)
         return cmd
     if key == "apn":
-        az_cmd, el_cmd = _pn_cmd(
-            state, dt=dt, speed_mps=speed_mps, pqr=pqr, gravity=True
+        cmd.los_body = _pn_cmd(
+            state,
+            dir_body,
+            dt=dt,
+            speed_mps=speed_mps,
+            q_act=q_act,
+            gravity=True,
         )
-        cmd.los_body = _dir_from_az_el(az_cmd, el_cmd)
         return cmd
     return cmd
