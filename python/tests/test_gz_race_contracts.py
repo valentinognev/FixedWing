@@ -159,6 +159,7 @@ class TestGzRaceContracts(unittest.TestCase):
         self.assertIn("args.gz", gate)
         self.assertIn("args.yasim", gate)
         self.assertIn("lookat_clears_alt_step", ctl)
+        self.assertIn("currently_lookat=last_use_lookat", ctl)
         # Off-blob dir_ned must be geometric even when HSV last_in_view is still
         # true (lookat_clears dropped use_lookat; live 110425 locked 99° east).
         self.assertIn("if not use_lookat:\n                chase = race.geometric_los(pos)", ctl)

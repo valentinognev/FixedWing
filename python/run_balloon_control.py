@@ -763,6 +763,7 @@ def main() -> int:
     last_dir_cam: tuple[float, float, float] | None = None
     last_area_px = 0.0
     last_track_in_view = False
+    last_use_lookat = False
     ignore_next_track = False
     period = 1.0 / rate
     next_t = time.time()
@@ -1122,7 +1123,7 @@ def main() -> int:
                 cam_el_rad = math.radians(el_deg)
             tgt_z = race.balloon_ned()[2]
             if use_lookat and not lookat_clears_alt_step(
-                cam_el_rad, pos[2], tgt_z
+                cam_el_rad, pos[2], tgt_z, currently_lookat=last_use_lookat
             ):
                 use_lookat = False
             if race.check_pass(
@@ -1218,6 +1219,7 @@ def main() -> int:
             # course at ~99° east (live 110425) instead of balloon ~25°.
             if not use_lookat:
                 chase = race.geometric_los(pos)
+            last_use_lookat = use_lookat
             yaw_for_sp = None if use_lookat else att[2]
             tgt = race.balloon_ned()
             range_m = math.hypot(pos[0] - tgt[0], pos[1] - tgt[1])

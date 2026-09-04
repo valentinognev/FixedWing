@@ -386,6 +386,53 @@ class TestRaceQuatLos(unittest.TestCase):
         self.assertAlmostEqual(ctl.last_z_hold or 0.0, 20.0, places=2)
         self.assertNotAlmostEqual(ctl.last_z_hold or 0.0, proxy or 0.0, places=1)
 
+    def test_path_hold_alt_step_uses_balloon_z_not_shallow_proxy(self) -> None:
+        """lookat_clears can drop LOS while HSV still has a shallow blob.
+
+        Live 112813: pos_z≈16, balloon z=0, el≈+6°. Camera proxy froze
+        path-hold ~8 m below the balloon so the plane stopped climbing
+        (B1 then 4.2 m under; lap-2 vz flips 0.58/s vs tuning 0.12/s).
+        """
+        ctl = self._build(plant_id="gz_rc_cessna", speed=14.0)
+        el = math.radians(6.0)
+        dir_body = (math.cos(el), 0.0, -math.sin(el))
+        pos_z = 16.0
+        with patch(
+            "fw_sitl.controllers.race_quat.send_attitude_target", create=True
+        ) as send:
+            ctl.send_chase_setpoint(
+                MagicMock(),
+                (0.0, 0.0, pos_z),
+                (1.0, 0.0, 0.0),
+                1,
+                yaw_rad=0.0,
+                q_act=from_rpy(0.0, 0.0, 0.0),
+                dt=0.05,
+                in_view=True,
+                dir_body=dir_body,
+                path_lock_token=0,
+            )
+            proxy = ctl.last_z_hold
+            ctl.send_chase_setpoint(
+                MagicMock(),
+                (0.0, 0.0, pos_z),
+                (1.0, 0.0, 0.0),
+                1,
+                yaw_rad=0.0,
+                q_act=from_rpy(0.0, 0.0, 0.0),
+                dt=0.05,
+                in_view=False,
+                z_target=0.0,
+                vx=13.0,
+                vy=0.0,
+                path_lock_token=0,
+            )
+        self.assertEqual(ctl.last_law, "path")
+        self.assertAlmostEqual(ctl.last_z_hold or 0.0, 0.0, places=2)
+        self.assertGreater(abs((proxy or 0.0) - 0.0), 5.0)
+        _master, _roll, pitch, _yaw, _thrust = send.call_args[0]
+        self.assertGreater(pitch, 0.05)
+
     def test_in_view_steep_los_uses_los_pitch_cap(self) -> None:
         plant = load_plant_gains("jsbsim_rascal", controller="race_quat")
         ctrl = self._build()

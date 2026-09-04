@@ -79,6 +79,7 @@ def chase_uses_lookat(*, tracker_in_view: bool, on_screen: bool) -> bool:
 
 LOOKAT_ALT_STEP_M = 10.0
 LOOKAT_EL_MIN_RAD = math.radians(12.0)
+LOOKAT_EL_DROP_RAD = math.radians(8.0)
 
 
 def lookat_clears_alt_step(
@@ -88,6 +89,7 @@ def lookat_clears_alt_step(
     *,
     step_m: float = LOOKAT_ALT_STEP_M,
     el_min_rad: float = LOOKAT_EL_MIN_RAD,
+    currently_lookat: bool = False,
 ) -> bool:
     """Keep path-hold through an altitude step until HSV matches the needed dive/climb.
 
@@ -95,6 +97,10 @@ def lookat_clears_alt_step(
     opposite-sign HSV lock (live ``000631`` el=+15° while 30 m high) commands
     the opposite pitch and stalls the capture. Co-altitude (``|Δz|≤step_m``)
     always allows look-at.
+
+    Enter look-at on a step only when |el|≥12° with the needed sign. Stay
+    until |el|<8° (or wrong sign) so balloon-z path-hold does not chatter
+    thrust at the 12° edge (live proxy-fix 200 s).
     """
     need = float(tgt_z) - float(pos_z)
     if abs(need) <= float(step_m):
@@ -103,6 +109,9 @@ def lookat_clears_alt_step(
         return False
     el = float(el_rad)
     lo = float(el_min_rad)
+    drop = min(lo, LOOKAT_EL_DROP_RAD)
+    if currently_lookat:
+        lo = drop
     if need > 0.0:
         return el <= -lo
     return el >= lo

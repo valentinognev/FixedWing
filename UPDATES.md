@@ -1,5 +1,11 @@
 # Updates
 
+## 0.70.0 - alt-step path-hold uses balloon z; look-at 12°/8° hysteresis
+- `lookat_clears` dropping LOS with a shallow blob reseeding path-hold from `80·sin(el)` froze ~16 m below B0 (live `112813`: B1 **4.20 m under**, first z<5 at 54 s; 117 vz flips / 200 s).
+- Path-hold now keeps balloon `z_target` while `|Δz|>10 m`; camera proxy reseeds only when co-altitude (same balloon).
+- `lookat_clears_alt_step` enters look-at on a step at |el|≥12° correct sign and drops below 8° (`currently_lookat`) so balloon-z path-hold does not chatter at 12°.
+- Live GZ 200 s `pn` `/tmp/balloon_race_hyst.csv` (+ `.pkl`): first circuit B0 **2.91** / B1 **0.20** / B2 **4.62** m (tuning `vz_tune2` 3.23 / 0.86 / 4.23; `111023` 2.60 / 0.35 / 3.45). First z<5 at 21 s. Lap-2 B2 5.84 m still the high residual. vz flips 71 / 120 s vs `vz_tune2` 15.
+
 ## 0.69.1 - off-blob path-hold uses geometric bearing after lookat_clears
 - `lookat_clears_alt_step` can drop `use_lookat` while HSV `last_in_view` is still true, so `chase_dir_ned` kept returning camera LOS. Path-hold then froze that course (~99° east, live `110425`) instead of the balloon (~25°) and never homed.
 - Off-blob `send_chase_setpoint` now always gets `race.geometric_los`. Live GZ 90 s `111023`: first circuit B0 **2.60** / B1 **0.35** / B2 **3.45** m (pre-fix `110425`: 0 passes, flew east).

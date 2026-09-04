@@ -378,6 +378,34 @@ class TestLookatVsAssisted(unittest.TestCase):
             lookat_clears_alt_step(math.radians(-15.0), pos_z=20.0, tgt_z=-20.0)
         )
 
+    def test_lookat_hysteresis_holds_between_8_and_12_deg(self) -> None:
+        """12° enter / 8° drop so balloon-z path-hold does not chatter at 12°.
+
+        Live proxy-fix 200 s: el around 12° toggled LOS vs z_target=0 and
+        pumped vz (72 flips / 120 s vs 111023 22 / 90 s).
+        """
+        self.assertFalse(
+            lookat_clears_alt_step(
+                math.radians(10.0), pos_z=20.0, tgt_z=0.0
+            )
+        )
+        self.assertTrue(
+            lookat_clears_alt_step(
+                math.radians(10.0),
+                pos_z=20.0,
+                tgt_z=0.0,
+                currently_lookat=True,
+            )
+        )
+        self.assertFalse(
+            lookat_clears_alt_step(
+                math.radians(5.0),
+                pos_z=20.0,
+                tgt_z=0.0,
+                currently_lookat=True,
+            )
+        )
+
 
 class TestStaleTrackAssisted(unittest.TestCase):
     def test_stale_locks_assisted_forever(self) -> None:

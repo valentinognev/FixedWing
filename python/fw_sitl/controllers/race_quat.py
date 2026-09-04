@@ -36,6 +36,7 @@ from fw_sitl.path_geometry import (
 from fw_sitl.plant_gains import PlantGains
 from fw_sitl.px4_att_cascade import Px4FwAttCascade
 from fw_sitl.quat import conjugate, from_rpy, mul, rpy_from_quat
+from fw_sitl.race_guidance import LOOKAT_ALT_STEP_M
 
 
 class RaceQuatController:
@@ -262,9 +263,18 @@ class RaceQuatController:
             self._cam_homing = CamHomingState()
             heading_ref = chase_heading_rad(yaw_act, vx, vy)
             token = path_lock_token
+            # Camera 80·sin(el) is a co-altitude HSV-drop reseed. During an
+            # altitude step lookat_clears drops LOS with a shallow blob
+            # (live 112813: el≈6° at Δz=16 m) and that proxy froze path-hold
+            # ~8 m below the balloon.
+            alt_step = (
+                z_target is not None
+                and abs(float(pos_ned[2]) - float(z_target)) > LOOKAT_ALT_STEP_M
+            )
             if self._path_lock is None or self._path_lock[0] != token:
                 if (
-                    self._los_z_hold is not None
+                    not alt_step
+                    and self._los_z_hold is not None
                     and self._los_z_token == token
                 ):
                     z_hold = float(self._los_z_hold)
@@ -277,6 +287,9 @@ class RaceQuatController:
                     float(z_hold),
                 )
             _tok, origin_xy, lock_course, z_hold = self._path_lock
+            if alt_step:
+                z_hold = float(z_target)
+                self._path_lock = (_tok, origin_xy, lock_course, z_hold)
             self.last_law = "path"
             path_kw = self._plant.path_kwargs() if self._plant is not None else {}
             q_des = q_des_from_path(
