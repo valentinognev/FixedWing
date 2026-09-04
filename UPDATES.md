@@ -1,5 +1,10 @@
 # Updates
 
+## 0.71.1 - off-blob path-hold refreshes course, not first-lock heading
+- After B1, `gz_advanced_plane` never HSV-locked B2 (`assisted=1`). Path-hold froze the first south geometric course and flew it to N≈−1600 (live `/tmp/balloon_race_20260904_204638.csv`: B0 ~0.5 m t=21.5 / B1 ~1 m t=32.1 / B2 never).
+- `race_quat`/`race_euler` now refresh path-hold `origin_xy` and course from this tick's geometric LOS; `z_hold` still freezes per balloon (0.61/0.70).
+- Host: `test_path_hold_retargets_course_after_flying_past_balloon` (south-of-B2 `dir_ned` north updates `lock_course` and banks). Live 5 m first-circuit still unverified.
+
 ## 0.71.0 - GZ advanced_plane race_quat + pn
 - `--gz --model advanced_plane` (`gz_advanced_plane`) is a `race_quat`+`pn` plant; shipped `flightSetup.json` stays `gz_model` `rc_cessna`.
 - Outer copies Cessna chase structure at 20 m/s trim: LOS 20° / `kp_elev` 1.5 / pitch LPF 0.50 / `pitch_vz_gain` 0.08 on `race_quat`.

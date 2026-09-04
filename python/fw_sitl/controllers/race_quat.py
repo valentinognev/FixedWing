@@ -286,10 +286,15 @@ class RaceQuatController:
                     course,
                     float(z_hold),
                 )
-            _tok, origin_xy, lock_course, z_hold = self._path_lock
+            _tok, _origin_xy, _lock_course, z_hold = self._path_lock
             if alt_step:
                 z_hold = float(z_target)
-                self._path_lock = (_tok, origin_xy, lock_course, z_hold)
+            # Freeze z_hold on this balloon (0.61/0.70). Origin+course follow
+            # this tick's geometric LOS so a missed HSV corner (live 204638
+            # B2) does not fly the first-lock heading to infinity.
+            origin_xy = (float(pos_ned[0]), float(pos_ned[1]))
+            lock_course = course
+            self._path_lock = (_tok, origin_xy, lock_course, z_hold)
             self.last_law = "path"
             path_kw = self._plant.path_kwargs() if self._plant is not None else {}
             q_des = q_des_from_path(

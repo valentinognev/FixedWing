@@ -16,6 +16,7 @@ if str(_PYTHON_ROOT) not in sys.path:
 from fw_sitl.attitude_pid import AttitudePid
 from fw_sitl.body_cmd_bridge import BodyCmdBridge
 from fw_sitl.flight_setup import DEFAULT_CONTROLLER
+from fw_sitl.path_geometry import wrap_pi
 from fw_sitl.plant_gains import load_plant_gains
 from fw_sitl.quat import from_rpy, rpy_from_quat
 
@@ -280,6 +281,61 @@ class TestRaceQuatLos(unittest.TestCase):
         self.assertEqual(ctrl.last_law, "path")
         self.assertIsNotNone(ctrl._path_lock)
         self.assertAlmostEqual(ctrl._path_lock[2], 0.0, places=3)
+
+    def test_path_hold_retargets_course_after_flying_past_balloon(self) -> None:
+        """Live 204638: B2 never HSV; frozen south lock_course flew N 500→−1600.
+
+        After B1, geometric LOS was south so path-hold froze that line. Once
+        south of B2, dir_ned points back north; bank must reverse toward it.
+        """
+        ctrl = self._build(plant_id="gz_advanced_plane", speed=20.0)
+        tgt = (300.0, 200.0, 20.0)
+        north_of = (495.0, 219.0, -21.0)
+        south_of = (159.0, 249.0, 18.0)
+
+        def los(pos: tuple[float, float, float]) -> tuple[float, float, float]:
+            return (tgt[0] - pos[0], tgt[1] - pos[1], tgt[2] - pos[2])
+
+        yaw_south = math.pi
+        vx_south, vy_south = -20.0, 0.0
+        with patch(
+            "fw_sitl.controllers.race_quat.send_attitude_target", create=True
+        ) as send:
+            ctrl.send_chase_setpoint(
+                MagicMock(),
+                north_of,
+                los(north_of),
+                1,
+                yaw_rad=yaw_south,
+                q_act=from_rpy(0.0, 0.0, yaw_south),
+                dt=0.05,
+                in_view=False,
+                z_target=tgt[2],
+                vx=vx_south,
+                vy=vy_south,
+                path_lock_token=2,
+            )
+            first_course = ctrl._path_lock[2]
+            for _ in range(12):
+                ctrl.send_chase_setpoint(
+                    MagicMock(),
+                    south_of,
+                    los(south_of),
+                    1,
+                    yaw_rad=yaw_south,
+                    q_act=from_rpy(0.0, 0.0, yaw_south),
+                    dt=0.05,
+                    in_view=False,
+                    z_target=tgt[2],
+                    vx=vx_south,
+                    vy=vy_south,
+                    path_lock_token=2,
+                )
+        want = math.atan2(los(south_of)[1], los(south_of)[0])
+        self.assertAlmostEqual(ctrl._path_lock[2], want, places=2)
+        self.assertGreater(abs(wrap_pi(ctrl._path_lock[2] - first_course)), 1.0)
+        _master, roll, _pitch, _yaw, _thrust = send.call_args[0]
+        self.assertGreater(abs(roll), 0.2)
 
     def test_path_hold_clips_climb_when_below_recover_speed(self) -> None:
         """Off-blob must not command +15° climb at GS 4.6 (below v_stall×v_recover)."""
