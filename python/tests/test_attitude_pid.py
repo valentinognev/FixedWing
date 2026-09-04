@@ -15,6 +15,7 @@ if str(_PYTHON_ROOT) not in sys.path:
 from fw_sitl.attitude_pid import (
     AttitudePid,
     chase_speed_mps,
+    pitch_with_vz_damp,
     q_des_from_los,
     q_des_from_path,
     thrust_for_hold,
@@ -251,6 +252,22 @@ class TestAttitudePid(unittest.TestCase):
         _r1, p1, _y1 = rpy_from_quat(q1)
         _r2, p2, _y2 = rpy_from_quat(q2)
         self.assertGreater(p2, p1)
+
+
+class TestPitchWithVzDamp(unittest.TestCase):
+    def test_explicit_gain_scales_nose_down_on_climb(self) -> None:
+        """Open-loop look-at D is a plant gain; delayed default 0.03 pumped GZ vz."""
+        still = pitch_with_vz_damp(0.10, 0.0, max_pitch=0.35, los_el=0.0)
+        mild = pitch_with_vz_damp(
+            0.10, -5.0, max_pitch=0.35, los_el=0.0, vz_gain=0.03
+        )
+        hard = pitch_with_vz_damp(
+            0.10, -5.0, max_pitch=0.35, los_el=0.0, vz_gain=0.08
+        )
+        self.assertAlmostEqual(still, 0.10, places=5)
+        self.assertAlmostEqual(mild, 0.10 + 0.03 * (-5.0), places=5)
+        self.assertAlmostEqual(hard, 0.10 + 0.08 * (-5.0), places=5)
+        self.assertLess(hard, mild)
 
 
 class TestThrustForHold(unittest.TestCase):

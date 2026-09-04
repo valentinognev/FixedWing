@@ -93,6 +93,11 @@
       // 4.94 m at 0.50; vz bob unchanged. Keep 0.50 so intercepts are not lagged.
       "los_pitch_lpf_tau_s": 0.50,
 
+      // Look-at pitch D vs NED vz (rad / (m/s)). Open-loop q_des has no
+      // cascade D; 0.03 left 66–77 vz sign-flips. 0.08 after the LPF.
+      // |el|>8° still skips so intercept dives are not fought.
+      "pitch_vz_gain": 0.08,
+
       // Nominal thrust fraction at cruise. Sweep 08 (thr 0.65 + 14 m/s):
       // first-circuit 1.47 / 1.00 / 3.10 m; vz flips 67→21 vs 0.80/16.
       "cruise_thrust": 0.65,

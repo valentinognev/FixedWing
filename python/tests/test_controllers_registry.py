@@ -591,6 +591,75 @@ class TestRaceQuatLos(unittest.TestCase):
         climb_p = send_climb.call_args[0][2]
         self.assertLess(climb_p, still_p - math.radians(3.0))
 
+    def test_in_view_vz_damp_not_lagged_by_pitch_lpf(self) -> None:
+        """Seeker LPF must not delay vz D (GZ 074944: 2 s pitch bob, 77 vz flips)."""
+        from dataclasses import replace
+
+        ctl = self._build(speed=18.0)
+        ctl.homing_law = "lookat"
+        ctl._plant = replace(ctl._plant, los_pitch_lpf_tau_s=5.0)
+        el = math.radians(8.0)
+        dir_body = (math.cos(el), 0.0, -math.sin(el))
+        kw = dict(
+            yaw_rad=0.0,
+            q_act=from_rpy(0.0, 0.0, 0.0),
+            dt=0.05,
+            in_view=True,
+            dir_body=dir_body,
+            vx=18.0,
+            vy=0.0,
+        )
+        pitches = []
+        with patch(
+            "fw_sitl.controllers.race_quat.send_attitude_target", create=True
+        ) as send:
+            ctl.send_chase_setpoint(
+                MagicMock(), (0.0, 0.0, -17.0), (1.0, 0.0, 0.0), 1, vz=0.0, **kw
+            )
+            pitches.append(send.call_args[0][2])
+            ctl.send_chase_setpoint(
+                MagicMock(), (0.0, 0.0, -17.0), (1.0, 0.0, 0.0), 1, vz=-5.0, **kw
+            )
+            pitches.append(send.call_args[0][2])
+        # D after LPF: climbing vz=-5 → −0.15 rad even with τ=5 s.
+        # D before LPF: α=0.05/5.05 ≈ 0.01 → only ~0.0015 rad gets through.
+        self.assertLess(pitches[1], pitches[0] - math.radians(6.0))
+
+    def test_in_view_uses_plant_pitch_vz_gain(self) -> None:
+        """GZ race_quat 0.08 vs default 0.03: more D on the same climb."""
+        from dataclasses import replace
+
+        el = math.radians(4.0)
+        dir_body = (math.cos(el), 0.0, -math.sin(el))
+        kw = dict(
+            yaw_rad=0.0,
+            q_act=from_rpy(0.0, 0.0, 0.0),
+            dt=0.05,
+            in_view=True,
+            dir_body=dir_body,
+            vx=18.0,
+            vy=0.0,
+        )
+
+        def _pitch(gain: float) -> float:
+            ctl = self._build(speed=18.0)
+            ctl.homing_law = "lookat"
+            ctl._plant = replace(ctl._plant, pitch_vz_gain=gain)
+            with patch(
+                "fw_sitl.controllers.race_quat.send_attitude_target", create=True
+            ) as send:
+                ctl.send_chase_setpoint(
+                    MagicMock(),
+                    (0.0, 0.0, -17.0),
+                    (1.0, 0.0, 0.0),
+                    1,
+                    vz=-5.0,
+                    **kw,
+                )
+            return send.call_args[0][2]
+
+        self.assertLess(_pitch(0.08), _pitch(0.03) - math.radians(10.0))
+
     def test_steep_dive_falling_vz_does_not_ease_nose_down(self) -> None:
         """vz-damp must not fight a steep intercept dive (B2 080513: −31° el, −14° cmd)."""
         ctl_still = self._build(speed=18.0)

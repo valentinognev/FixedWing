@@ -161,6 +161,10 @@ class TestPlantGainsRegistry(unittest.TestCase):
             p.fingerprint(),
             replace(p, los_pitch_lpf_tau_s=0.8).fingerprint(),
         )
+        self.assertNotEqual(
+            p.fingerprint(),
+            replace(p, pitch_vz_gain=0.08).fingerprint(),
+        )
 
     def test_jsbsim_race_quat_leads_body_az(self) -> None:
         """JSBSim 131011: kp=2 + 12 m/s @ 220 m crawled (~15 m/s) and over-banked
@@ -321,6 +325,8 @@ class TestPlantGainsRegistry(unittest.TestCase):
         self.assertAlmostEqual(race.slow_range_m, euler.slow_range_m)
         self.assertAlmostEqual(race.speed_mps, euler.speed_mps)
         self.assertAlmostEqual(race.cruise_thrust, euler.cruise_thrust)
+        self.assertAlmostEqual(euler.pitch_vz_gain, 0.03)
+        self.assertAlmostEqual(race.pitch_vz_gain, 0.08)
         lim = dict(euler.px4_inner)
         self.assertAlmostEqual(lim["FW_P_LIM_MIN"], -20.0)
         self.assertAlmostEqual(lim["FW_P_LIM_MAX"], 20.0)

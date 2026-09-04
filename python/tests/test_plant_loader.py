@@ -103,6 +103,7 @@ class TestPlantGainsFromDict(unittest.TestCase):
         self.assertAlmostEqual(p.los_roll_lpf_tau_s, 0.20)
         self.assertAlmostEqual(p.los_pitch_lpf_tau_s, 0.50)
         self.assertAlmostEqual(p.los_el_bank_atten, 0.0)
+        self.assertAlmostEqual(p.pitch_vz_gain, 0.03)
 
     def test_explicit_kp_elev_and_los_roll_override_defaults(self) -> None:
         flat = merge_plant_controller(self._nested(), "race_quat")
@@ -115,6 +116,9 @@ class TestPlantGainsFromDict(unittest.TestCase):
         self.assertAlmostEqual(p.los_roll_slew_rad_s, math.radians(45.0))
         self.assertAlmostEqual(p.los_roll_lpf_tau_s, 0.10)
         self.assertAlmostEqual(p.los_pitch_lpf_tau_s, 0.80)
+        flat["pitch_vz_gain"] = 0.08
+        p = plant_gains_from_dict(flat)
+        self.assertAlmostEqual(p.pitch_vz_gain, 0.08)
 
     def test_builds_plant_via_merge_pp(self) -> None:
         flat = merge_plant_controller(self._nested(), "pure_pursuit_quat")

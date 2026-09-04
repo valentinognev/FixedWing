@@ -1,5 +1,10 @@
 # Updates
 
+## 0.68.0 - race_quat vz D after pitch LPF
+- Open-loop look-at applied `pitch += Kv·vz` **before** the 0.50 s seeker LPF, so D lagged ~0.5 s and pumped a ~2 s pitch bob (pickle vz sign-flips 66–77 vs `race_euler` 21).
+- `race_quat` now damps after `_smooth_pitch`. New optional `PlantGains.pitch_vz_gain` (default 0.03); GZ `race_quat` **0.08**. `|el|>8°` still skips. `race_euler` keeps D on `q_des` before the cascade.
+- Live GZ 120 s `pn` 2026-09-04 08:12 `/tmp/balloon_race_race_quat_vz_tune2.csv` (+ `.pkl`): first circuit B0 **3.23** / B1 **0.86** / B2 **4.23** m; vz flips **15** vs 07:12 baseline 3.73 / 0.57 / 3.61 m and **66** flips (074944: 3.15 / 0.94 / 3.77 m, **77** flips). B0/B1 miss unchanged; B2 +0.5 m still ≤5 m.
+
 ## 0.67.0 - GZ race_quat uses race_euler outer gains
 - Shipped `flightSetup.json` controller `race_euler` → `race_quat` (keep euler format, `pn`, spawn `speed_mps` 30).
 - GZ `gz_rc_cessna` `race_quat` copies the `race_euler` outer set: LOS pitch 0.35, `kp_elev` 1.5, roll slew 45°/s τ 0.10, pitch LPF 0.50, cruise 0.65/14, approach 8 / slow 280.

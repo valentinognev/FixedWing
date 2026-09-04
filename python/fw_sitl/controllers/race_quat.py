@@ -228,13 +228,22 @@ class RaceQuatController:
                 q_act=q_act,
                 **los_kw,
             )
-            max_p = float(los_kw.get("max_pitch", math.radians(20.0)))
-            roll_d, pitch_d, yaw_d = rpy_from_quat(q_des)
-            q_des = from_rpy(
-                roll_d,
-                pitch_with_vz_damp(pitch_d, vz, max_pitch=max_p, los_el=los_el),
-                yaw_d,
-            )
+            if self._close_in_view_euler:
+                # Euler close keeps vz D on q_des so cascade I-state sees it.
+                max_p = float(los_kw.get("max_pitch", math.radians(20.0)))
+                vz_gain = (
+                    float(self._plant.pitch_vz_gain)
+                    if self._plant is not None
+                    else None
+                )
+                roll_d, pitch_d, yaw_d = rpy_from_quat(q_des)
+                q_des = from_rpy(
+                    roll_d,
+                    pitch_with_vz_damp(
+                        pitch_d, vz, max_pitch=max_p, los_el=los_el, vz_gain=vz_gain
+                    ),
+                    yaw_d,
+                )
             cascade_out = self._cascade.command(q_des, q_act, dt, groundspeed=groundspeed)
             if self._close_in_view_euler:
                 q_cmd = cascade_out.q_cmd
@@ -282,6 +291,22 @@ class RaceQuatController:
         roll, pitch, yaw = rpy_from_quat(q_cmd)
         roll = self._smooth_roll(roll, dt)
         pitch = self._smooth_pitch(pitch, dt)
+        if self.last_law == "los" and not self._close_in_view_euler:
+            # Open-loop q_des: vz D after the seeker LPF. Applying it before
+            # τ=0.50 s delayed D by a half-second and pumped the look-at bob.
+            max_p = (
+                float(self._plant.att_los_max_pitch_rad)
+                if self._plant is not None
+                else math.radians(20.0)
+            )
+            vz_gain = (
+                float(self._plant.pitch_vz_gain)
+                if self._plant is not None
+                else None
+            )
+            pitch = pitch_with_vz_damp(
+                pitch, vz, max_pitch=max_p, los_el=los_el, vz_gain=vz_gain
+            )
         q_cmd = from_rpy(roll, pitch, yaw)
         if self.last_law == "los" and not self._close_in_view_euler:
             q_des = q_cmd

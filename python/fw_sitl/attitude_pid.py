@@ -51,16 +51,21 @@ def pitch_with_vz_damp(
     *,
     max_pitch: float,
     los_el: float | None = None,
+    vz_gain: float | None = None,
 ) -> float:
     """Ease look-at pitch against measured NED vertical rate.
 
     Skip when ``|los_el|`` is steep: intercept dives/climbs must not be
-    fought by the high-alt boresight bob damper.
+    fought by the high-alt boresight bob damper. ``vz_gain`` overrides
+    ``PITCH_VZ_GAIN`` so open-loop ``race_quat`` can use more D than the
+    Euler close without changing intercepts (``|el|>8°`` still skips).
     """
     out = float(pitch)
+    gain = PITCH_VZ_GAIN if vz_gain is None else float(vz_gain)
     if (
         vz is not None
         and math.isfinite(float(vz))
+        and math.isfinite(gain)
         and (
             los_el is None
             or not math.isfinite(float(los_el))
@@ -68,7 +73,7 @@ def pitch_with_vz_damp(
         )
     ):
         vz_c = max(-PITCH_VZ_CLIP_MPS, min(PITCH_VZ_CLIP_MPS, float(vz)))
-        out += PITCH_VZ_GAIN * vz_c
+        out += gain * vz_c
     lim = abs(float(max_pitch))
     return max(-lim, min(lim, out))
 

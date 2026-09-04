@@ -61,6 +61,7 @@ _OPTIONAL_PLANT_DEFAULTS = {
     "los_roll_slew_rad_s": math.radians(30.0),
     "los_roll_lpf_tau_s": 0.20,
     "los_pitch_lpf_tau_s": 0.50,
+    "pitch_vz_gain": 0.03,
 }
 
 
