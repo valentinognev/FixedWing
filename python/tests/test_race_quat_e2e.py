@@ -70,6 +70,22 @@ class TestRaceQuatE2ESetup(unittest.TestCase):
                     self.assertEqual(setup.guidance.cmd_mode, "attitude")
                     self.assertEqual(setup.guidance.laps, 0)
 
+    def test_write_setup_gz_advanced_plane(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_race_quat_e2e_setup(
+                Path(tmp) / "adv.json",
+                platform="gz",
+                duration_s=45.0,
+                gz_model="advanced_plane",
+            )
+            setup = load_flight_setup(path)
+            self.assertEqual(setup.sim.platform, "gz")
+            self.assertEqual(setup.sim.gz_model, "advanced_plane")
+            self.assertEqual(setup.guidance.controller, "race_quat")
+
     def test_default_platforms_match_menu(self) -> None:
         self.assertEqual(set(default_e2e_platforms()), set(KNOWN_SIM_PLATFORMS))
 

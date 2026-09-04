@@ -348,6 +348,46 @@ class TestPlantGainsRegistry(unittest.TestCase):
         self.assertAlmostEqual(adv.roll_tc, 0.4)
         self.assertAlmostEqual(adv.pitch_tc, 0.4)
 
+    def test_gz_advanced_plane_race_quat_center_through(self) -> None:
+        """Outer structure matches Cessna chase set; energy stays 20 m/s trim."""
+        import math
+        from fw_sitl.attitude_pid import q_des_from_los
+        from fw_sitl.quat import rpy_from_quat
+
+        race = load_plant_gains("gz_advanced_plane", controller="race_quat")
+        euler = load_plant_gains("gz_advanced_plane", controller="race_euler")
+        self.assertAlmostEqual(race.kp_elev, 1.5)
+        self.assertAlmostEqual(race.att_los_max_pitch_rad, 0.35)
+        self.assertAlmostEqual(race.att_max_pitch_rad, 0.26)
+        self.assertAlmostEqual(race.los_roll_slew_rad_s, math.radians(45.0))
+        self.assertAlmostEqual(race.los_roll_lpf_tau_s, 0.10)
+        self.assertAlmostEqual(race.los_pitch_lpf_tau_s, 0.50)
+        self.assertAlmostEqual(race.pitch_vz_gain, 0.08)
+        self.assertAlmostEqual(euler.pitch_vz_gain, 0.03)
+        self.assertAlmostEqual(race.speed_mps, 20.0)
+        self.assertAlmostEqual(race.approach_speed_mps, 14.0)
+        self.assertAlmostEqual(race.slow_range_m, 160.0)
+        self.assertAlmostEqual(race.cruise_thrust, 0.5)
+        self.assertAlmostEqual(race.min_thrust, 0.35)
+        self.assertAlmostEqual(race.speed_mps, euler.speed_mps)
+        self.assertAlmostEqual(race.kp_elev, euler.kp_elev)
+        self.assertAlmostEqual(race.att_los_max_pitch_rad, euler.att_los_max_pitch_rad)
+        self.assertAlmostEqual(race.los_roll_slew_rad_s, euler.los_roll_slew_rad_s)
+        self.assertAlmostEqual(race.los_roll_lpf_tau_s, euler.los_roll_lpf_tau_s)
+        self.assertAlmostEqual(race.los_pitch_lpf_tau_s, euler.los_pitch_lpf_tau_s)
+        self.assertAlmostEqual(race.cruise_thrust, euler.cruise_thrust)
+        self.assertAlmostEqual(race.min_thrust, euler.min_thrust)
+        lim = dict(race.px4_inner)
+        self.assertAlmostEqual(lim["FW_P_LIM_MIN"], -20.0)
+        self.assertAlmostEqual(lim["FW_P_LIM_MAX"], 20.0)
+        steep = q_des_from_los(
+            (0.2, 0.0, -1.0),
+            yaw_rad=0.0,
+            **race.los_kwargs(),
+        )
+        self.assertLessEqual(rpy_from_quat(steep)[1], 0.35 + 1e-6)
+        self.assertGreater(rpy_from_quat(steep)[1], 0.26)
+
     def test_px4_inner_jsbsim_snapshot(self) -> None:
         inner = dict(load_plant_gains("jsbsim_rascal").px4_inner)
         self.assertAlmostEqual(inner["FW_PR_P"], 0.10)
@@ -383,6 +423,8 @@ class TestPlantGainsRegistry(unittest.TestCase):
         self.assertAlmostEqual(inner["FW_PR_P"], 0.08)
         self.assertAlmostEqual(inner["FW_RR_P"], 0.03)
         self.assertAlmostEqual(inner["FW_THR_TRIM"], 0.25)
+        self.assertAlmostEqual(inner["FW_P_LIM_MIN"], -20.0)
+        self.assertAlmostEqual(inner["FW_P_LIM_MAX"], 20.0)
 
 
 class TestResolveSpeedLookahead(unittest.TestCase):
