@@ -36,6 +36,14 @@
     [
       "FW_THR_TRIM",
       0.68
+    ],
+    [
+      "FW_P_LIM_MIN",
+      -20.0
+    ],
+    [
+      "FW_P_LIM_MAX",
+      20.0
     ]
   ],
   "controllers": {
@@ -51,14 +59,19 @@
       "bank_max_roll_rad": 0.36,
       "bank_kp_alt": 0.032,
       "bank_max_pitch_rad": 0.12,
-      "att_max_pitch_rad": 0.35,
-      "att_los_max_pitch_rad": 0.7,
-      "cruise_thrust": 0.68,
+      "att_max_pitch_rad": 0.26,
+      "att_los_max_pitch_rad": 0.35,
+      "kp_elev": 1.5,
+      "los_roll_slew_rad_s": 0.7853981633974483,
+      "los_roll_lpf_tau_s": 0.10,
+      "los_pitch_lpf_tau_s": 0.50,
+      "pitch_vz_gain": 0.08,
+      "cruise_thrust": 0.63,
       "climb_thrust_per_m": 0.028,
       "min_thrust": 0.18,
       "max_thrust": 1.0,
       "speed_mps": 28.0,
-      "approach_speed_mps": 22.0,
+      "approach_speed_mps": 18.0,
       "slow_range_m": 280.0,
       "speed_thrust_per_mps": 0.06
     },
@@ -75,14 +88,18 @@
       "bank_max_roll_rad": 0.36,
       "bank_kp_alt": 0.032,
       "bank_max_pitch_rad": 0.12,
-      "att_max_pitch_rad": 0.35,
-      "att_los_max_pitch_rad": 0.7,
-      "cruise_thrust": 0.68,
+      "att_max_pitch_rad": 0.26,
+      "att_los_max_pitch_rad": 0.35,
+      "kp_elev": 1.5,
+      "los_roll_slew_rad_s": 0.7853981633974483,
+      "los_roll_lpf_tau_s": 0.10,
+      "los_pitch_lpf_tau_s": 0.50,
+      "cruise_thrust": 0.63,
       "climb_thrust_per_m": 0.028,
       "min_thrust": 0.18,
       "max_thrust": 1.0,
       "speed_mps": 28.0,
-      "approach_speed_mps": 22.0,
+      "approach_speed_mps": 18.0,
       "slow_range_m": 280.0,
       "speed_thrust_per_mps": 0.06
     },

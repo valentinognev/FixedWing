@@ -50,9 +50,9 @@ Teardown: `./kill.sh --all` (or `--gz` / `--fg` / `--jsbsim` as needed).
 
 | Flag / `sim.platform` | Plant id | Notes |
 |-----------------------|----------|--------|
-| (default) `jsbsim` | `jsbsim_rascal` | Headless JSBSim Rascal; primary tuning target |
-| `--viz` | `jsbsim_rascal_viz` | Same FDM + FG `--fdm=null` window; FG GT rebase |
-| `--yasim` | `yasim_rascal` | YASim FG Rascal; FG GT rebase |
+| (default) `jsbsim` | `jsbsim_rascal` | Headless JSBSim Rascal; `race_quat`+`pn` 5 m first-circuit passed |
+| `--viz` | `jsbsim_rascal_viz` | Same FDM + FG `--fdm=null` window; FG GT rebase (5 m gate still open) |
+| `--yasim` | `yasim_rascal` | YASim FG Rascal; FG GT rebase; `race_quat`+`pn` 5 m gate open (B1 zoom) |
 | `--gz` | `gz_rc_cessna` (or `--model advanced_plane`) | Gazebo; EKF−origin_bias NED. Default Cessna. `advanced_plane` is `race_quat`+`pn` tuning (5 m first-circuit gate open) |
 | (disabled) | `xplane_cessna172` | In-tree; `sim.platform=xplane` / `--xplane` exit 2 |
 
@@ -85,7 +85,7 @@ Straight flight: `run_straight_flight_{jsbsim,yasim,gz}.py`.
 - `guidance.laps` — `0` = cycle until duration; `N>0` = end after N circuits.
 - `verification.*` — offline parity thresholds for `compare_balloon_runs.py`.
 
-**Plant JSONC** — `python/fw_sitl/platforms/<family>/{plant_id}.jsonc`. Family from plant-id prefix (`jsbsim_`, `yasim_`, `gz_`, `xplane_`). Top-level: airspeeds, lookahead, `px4_inner`. Per-controller outer gains under `controllers.<id>`; PP-only aero/governor keys may be inherited by `race_*` from sibling `pure_pursuit_quat`. GZ Cessna `race_quat` shares the 0.65/14 center-through outer set with `race_euler` (LOS pitch 20° / 0.35 rad, `kp_elev` 1.5, approach 8 m/s, `slow_range` 280 m) except `pitch_vz_gain` 0.08 vs default 0.03. `gz_advanced_plane` uses the same outer structure at 20 m/s trim (`cruise_thrust` 0.5, `speed_mps` 20).
+**Plant JSONC** — `python/fw_sitl/platforms/<family>/{plant_id}.jsonc`. Family from plant-id prefix (`jsbsim_`, `yasim_`, `gz_`, `xplane_`). Top-level: airspeeds, lookahead, `px4_inner`. Per-controller outer gains under `controllers.<id>`; PP-only aero/governor keys may be inherited by `race_*` from sibling `pure_pursuit_quat`. GZ Cessna `race_quat` shares the 0.65/14 center-through outer set with `race_euler` (LOS pitch 20° / 0.35 rad, `kp_elev` 1.5, approach 8 m/s, `slow_range` 280 m) except `pitch_vz_gain` 0.08 vs default 0.03. `gz_advanced_plane` uses the same outer structure at 20 m/s trim (`cruise_thrust` 0.5, `speed_mps` 20). JSBSim Rascal `race_quat` uses that outer set at 18 m/s (`approach` 16 / `slow_range` 140 / thrust 0.62); YASim at 28 m/s (`approach` 18 / `slow_range` 280 / thrust 0.63).
 
 Code defaults for missing keys: controller `pure_pursuit_quat`, homing_law `lookat`. Checked-in `flightSetup.json` ships `race_quat` + `pn` + `attitude_format` euler.
 
@@ -124,6 +124,7 @@ Full `unittest discover` blocks on race-plot `plt.show(block=True)`. Calibration
 
 ## Known limits
 
+- `jsbsim_rascal` `race_quat`+`pn` headless: live `/tmp/balloon_race_jsb_baseline.csv` first circuit **2.67 / 1.44 / 2.22 m** (gate ≤5 m). `--viz` same JSONC `/tmp/balloon_race_jsb_viz2.csv` **3.32 / 7.19 / 5.52 m** (B1 6.3 m under; FG GT rebase). `yasim_rascal` best tune2 `/tmp/balloon_race_yas_tune2.csv` B0 **3.92 m**, B1 zoom-climb CPA **30 m** (5 m gate open).
 - `race_quat` + `px4_att_cascade`: residual miss is systematically **high** (NED +z down; negative ΔD = above the balloon). Live GZ NED PN 2026-09-04 `/tmp/balloon_race_hyst.csv` (+ `.pkl`): first circuit **2.91 / 0.20 / 4.62 m** (B0 XY 0.22, ΔD −2.91, t=49.0; B1 XY 0.20, ΔD +0.02, t=66.2; B2 XY 1.04, ΔD −4.50, t=80.8; gate ≤5 m). Matches end-of-tune `vz_tune2` 3.23 / 0.86 / 4.23 and `111023` 2.60 / 0.35 / 3.45. Pre-fix `112813` B1 **4.20 m under** (stuck z≈16 m on camera proxy). 200 s lap-2 B2 5.84 m still high; 20 Hz vz sign-flips **71 / 120 s** vs `vz_tune2` **15**. Descending B0/B2 still high; B1 climb is the accurate one. Next lever: shared `q_des_from_los` skips load-pitch on down-LOS.
 - `gz_advanced_plane` `--gz --model advanced_plane` `race_quat`+`pn`: live `204638` B0 ~0.5 m / B1 ~1 m / B2 never (HSV miss; frozen south path-hold). Pre-fix energy races (tune1 `/tmp/balloon_race_adv_tune1.csv`) B0 **0.57 m** / B1 **1.02 m** / B2 heading fly-by CPA **86.7 m**. 5 m first-circuit gate still open pending a live re-run after 0.71.1.
 - `race_euler` remains in-tree as the Euler-error close (`pn_ned_001310` 5.23 / 0.60 / 2.80 m). Older `bias` B0/B1 **&lt;2 m**, B3 **~8.5 m**. 0.63 body-frame `pn` missed balloon 0.

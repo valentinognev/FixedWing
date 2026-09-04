@@ -1,5 +1,11 @@
 # Updates
 
+## 0.72.0 - JSBSim/YASim race_quat + pn outer structure
+- Ported GZ Cessna chase outer set onto `jsbsim_rascal` / `_viz` / `yasim_rascal` `race_quat`+`race_euler`: `kp_elev` 1.5, LOS 20°, roll slew 45°/s τ 0.10, pitch LPF 0.50, `pitch_vz_gain` 0.08 on quat, `FW_P_LIM` ±20. Did not copy Cessna 14 m/s / `FW_PR_P` 0.50.
+- Headless JSBSim kept 18/16/140 / thrust 0.62. Live 120 s `pn` `/tmp/balloon_race_jsb_baseline.csv`: first circuit B0 **2.67** / B1 **1.44** / B2 **2.22** m (XY 2.66 / 1.38 / 1.59; ΔD −0.21 / −0.41 / −1.55). Gate ≤5 m passed. Lap-2 B0 1.95 m.
+- `--viz` same JSONC; FG GT rebase. Retry `/tmp/balloon_race_jsb_viz2.csv`: 3.32 / 7.19 / 5.52 m (B1 6.3 m under). First viz attempt fell during arming-denied. Gate still open on viz; FDM matches headless.
+- YASim kept 28 m/s trim and 0.36 rad bank. Energy: `cruise_thrust` 0.68→**0.63**, `approach_speed_mps` 22→**18**. Best live tune2 `/tmp/balloon_race_yas_tune2.csv`: B0 **3.92** m then B1 zoom-climb CPA 30 m / 25 m high (HSV then orbit). Lower thrust (0.58) and 15° LOS cap lost B0. GATE FAIL — 5 m first-circuit open on YASim.
+
 ## 0.71.1 - off-blob path-hold refreshes course, not first-lock heading
 - After B1, `gz_advanced_plane` never HSV-locked B2 (`assisted=1`). Path-hold froze the first south geometric course and flew it to N≈−1600 (live `/tmp/balloon_race_20260904_204638.csv`: B0 ~0.5 m t=21.5 / B1 ~1 m t=32.1 / B2 never).
 - `race_quat`/`race_euler` now refresh path-hold `origin_xy` and course from this tick's geometric LOS; `z_hold` still freezes per balloon (0.61/0.70).

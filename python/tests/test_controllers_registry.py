@@ -127,7 +127,9 @@ class TestRaceQuatLos(unittest.TestCase):
         self.assertEqual(ctrl.last_law, "los")
         self.assertIsNotNone(ctrl.last_q_des)
         _roll, pitch, _yaw = rpy_from_quat(ctrl.last_q_des)
-        self.assertAlmostEqual(pitch, el, places=2)
+        plant = load_plant_gains("jsbsim_rascal", controller="race_quat")
+        want = min(plant.kp_elev * el, plant.att_los_max_pitch_rad)
+        self.assertAlmostEqual(pitch, want, places=2)
 
     def test_in_view_ignores_balloon_z_for_pitch(self) -> None:
         """Level LOS: wrong balloon Z must not pitch up (elevation alone)."""
@@ -624,7 +626,9 @@ class TestRaceQuatLos(unittest.TestCase):
                 dir_body=dir_body,
             )
         _master, _roll, pitch, _yaw, _thrust = send.call_args[0]
-        self.assertAlmostEqual(pitch, el, delta=math.radians(2.0))
+        plant = load_plant_gains("jsbsim_rascal", controller="race_quat")
+        want = min(plant.kp_elev * el, plant.att_los_max_pitch_rad)
+        self.assertAlmostEqual(pitch, want, delta=math.radians(2.0))
 
     def test_race_quat_smooth_roll_uses_plant_slew(self) -> None:
         from dataclasses import replace
