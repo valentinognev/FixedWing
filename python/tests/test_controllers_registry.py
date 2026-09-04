@@ -242,6 +242,45 @@ class TestRaceQuatLos(unittest.TestCase):
         _master, roll, _pitch, _yaw, _thrust = send.call_args[0]
         self.assertGreater(roll, 0.0)
 
+    def test_path_hold_after_los_locks_offblob_dir_not_camera_course(self) -> None:
+        """After a look-at drop, lock_course follows this tick's dir_ned (geometric)."""
+        ctrl = self._build()
+        cam_east = (0.0, 1.0, 0.0)
+        geom_north = (1.0, 0.0, 0.0)
+        with patch(
+            "fw_sitl.controllers.race_quat.send_attitude_target", create=True
+        ):
+            ctrl.send_chase_setpoint(
+                MagicMock(),
+                (50.0, -300.0, 35.0),
+                cam_east,
+                1,
+                yaw_rad=math.radians(70.0),
+                q_act=from_rpy(0.0, 0.0, math.radians(70.0)),
+                dt=0.05,
+                in_view=True,
+                dir_body=cam_east,
+                vx=10.0,
+                vy=0.0,
+            )
+            ctrl.send_chase_setpoint(
+                MagicMock(),
+                (50.0, -300.0, 35.0),
+                geom_north,
+                1,
+                yaw_rad=math.radians(70.0),
+                q_act=from_rpy(0.0, 0.0, math.radians(70.0)),
+                dt=0.05,
+                in_view=False,
+                z_target=0.0,
+                vx=10.0,
+                vy=0.0,
+                path_lock_token=0,
+            )
+        self.assertEqual(ctrl.last_law, "path")
+        self.assertIsNotNone(ctrl._path_lock)
+        self.assertAlmostEqual(ctrl._path_lock[2], 0.0, places=3)
+
     def test_path_hold_clips_climb_when_below_recover_speed(self) -> None:
         """Off-blob must not command +15° climb at GS 4.6 (below v_stall×v_recover)."""
         ctrl = self._build(plant_id="gz_rc_cessna")

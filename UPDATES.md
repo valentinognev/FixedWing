@@ -1,5 +1,9 @@
 # Updates
 
+## 0.69.1 - off-blob path-hold uses geometric bearing after lookat_clears
+- `lookat_clears_alt_step` can drop `use_lookat` while HSV `last_in_view` is still true, so `chase_dir_ned` kept returning camera LOS. Path-hold then froze that course (~99° east, live `110425`) instead of the balloon (~25°) and never homed.
+- Off-blob `send_chase_setpoint` now always gets `race.geometric_los`. Live GZ 90 s `111023`: first circuit B0 **2.60** / B1 **0.35** / B2 **3.45** m (pre-fix `110425`: 0 passes, flew east).
+
 ## 0.69.0 - spawn path-hold chase crab + stall climb clip
 - Off-blob `race_quat`/`pure_pursuit_quat` bank `chase_heading_rad` (track, 90° crab, GS≥2) instead of default coordinated (30°, GS≥5). Live GZ crash `100538` yaw/track split banked left off the balloon; good spawn `074944`/`0712` had aligned track.
 - `clamp_climb_when_slow`: no +climb when GS < `v_stall_mps * v_recover_mult` (crash climbed +15° at 4.6 m/s). Dive pitch unchanged; skip clamp if plant or vx/vy missing. Straight-flight heading stays 30°/5 m/s.

@@ -1213,6 +1213,11 @@ def main() -> int:
             # Homing is HSV dir_cam only. Off-blob: path-hold the next balloon's
             # z and bank onto geometric bearing (search). A 40 m step after a
             # pass cannot wait for HSV — camera VFOV only sees it ~60 m out.
+            # lookat_clears_alt_step can drop use_lookat while last_in_view
+            # still makes chase_dir_ned return camera LOS; that froze path
+            # course at ~99° east (live 110425) instead of balloon ~25°.
+            if not use_lookat:
+                chase = race.geometric_los(pos)
             yaw_for_sp = None if use_lookat else att[2]
             tgt = race.balloon_ned()
             range_m = math.hypot(pos[0] - tgt[0], pos[1] - tgt[1])
