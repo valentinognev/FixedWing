@@ -15,6 +15,8 @@ if str(_PYTHON_ROOT) not in sys.path:
 from fw_sitl.path_geometry import (
     BANK_CHASE_MAX_SIDESLIP_RAD,
     bank_to_turn_commands,
+    chase_heading_rad,
+    clamp_climb_when_slow,
     coordinated_heading_rad,
     cross_track_m,
     path_setpoint_on_line,
@@ -176,6 +178,22 @@ class TestBankToTurn(unittest.TestCase):
             track,
             places=6,
         )
+        self.assertAlmostEqual(chase_heading_rad(yaw, vx, vy), track, places=6)
+
+    def test_chase_heading_uses_track_at_crawl_gs(self) -> None:
+        # Crash GS 4.6 is below the default 5 m/s track floor; chase still uses track.
+        yaw = 0.0
+        track = math.radians(12.0)
+        gs = 4.6
+        vx = math.cos(track) * gs
+        vy = math.sin(track) * gs
+        self.assertAlmostEqual(coordinated_heading_rad(yaw, vx, vy), yaw, places=6)
+        self.assertAlmostEqual(chase_heading_rad(yaw, vx, vy), track, places=6)
+
+    def test_clamp_climb_when_slow(self) -> None:
+        self.assertEqual(clamp_climb_when_slow(0.26, 4.6, 9.6), 0.0)
+        self.assertAlmostEqual(clamp_climb_when_slow(-0.1, 4.6, 9.6), -0.1, places=6)
+        self.assertAlmostEqual(clamp_climb_when_slow(0.26, 16.0, 9.6), 0.26, places=6)
 
     def test_too_low_pitches_up(self) -> None:
         roll, pitch = bank_to_turn_commands(

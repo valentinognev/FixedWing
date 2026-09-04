@@ -22,7 +22,12 @@ from fw_sitl.controllers._chase_common import (
 )
 from fw_sitl.flight_setup import DEFAULT_ATTITUDE_FORMAT
 from fw_sitl.mavlink_io import send_attitude_quat, send_attitude_rates, send_attitude_target
-from fw_sitl.path_geometry import coordinated_heading_rad, ned_velocity_from_course, wrap_pi
+from fw_sitl.path_geometry import (
+    chase_heading_rad,
+    clamp_climb_when_slow,
+    ned_velocity_from_course,
+    wrap_pi,
+)
 from fw_sitl.plant_gains import PlantGains, load_plant_gains
 from fw_sitl.px4_att_cascade import Px4FwAttCascade
 from fw_sitl.quat import conjugate, from_rpy, mul, rpy_from_quat
@@ -318,7 +323,7 @@ class PurePursuitQuatController:
                 self._cascade.reset()
                 q_cmd = q_des
         else:
-            heading_ref = coordinated_heading_rad(yaw_act, vx, vy)
+            heading_ref = chase_heading_rad(yaw_act, vx, vy)
             token = path_lock_token
             if self._path_lock is None or self._path_lock[0] != token:
                 self._path_lock = (
@@ -339,6 +344,14 @@ class PurePursuitQuatController:
                 heading_rad=heading_ref,
                 **path_kw,
             )
+            if self._plant is not None and vx is not None and vy is not None:
+                gs_mps = math.hypot(float(vx), float(vy))
+                v_recover_mps = float(self._plant.v_stall_mps) * float(
+                    self._plant.v_recover_mult
+                )
+                roll_d, pitch_d, yaw_d = rpy_from_quat(q_des)
+                pitch_d = clamp_climb_when_slow(pitch_d, gs_mps, v_recover_mps)
+                q_des = from_rpy(roll_d, pitch_d, yaw_d)
             # Rates dispatch always uses cascade stage-2 of this unsmoothed
             # q_des vs q_act — never the LPF/slew output below.
             cascade_out = self._cascade.command(q_des, q_act, dt, groundspeed=groundspeed)

@@ -88,8 +88,10 @@ class TestAttitudeChaseController(unittest.TestCase):
         self.assertGreater(pitch, 0.0)
         self.assertGreater(thrust, 0.62)
 
-    def test_ground_track_does_not_override_los(self) -> None:
-        # Nose north, balloon on boresight. East ground track must not bank.
+    def test_path_hold_90deg_crab_banks_track_onto_balloon(self) -> None:
+        # Nose north, balloon on boresight, east ground track: chase banks the
+        # velocity onto the balloon (90° crab is in-range). Caller heading_rad
+        # is unused on this path.
         bridge = BodyCmdBridge(lookahead_m=500.0, speed_mps=30.0)
         ctrl = AttitudeChaseController(
             bridge, speed_mps=30.0, pid=AttitudePid(kp=1.0, ki=0.0, kd=0.0)
@@ -114,7 +116,7 @@ class TestAttitudeChaseController(unittest.TestCase):
             )
         send.assert_called_once()
         _master, roll, _pitch, _yaw, _thrust = send.call_args[0]
-        self.assertAlmostEqual(roll, 0.0, places=2)
+        self.assertLess(roll, 0.0)
 
     def test_in_view_los_right_banks_right_not_track(self) -> None:
         # Nose north; LOS 20° east. Track heading_rad=0 would command ~0 roll.

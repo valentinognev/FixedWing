@@ -1,5 +1,9 @@
 # Updates
 
+## 0.69.0 - spawn path-hold chase crab + stall climb clip
+- Off-blob `race_quat`/`pure_pursuit_quat` bank `chase_heading_rad` (track, 90° crab, GS≥2) instead of default coordinated (30°, GS≥5). Live GZ crash `100538` yaw/track split banked left off the balloon; good spawn `074944`/`0712` had aligned track.
+- `clamp_climb_when_slow`: no +climb when GS < `v_stall_mps * v_recover_mult` (crash climbed +15° at 4.6 m/s). Dive pitch unchanged; skip clamp if plant or vx/vy missing. Straight-flight heading stays 30°/5 m/s.
+
 ## 0.68.0 - race_quat vz D after pitch LPF
 - Open-loop look-at applied `pitch += Kv·vz` **before** the 0.50 s seeker LPF, so D lagged ~0.5 s and pumped a ~2 s pitch bob (pickle vz sign-flips 66–77 vs `race_euler` 21).
 - `race_quat` now damps after `_smooth_pitch`. New optional `PlantGains.pitch_vz_gain` (default 0.03); GZ `race_quat` **0.08**. `|el|>8°` still skips. `race_euler` keeps D on `q_des` before the cascade.

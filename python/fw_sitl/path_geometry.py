@@ -18,10 +18,13 @@ DEFAULT_THRUST = 0.60
 # max bank the wrong way vs the nose (0.19.2 used track unconditionally).
 BANK_TRACK_MIN_GS_MPS = 5.0
 BANK_TRACK_MAX_SIDESLIP_RAD = math.radians(30.0)
-# On-screen chase: still use ground track with a larger crab so a 45°
-# yaw/track split (EKF settle) banks the velocity onto the balloon. Path
-# hold keeps 30° so a 160° falling-attach track cannot saturate the wrong way.
+# Off-blob chase path-hold uses ground track with a larger crab so a 45°
+# yaw/track split (EKF settle) banks the velocity onto the balloon.
+# Default coordinated / straight-flight keep 30° so a 160° falling-attach
+# track cannot saturate the wrong way vs the nose.
 BANK_CHASE_MAX_SIDESLIP_RAD = math.radians(90.0)
+# Off-blob path-hold: crash GS was 4.6 m/s (default track floor 5.0).
+BANK_CHASE_MIN_GS_MPS = 2.0
 
 
 def ned_velocity_from_course(speed_mps: float, course_rad: float) -> tuple[float, float, float]:
@@ -90,6 +93,32 @@ def coordinated_heading_rad(
     if abs(wrap_pi(track - yaw)) > float(max_sideslip_rad):
         return yaw
     return track
+
+
+def chase_heading_rad(yaw_rad: float, vx: float | None, vy: float | None) -> float:
+    """Ground track for off-blob bank: 90° crab, GS floor 2 m/s."""
+    return coordinated_heading_rad(
+        yaw_rad,
+        vx,
+        vy,
+        min_gs_mps=BANK_CHASE_MIN_GS_MPS,
+        max_sideslip_rad=BANK_CHASE_MAX_SIDESLIP_RAD,
+    )
+
+
+def clamp_climb_when_slow(
+    pitch_rad: float, gs_mps: float | None, v_recover_mps: float
+) -> float:
+    """Zero a climb command when GS is below the plant recover floor."""
+    pitch = float(pitch_rad)
+    if gs_mps is None:
+        return pitch
+    gs = float(gs_mps)
+    if not math.isfinite(gs):
+        return pitch
+    if gs < float(v_recover_mps) and pitch > 0.0:
+        return 0.0
+    return pitch
 
 
 def cross_track_m(

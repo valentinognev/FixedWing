@@ -215,6 +215,55 @@ class TestRaceQuatLos(unittest.TestCase):
         _master, _roll, pitch, _yaw, _thrust = send.call_args[0]
         self.assertGreater(pitch, 0.0)
 
+    def test_path_hold_banks_right_onto_balloon_with_yaw_track_split(self) -> None:
+        """100538: EKF yaw +50° vs track −12° must still bank right onto +35° balloon."""
+        ctrl = self._build(plant_id="gz_rc_cessna")
+        bearing = math.radians(35.0)
+        yaw = math.radians(50.0)
+        track = math.radians(-12.0)
+        gs = 8.0
+        dir_ned = (math.cos(bearing), math.sin(bearing), 0.0)
+        with patch(
+            "fw_sitl.controllers.race_quat.send_attitude_target", create=True
+        ) as send:
+            ctrl.send_chase_setpoint(
+                MagicMock(),
+                (0.0, 0.0, -10.0),
+                dir_ned,
+                1,
+                yaw_rad=yaw,
+                q_act=from_rpy(0.0, 0.0, yaw),
+                dt=0.05,
+                in_view=False,
+                z_target=-10.0,
+                vx=gs * math.cos(track),
+                vy=gs * math.sin(track),
+            )
+        _master, roll, _pitch, _yaw, _thrust = send.call_args[0]
+        self.assertGreater(roll, 0.0)
+
+    def test_path_hold_clips_climb_when_below_recover_speed(self) -> None:
+        """Off-blob must not command +15° climb at GS 4.6 (below v_stall×v_recover)."""
+        ctrl = self._build(plant_id="gz_rc_cessna")
+        with patch(
+            "fw_sitl.controllers.race_quat.send_attitude_target", create=True
+        ) as send:
+            ctrl.send_chase_setpoint(
+                MagicMock(),
+                (0.0, 0.0, 0.0),
+                (1.0, 0.0, 0.0),
+                1,
+                yaw_rad=0.0,
+                q_act=from_rpy(0.0, 0.0, 0.0),
+                dt=0.05,
+                in_view=False,
+                z_target=-20.0,
+                vx=4.6,
+                vy=0.0,
+            )
+        _master, _roll, pitch, _yaw, _thrust = send.call_args[0]
+        self.assertLessEqual(pitch, 0.0)
+
     def test_path_hold_after_los_keeps_camera_proxy_z(self) -> None:
         """HSV drop mid-dive must keep the camera z proxy, not freeze at pos_z (B3)."""
         ctl = self._build(speed=18.0)
