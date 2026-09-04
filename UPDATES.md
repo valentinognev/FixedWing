@@ -1,5 +1,8 @@
 # Updates
 
+## 0.72.1 - shipped race default is headless JSBSim
+- `python/flightSetup.json` `sim.platform` `gz` → `jsbsim` so `./run_balloon_race.sh` matches the 0.72.0 5 m headless bar. `--gz` still selects Cessna.
+
 ## 0.72.0 - JSBSim/YASim race_quat + pn outer structure
 - Ported GZ Cessna chase outer set onto `jsbsim_rascal` / `_viz` / `yasim_rascal` `race_quat`+`race_euler`: `kp_elev` 1.5, LOS 20°, roll slew 45°/s τ 0.10, pitch LPF 0.50, `pitch_vz_gain` 0.08 on quat, `FW_P_LIM` ±20. Did not copy Cessna 14 m/s / `FW_PR_P` 0.50.
 - Headless JSBSim kept 18/16/140 / thrust 0.62. Live 120 s `pn` `/tmp/balloon_race_jsb_baseline.csv`: first circuit B0 **2.67** / B1 **1.44** / B2 **2.22** m (XY 2.66 / 1.38 / 1.59; ΔD −0.21 / −0.41 / −1.55). Gate ≤5 m passed. Lap-2 B0 1.95 m.

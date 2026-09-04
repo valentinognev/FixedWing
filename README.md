@@ -87,7 +87,7 @@ Straight flight: `run_straight_flight_{jsbsim,yasim,gz}.py`.
 
 **Plant JSONC** — `python/fw_sitl/platforms/<family>/{plant_id}.jsonc`. Family from plant-id prefix (`jsbsim_`, `yasim_`, `gz_`, `xplane_`). Top-level: airspeeds, lookahead, `px4_inner`. Per-controller outer gains under `controllers.<id>`; PP-only aero/governor keys may be inherited by `race_*` from sibling `pure_pursuit_quat`. GZ Cessna `race_quat` shares the 0.65/14 center-through outer set with `race_euler` (LOS pitch 20° / 0.35 rad, `kp_elev` 1.5, approach 8 m/s, `slow_range` 280 m) except `pitch_vz_gain` 0.08 vs default 0.03. `gz_advanced_plane` uses the same outer structure at 20 m/s trim (`cruise_thrust` 0.5, `speed_mps` 20). JSBSim Rascal `race_quat` uses that outer set at 18 m/s (`approach` 16 / `slow_range` 140 / thrust 0.62); YASim at 28 m/s (`approach` 18 / `slow_range` 280 / thrust 0.63).
 
-Code defaults for missing keys: controller `pure_pursuit_quat`, homing_law `lookat`. Checked-in `flightSetup.json` ships `race_quat` + `pn` + `attitude_format` euler.
+Code defaults for missing keys: controller `pure_pursuit_quat`, homing_law `lookat`. Checked-in `flightSetup.json` ships `sim.platform` `jsbsim`, `race_quat` + `pn` + `attitude_format` euler.
 
 ## Frames
 

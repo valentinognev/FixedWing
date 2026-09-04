@@ -314,7 +314,7 @@ class TestFlightSetupDefaults(unittest.TestCase):
         self.assertEqual(setup.guidance.homing_law, "pn")
         self.assertEqual(setup.guidance.alt_preserve_heading_err_deg, 20.0)
         self.assertEqual(setup.guidance.laps, 0)
-        self.assertEqual(setup.sim.platform, "gz")
+        self.assertEqual(setup.sim.platform, "jsbsim")
         self.assertEqual(setup.sim.gz_model, "rc_cessna")
         self.assertEqual(setup.sim.duration_s, 120.0)
         self.assertEqual(setup.guidance.stale_track_warn_s, 10.0)
