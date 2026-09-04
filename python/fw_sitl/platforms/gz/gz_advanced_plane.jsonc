@@ -27,8 +27,8 @@
     ["FW_YR_I", 0.4], /* FW_YR_I */
     ["FW_YR_P", 0.2], /* FW_YR_P */
     ["FW_PSP_OFF", 2.0], /* FW_PSP_OFF */
-    ["FW_P_LIM_MAX", 32.0], /* FW_P_LIM_MAX */
-    ["FW_P_LIM_MIN", -15.0], /* FW_P_LIM_MIN */
+    ["FW_P_LIM_MAX", 20.0], /* FW_P_LIM_MAX */
+    ["FW_P_LIM_MIN", -20.0], /* FW_P_LIM_MIN */
     ["FW_THR_MIN", 0.05], /* FW_THR_MIN */
     ["FW_THR_TRIM", 0.25], /* FW_THR_TRIM */
     ["FW_THR_MAX", 0.6], /* FW_THR_MAX */
@@ -76,10 +76,25 @@
       "bank_max_pitch_rad": 0.12,
 
       // Attitude path-hold max pitch (rad).
-      "att_max_pitch_rad": 0.35,
+      "att_max_pitch_rad": 0.26,
 
-      // LOS / geometric chase max pitch (rad).
-      "att_los_max_pitch_rad": 0.7,
+      // LOS / geometric chase max pitch (rad). 20° for calibrated inner loop / center-through.
+      "att_los_max_pitch_rad": 0.35,
+
+      // Elevator lead on LOS look-at (1 = no extra pitch vs geometric).
+      "kp_elev": 1.5,
+
+      // Max LOS-bank slew (rad/s); 45°/s for faster bank into the dive.
+      "los_roll_slew_rad_s": 0.7853981633974483,
+
+      // LOS-bank LPF time constant (s); 0.10 s vs default 0.20 s.
+      "los_roll_lpf_tau_s": 0.10,
+
+      // Pitch-command LPF (s). Keep 0.50 so intercepts are not lagged.
+      "los_pitch_lpf_tau_s": 0.50,
+
+      // Look-at pitch D vs NED vz (rad / (m/s)). 0.08 after the LPF; |el|>8° still skips.
+      "pitch_vz_gain": 0.08,
 
       // Nominal thrust fraction at cruise.
       "cruise_thrust": 0.5,
@@ -88,7 +103,7 @@
       "climb_thrust_per_m": 0.01,
 
       // Thrust fraction floor.
-      "min_thrust": 0.2,
+      "min_thrust": 0.35,
 
       // Thrust fraction ceiling.
       "max_thrust": 1.0,
@@ -141,10 +156,22 @@
       "bank_max_pitch_rad": 0.12,
 
       // Attitude path-hold max pitch (rad).
-      "att_max_pitch_rad": 0.35,
+      "att_max_pitch_rad": 0.26,
 
-      // LOS / geometric chase max pitch (rad).
-      "att_los_max_pitch_rad": 0.7,
+      // LOS / geometric chase max pitch (rad). 20° for calibrated inner loop / center-through.
+      "att_los_max_pitch_rad": 0.35,
+
+      // Elevator lead on LOS look-at (1 = no extra pitch vs geometric).
+      "kp_elev": 1.5,
+
+      // Max LOS-bank slew (rad/s); 45°/s for faster bank into the dive.
+      "los_roll_slew_rad_s": 0.7853981633974483,
+
+      // LOS-bank LPF time constant (s); 0.10 s vs default 0.20 s.
+      "los_roll_lpf_tau_s": 0.10,
+
+      // Pitch-command LPF (s). Keep 0.50 so intercepts are not lagged.
+      "los_pitch_lpf_tau_s": 0.50,
 
       // Nominal thrust fraction at cruise.
       "cruise_thrust": 0.5,
@@ -153,7 +180,7 @@
       "climb_thrust_per_m": 0.01,
 
       // Thrust fraction floor.
-      "min_thrust": 0.2,
+      "min_thrust": 0.35,
 
       // Thrust fraction ceiling.
       "max_thrust": 1.0,
