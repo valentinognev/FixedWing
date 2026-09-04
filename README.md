@@ -124,7 +124,8 @@ Full `unittest discover` blocks on race-plot `plt.show(block=True)`. Calibration
 
 ## Known limits
 
-- `race_quat` + `px4_att_cascade`: GZ NED PN `/tmp/balloon_race_race_quat_gz_baseline.csv` first circuit **3.73 / 0.57 / 3.61 m** (B0 XY 0.69, ΔD −3.66, t=47.3; B1 XY 0.07, ΔD −0.57, t=63.9; B2 XY 1.78, ΔD −3.14, t=77.5; gate ≤5 m). Pickle 20 Hz vz sign-flips 66 vs `race_euler` winner 21. `race_euler` remains in-tree as the Euler-error close (`pn_ned_001310` 5.23 / 0.60 / 2.80 m). Older `bias` B0/B1 **&lt;2 m**, B3 **~8.5 m**. 0.63 body-frame `pn` missed balloon 0. Load-pitch on down-LOS is skipped in shared `q_des_from_los`.
+- `race_quat` + `px4_att_cascade`: residual miss is systematically **high** (NED +z down; negative ΔD = above the balloon). Live GZ NED PN 2026-09-04 07:12 `/tmp/balloon_race_race_quat_gz_baseline.csv` (+ `.pkl`): first circuit **3.73 / 0.57 / 3.61 m** (B0 XY 0.69, ΔD −3.66, t=47.3; B1 XY 0.07, ΔD −0.57, t=63.9; B2 XY 1.78, ΔD −3.14, t=77.5; gate ≤5 m). Descending intercepts B0/B2 ~3.2–3.7 m high; B1 (climb) is the accurate one. Same vertical bob as pickle 20 Hz vz: interpolate `FlightHistory.from_pickle` `vz` onto a 0.05 s grid and count sign changes — **66** vs `race_euler` winner **21**. Next lever: shared `q_des_from_los` skips load-pitch on down-LOS.
+- `race_euler` remains in-tree as the Euler-error close (`pn_ned_001310` 5.23 / 0.60 / 2.80 m). Older `bias` B0/B1 **&lt;2 m**, B3 **~8.5 m**. 0.63 body-frame `pn` missed balloon 0.
 - X-Plane plant is residual (code/tests present; race menu disabled).
 - FG/YASim: EKF is not ground truth — always use GT rebase for chase/plots.
 - OpenCV ≥5 (some conda envs) blacks out `balloon_camera`; race launcher prefers an `opencv-python<5` env when needed.

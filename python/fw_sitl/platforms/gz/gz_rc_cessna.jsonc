@@ -39,6 +39,7 @@
   /* Per-controller outer-loop gains. Top-level holds shared airspeed/lookahead/px4. */
   "controllers": {
     // Pre-PP LOS chase (race_quat); omits PP-only aero/governor fields.
+    // GZ outer keys match sibling race_euler (0.65/14 center-through set).
     "race_quat": {
       // Attitude PID (quaternion error → body rates) P gain.
       "pid_kp": 1.0,
@@ -117,7 +118,7 @@
       // Thrust P vs speed error (1 / (m/s)).
       "speed_thrust_per_mps": 0.07
     },
-    // LOS Euler-error close (race_euler); retuned for calibrated inner loop / center-through (not a verbatim race_quat copy).
+    // Shares the 0.65/14 center-through outer set with sibling race_quat. race_euler still closes Euler error in-view; race_quat stays open-loop q_des+reset.
     "race_euler": {
       // Attitude PID (quaternion error → body rates) P gain.
       "pid_kp": 1.0,
