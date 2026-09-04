@@ -65,7 +65,7 @@ Straight flight: `run_straight_flight_{jsbsim,yasim,gz}.py`.
 - `balloons[]` / `spawn` — home-relative NED (`+z` down); heading 0=N, 90=E.
 - `sim.platform` — `jsbsim`\|`viz`\|`yasim`\|`gz`; `sim.gz_model`; `sim.duration_s` (`0` = no limit; CLI `--duration` overrides).
 - `camera` — FOV, mount `azimuth_deg`/`elevation_deg`, resolution, FG window pattern.
-- `guidance.controller` — `pure_pursuit_quat`\|`race_quat`\|`race_euler`.
+- `guidance.controller` — `pure_pursuit_quat`\|`race_quat`\|`race_euler`. Shipped JSON is `race_quat` (open-loop `q_des` + cascade reset). `race_euler` stays in-tree (Euler-error close).
 - `guidance.homing_law` — in-view HSV seeker (`race_*` only). `FW_HOMING_LAW` overrides JSON when set. Parser default `lookat`; shipped JSON `pn`. Pitch still ±20°.
 
 | `homing_law` | What it does |
@@ -85,9 +85,9 @@ Straight flight: `run_straight_flight_{jsbsim,yasim,gz}.py`.
 - `guidance.laps` — `0` = cycle until duration; `N>0` = end after N circuits.
 - `verification.*` — offline parity thresholds for `compare_balloon_runs.py`.
 
-**Plant JSONC** — `python/fw_sitl/platforms/<family>/{plant_id}.jsonc`. Family from plant-id prefix (`jsbsim_`, `yasim_`, `gz_`, `xplane_`). Top-level: airspeeds, lookahead, `px4_inner`. Per-controller outer gains under `controllers.<id>`; PP-only aero/governor keys may be inherited by `race_*` from sibling `pure_pursuit_quat`.
+**Plant JSONC** — `python/fw_sitl/platforms/<family>/{plant_id}.jsonc`. Family from plant-id prefix (`jsbsim_`, `yasim_`, `gz_`, `xplane_`). Top-level: airspeeds, lookahead, `px4_inner`. Per-controller outer gains under `controllers.<id>`; PP-only aero/governor keys may be inherited by `race_*` from sibling `pure_pursuit_quat`. GZ Cessna `race_quat` shares the 0.65/14 center-through outer set with `race_euler` (LOS pitch 20° / 0.35 rad, `kp_elev` 1.5, approach 8 m/s, `slow_range` 280 m).
 
-Code defaults for missing keys: controller `pure_pursuit_quat`, homing_law `lookat`. Check the checked-in `flightSetup.json` for the active race defaults (may differ).
+Code defaults for missing keys: controller `pure_pursuit_quat`, homing_law `lookat`. Checked-in `flightSetup.json` ships `race_quat` + `pn` + `attitude_format` euler.
 
 ## Frames
 

@@ -309,7 +309,7 @@ class TestFlightSetupDefaults(unittest.TestCase):
         self.assertEqual(setup.camera.fg_window_pattern, "FlightGear|fgfs")
         self.assertEqual(setup.guidance.cmd_mode, "attitude")
         self.assertEqual(setup.guidance.attitude_format, "euler")
-        self.assertEqual(setup.guidance.controller, "race_euler")
+        self.assertEqual(setup.guidance.controller, "race_quat")
         self.assertEqual(setup.guidance.speed_mps, 30.0)
         self.assertEqual(setup.guidance.homing_law, "pn")
         self.assertEqual(setup.guidance.alt_preserve_heading_err_deg, 20.0)

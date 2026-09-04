@@ -259,9 +259,8 @@ class TestLoadPlantJsoncFile(unittest.TestCase):
             self.assertEqual(p.plant_id, plant_id)
 
     def test_race_euler_shares_outer_gains_with_race_quat_all_plants(self) -> None:
-        """Plan-mandated JSONC copy (race_euler = verbatim race_quat outer
-        block) must hold for every plant except gz_rc_cessna, whose race_euler
-        is retuned for center-through and 0.65/14 phugoid."""
+        """GZ race_quat now shares the 0.65/14 center-through outer set with
+        race_euler. Other plants still copy race_euler from race_quat."""
         from fw_sitl.plant_gains import load_plant_gains, KNOWN_PLANT_IDS
 
         shared_attrs = (
@@ -286,8 +285,7 @@ class TestLoadPlantJsoncFile(unittest.TestCase):
             "slow_range_m",
             "speed_thrust_per_mps",
         )
-        # GZ race_euler is retuned for center-through + phugoid (0.65/14);
-        # keep PID/bank/speed-P parity with race_quat.
+        # GZ: previously-diverged keys plus slew/LPF/kp_elev now match too.
         gz_shared_attrs = (
             "pid_kp",
             "pid_ki",
@@ -301,9 +299,18 @@ class TestLoadPlantJsoncFile(unittest.TestCase):
             "bank_kp_alt",
             "bank_max_pitch_rad",
             "att_max_pitch_rad",
+            "att_los_max_pitch_rad",
+            "cruise_thrust",
             "climb_thrust_per_m",
             "min_thrust",
             "max_thrust",
+            "approach_speed_mps",
+            "slow_range_m",
+            "speed_mps",
+            "kp_elev",
+            "los_roll_slew_rad_s",
+            "los_roll_lpf_tau_s",
+            "los_pitch_lpf_tau_s",
             "speed_thrust_per_mps",
         )
         for plant_id in KNOWN_PLANT_IDS:

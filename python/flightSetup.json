@@ -34,7 +34,7 @@
   "render_rate_hz": 20,
   "guidance": {
     "control_rate_hz": 20,
-    // GZ in-air spawn IC (gz_spawn_velocity_enu). Chase V is plant race_euler 14.
+    // GZ in-air spawn IC (gz_spawn_velocity_enu). Chase V is plant race_quat 14.
     "speed_mps": 30,
     "pass_radius_m": 10,
     "lookahead_m": 500,
@@ -59,7 +59,7 @@
     // vs open-loop q_des+reset); cmd_mode=rates sends identical body rates for
     // both (send_attitude_rates always uses cascade_out.body_rates: des vs act /
     // roll_tc,pitch_tc — never q_cmd or I-state).
-    "controller": "race_euler",
+    "controller": "race_quat",
     // In-view HSV seeker (race_quat / race_euler). Camera dir_cam only; no balloon NED range.
     // FW_HOMING_LAW env overrides this key when set. Pitch still clipped to ±20°.
     //    lookat     = point body +X at the blob (pure camera look-at)

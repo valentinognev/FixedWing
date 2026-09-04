@@ -107,7 +107,7 @@ class TestRaceQuatPerPlatform(unittest.TestCase):
                     self.assertEqual(ctrl.last_law, "los")
                     self.assertIsNotNone(ctrl.last_q_des)
                     _r, pitch, _y = rpy_from_quat(ctrl.last_q_des)
-                    self.assertAlmostEqual(pitch, el, places=2)
+                    self.assertAlmostEqual(pitch, plant.kp_elev * el, places=2)
                     self.assertIsNotNone(ctrl.last_thrust)
                     self.assertGreaterEqual(float(ctrl.last_thrust), plant.min_thrust)
                     send.assert_called()

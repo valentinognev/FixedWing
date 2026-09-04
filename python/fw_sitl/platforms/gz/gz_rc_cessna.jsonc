@@ -76,11 +76,25 @@
       // Attitude path-hold max pitch (rad).
       "att_max_pitch_rad": 0.26,
 
-      // LOS / geometric chase max pitch (rad). Cessna stalls at 40° (live 135412).
-      "att_los_max_pitch_rad": 0.26,
+      // LOS / geometric chase max pitch (rad). 20° for calibrated inner loop / center-through.
+      "att_los_max_pitch_rad": 0.35,
 
-      // Nominal thrust fraction at cruise.
-      "cruise_thrust": 0.80,
+      // Elevator lead on LOS look-at (1 = no extra pitch vs geometric).
+      "kp_elev": 1.5,
+
+      // Max LOS-bank slew (rad/s); 45°/s for faster bank into the dive.
+      "los_roll_slew_rad_s": 0.7853981633974483,
+
+      // LOS-bank LPF time constant (s); 0.10 s vs default 0.20 s.
+      "los_roll_lpf_tau_s": 0.10,
+
+      // Pitch-command LPF (s). Live 221408 at 0.80 s: B0 6.13 m (ΔD −5.5) vs
+      // 4.94 m at 0.50; vz bob unchanged. Keep 0.50 so intercepts are not lagged.
+      "los_pitch_lpf_tau_s": 0.50,
+
+      // Nominal thrust fraction at cruise. Sweep 08 (thr 0.65 + 14 m/s):
+      // first-circuit 1.47 / 1.00 / 3.10 m; vz flips 67→21 vs 0.80/16.
+      "cruise_thrust": 0.65,
 
       // Extra thrust per metre of altitude error (1/m).
       "climb_thrust_per_m": 0.018,
@@ -92,13 +106,13 @@
       "max_thrust": 1.0,
 
       // Cruise airspeed command (m/s).
-      "speed_mps": 16.0,
+      "speed_mps": 14.0,
 
-      // Final-approach airspeed (m/s) inside slow_range_m.
-      "approach_speed_mps": 12.0,
+      // Final-approach airspeed (m/s) inside slow_range_m. Floor at FW_AIRSPD_MIN (8).
+      "approach_speed_mps": 8.0,
 
       // Range (m) at which speed blends cruise → approach.
-      "slow_range_m": 180.0,
+      "slow_range_m": 280.0,
 
       // Thrust P vs speed error (1 / (m/s)).
       "speed_thrust_per_mps": 0.07

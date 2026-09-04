@@ -278,20 +278,20 @@ class TestPlantGainsRegistry(unittest.TestCase):
         self.assertGreater(gz.pid_kp, jsb.pid_kp)
 
     def test_gz_race_quat_lookat_pitch_fits_cessna(self) -> None:
-        """Live 135412: in-view 40° look-at bled GS 14→8 m/s then departed at t=25."""
+        """20° cap (0.35 rad) still under the 40° stall from live 135412."""
         from fw_sitl.attitude_pid import q_des_from_los
         from fw_sitl.quat import rpy_from_quat
 
         p = load_plant_gains("gz_rc_cessna", controller="race_quat")
-        self.assertAlmostEqual(p.att_los_max_pitch_rad, 0.26)
+        self.assertAlmostEqual(p.att_los_max_pitch_rad, 0.35)
         self.assertAlmostEqual(p.min_thrust, 0.50)
-        self.assertAlmostEqual(p.cruise_thrust, 0.80)
+        self.assertAlmostEqual(p.cruise_thrust, 0.65)
         steep = q_des_from_los(
             (0.2, 0.0, -1.0),
             yaw_rad=0.0,
             **p.los_kwargs(),
         )
-        self.assertLessEqual(rpy_from_quat(steep)[1], 0.26 + 1e-6)
+        self.assertLessEqual(rpy_from_quat(steep)[1], 0.35 + 1e-6)
 
     def test_gz_race_euler_center_through_gains(self) -> None:
         """Calibrated GZ inner loop: 20° pitch, elev lead, faster bank, slower final."""
@@ -312,8 +312,15 @@ class TestPlantGainsRegistry(unittest.TestCase):
         self.assertAlmostEqual(euler.cruise_thrust, 0.65)
         self.assertGreaterEqual(euler.approach_speed_mps, euler.fw_airspd_min)
         self.assertAlmostEqual(euler.bank_kp_heading, 1.4)
-        self.assertAlmostEqual(race.att_los_max_pitch_rad, 0.26)
-        self.assertAlmostEqual(race.kp_elev, 1.0)
+        self.assertAlmostEqual(race.kp_elev, euler.kp_elev)
+        self.assertAlmostEqual(race.att_los_max_pitch_rad, euler.att_los_max_pitch_rad)
+        self.assertAlmostEqual(race.los_roll_slew_rad_s, euler.los_roll_slew_rad_s)
+        self.assertAlmostEqual(race.los_roll_lpf_tau_s, euler.los_roll_lpf_tau_s)
+        self.assertAlmostEqual(race.los_pitch_lpf_tau_s, euler.los_pitch_lpf_tau_s)
+        self.assertAlmostEqual(race.approach_speed_mps, euler.approach_speed_mps)
+        self.assertAlmostEqual(race.slow_range_m, euler.slow_range_m)
+        self.assertAlmostEqual(race.speed_mps, euler.speed_mps)
+        self.assertAlmostEqual(race.cruise_thrust, euler.cruise_thrust)
         lim = dict(euler.px4_inner)
         self.assertAlmostEqual(lim["FW_P_LIM_MIN"], -20.0)
         self.assertAlmostEqual(lim["FW_P_LIM_MAX"], 20.0)

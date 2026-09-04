@@ -1,5 +1,10 @@
 # Updates
 
+## 0.67.0 - GZ race_quat uses race_euler outer gains
+- Shipped `flightSetup.json` controller `race_euler` → `race_quat` (keep euler format, `pn`, spawn `speed_mps` 30).
+- GZ `gz_rc_cessna` `race_quat` copies the `race_euler` outer set: LOS pitch 0.35, `kp_elev` 1.5, roll slew 45°/s τ 0.10, pitch LPF 0.50, cruise 0.65/14, approach 8 / slow 280.
+- Live miss TBD.
+
 ## 0.66.4 - flightSetup.speed_mps is GZ spawn IC, not chase V
 - Live `091727` after 0.66.3 set that key to 14: spawn stalled, held z≈+35 m, CPA **12 m under** B0 (no pass). Sweep 08 and morning 083510 spawned at **30** with plant chase 14.
 - Revert `guidance.speed_mps` to 30. `gz_spawn_velocity_enu` reads it; chase still uses plant `race_euler` 0.65/14.
