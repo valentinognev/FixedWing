@@ -1,5 +1,9 @@
 # Updates
 
+## 0.71.0 - SID GZ advanced_plane rate inner loop
+- Live Gazebo `--layer rates` SID on `--model advanced_plane` (3 chirp runs). Applied first-hint multiply table: `FW_PR_P` 0.08→0.10 (q ok), `FW_YR_P` 0.2→0.13 (r still overshoot), `FW_RR_P` stayed 0.03 (clamp floor; p still overshoot). `FW_THR_TRIM` 0.25, `FW_P_LIM_*` ±20, outer `race_*` untouched.
+- Snapshot `test_px4_inner_gz_advanced_snapshot` pins `FW_PR_P` 0.10 / `FW_RR_P` 0.03 / `FW_YR_P` 0.13.
+
 ## 0.70.0 - alt-step path-hold uses balloon z; look-at 12°/8° hysteresis
 - `lookat_clears` dropping LOS with a shallow blob reseeding path-hold from `80·sin(el)` froze ~16 m below B0 (live `112813`: B1 **4.20 m under**, first z<5 at 54 s; 117 vz flips / 200 s).
 - Path-hold now keeps balloon `z_target` while `|Δz|>10 m`; camera proxy reseeds only when co-altitude (same balloon).

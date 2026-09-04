@@ -420,8 +420,9 @@ class TestPlantGainsRegistry(unittest.TestCase):
 
     def test_px4_inner_gz_advanced_snapshot(self) -> None:
         inner = dict(load_plant_gains("gz_advanced_plane").px4_inner)
-        self.assertAlmostEqual(inner["FW_PR_P"], 0.08)
+        self.assertAlmostEqual(inner["FW_PR_P"], 0.10)
         self.assertAlmostEqual(inner["FW_RR_P"], 0.03)
+        self.assertAlmostEqual(inner["FW_YR_P"], 0.13)
         self.assertAlmostEqual(inner["FW_THR_TRIM"], 0.25)
         self.assertAlmostEqual(inner["FW_P_LIM_MIN"], -20.0)
         self.assertAlmostEqual(inner["FW_P_LIM_MAX"], 20.0)

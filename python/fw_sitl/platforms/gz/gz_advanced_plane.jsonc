@@ -19,13 +19,13 @@
   [
     ["FW_PR_FF", 0.08], /* FW_PR_FF */
     ["FW_PR_I", 0.3], /* FW_PR_I */
-    ["FW_PR_P", 0.08], /* FW_PR_P */
+    ["FW_PR_P", 0.10], /* FW_PR_P */
     ["FW_RR_FF", 0.05], /* FW_RR_FF */
     ["FW_RR_I", 0.2], /* FW_RR_I */
     ["FW_RR_P", 0.03], /* FW_RR_P */
     ["FW_YR_FF", 0.3], /* FW_YR_FF */
     ["FW_YR_I", 0.4], /* FW_YR_I */
-    ["FW_YR_P", 0.2], /* FW_YR_P */
+    ["FW_YR_P", 0.13], /* FW_YR_P */
     ["FW_PSP_OFF", 2.0], /* FW_PSP_OFF */
     ["FW_P_LIM_MAX", 20.0], /* FW_P_LIM_MAX */
     ["FW_P_LIM_MIN", -20.0], /* FW_P_LIM_MIN */
