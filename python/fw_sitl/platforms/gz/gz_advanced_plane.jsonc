@@ -115,7 +115,7 @@
       "approach_speed_mps": 14.0,
 
       // Range (m) at which speed blends cruise → approach.
-      "slow_range_m": 160.0,
+      "slow_range_m": 220.0,
 
       // Thrust P vs speed error (1 / (m/s)).
       "speed_thrust_per_mps": 0.04
@@ -192,7 +192,7 @@
       "approach_speed_mps": 14.0,
 
       // Range (m) at which speed blends cruise → approach.
-      "slow_range_m": 160.0,
+      "slow_range_m": 220.0,
 
       // Thrust P vs speed error (1 / (m/s)).
       "speed_thrust_per_mps": 0.04
