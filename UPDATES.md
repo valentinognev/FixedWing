@@ -1,8 +1,12 @@
 # Updates
 
-## 0.71.0 - SID GZ advanced_plane rate inner loop
-- Live Gazebo `--layer rates` SID on `--model advanced_plane` (3 chirp runs). Applied first-hint multiply table: `FW_PR_P` 0.08→0.10 (q ok), `FW_YR_P` 0.2→0.13 (r still overshoot), `FW_RR_P` stayed 0.03 (clamp floor; p still overshoot). `FW_THR_TRIM` 0.25, `FW_P_LIM_*` ±20, outer `race_*` untouched.
-- Snapshot `test_px4_inner_gz_advanced_snapshot` pins `FW_PR_P` 0.10 / `FW_RR_P` 0.03 / `FW_YR_P` 0.13.
+## 0.71.0 - GZ advanced_plane race_quat + pn
+- `--gz --model advanced_plane` (`gz_advanced_plane`) is a `race_quat`+`pn` plant; shipped `flightSetup.json` stays `gz_model` `rc_cessna`.
+- Outer copies Cessna chase structure at 20 m/s trim: LOS 20° / `kp_elev` 1.5 / pitch LPF 0.50 / `pitch_vz_gain` 0.08 on `race_quat`.
+- SID inner: `FW_PR_P` 0.10, `FW_RR_P` 0.03 (clamp floor; p still overshoot), `FW_YR_P` 0.13; attitude SID all-ok so `pid_kp` 0.7 / TCs 0.4 held.
+- Energy left in JSONC: `cruise_thrust` 0.5, `speed_mps` 20, `approach_speed_mps` 14, `slow_range_m` **220**, `min_thrust` 0.35.
+- Live first circuit best (tune1 `/tmp/balloon_race_adv_tune1.csv`): B0 **0.57 m** / B1 **1.02 m** / B2 **no pass** (heading fly-by CPA **86.7 m**). Baseline `/tmp/balloon_race_adv_baseline.csv`: 1.32 / 1.09 / fly-by 89.7 m.
+- GATE FAIL — 5 m first-circuit still open; energy did not create the B2 turn.
 
 ## 0.70.0 - alt-step path-hold uses balloon z; look-at 12°/8° hysteresis
 - `lookat_clears` dropping LOS with a shallow blob reseeding path-hold from `80·sin(el)` froze ~16 m below B0 (live `112813`: B1 **4.20 m under**, first z<5 at 54 s; 117 vz flips / 200 s).
