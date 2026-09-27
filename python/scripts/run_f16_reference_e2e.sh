@@ -37,6 +37,7 @@ horizons = {
 min_h_limit_ft = 50.0
 rms_limit = 5.0
 rows = []
+failures = []
 failed = False
 
 
@@ -59,7 +60,20 @@ def verdict(metrics: dict) -> bool:
     )
 
 
-def add_row(scenario: str, pair: str, metrics: dict | None, status: str) -> None:
+def _final13(traj: dict) -> str:
+    final = np.asarray(traj["states"][-1], dtype=float).reshape(-1)[:13]
+    return "[" + ", ".join(f"{float(x):.8g}" for x in final) + "]"
+
+
+def add_row(
+    scenario: str,
+    pair: str,
+    metrics: dict | None,
+    status: str,
+    left: dict | None = None,
+    right: dict | None = None,
+    ref_version: str = "",
+) -> None:
     global failed
     if metrics is None:
         rows.append((scenario, pair, "", "", "", status))
@@ -67,6 +81,20 @@ def add_row(scenario: str, pair: str, metrics: dict | None, status: str) -> None
     ok = verdict(metrics)
     if not ok:
         failed = True
+        ver = ref_version or "unknown"
+        prefix = f"FAIL-RECORD scenario={scenario} pair={pair} ref_version={ver}"
+        failures.append(
+            f"{prefix} metric=modes_equal value={bool(metrics['modes_equal'])} "
+            f"ours_modes={list(left['modes'])} ref_modes={list(right['modes'])}"
+        )
+        failures.append(
+            f"{prefix} metric=min_h_diff_ft value={float(metrics['min_h_diff_ft']):.6f} "
+            f"ours_min_h_ft={float(left['min_h_ft']):.6f} ref_min_h_ft={float(right['min_h_ft']):.6f}"
+        )
+        failures.append(
+            f"{prefix} metric=final_rms value={float(metrics['final_rms']):.6f} "
+            f"ours_final13={_final13(left)} ref_final13={_final13(right)}"
+        )
     rows.append(
         (
             scenario,
@@ -84,19 +112,38 @@ for scenario, t_end in horizons.items():
     py = run_python_reference(scenario, t_end)
     save_traj(out / f"{scenario}_ours.npz", ours)
     save_traj(out / f"{scenario}_python.npz", py)
-    add_row(scenario, "ours_vs_python", compare_trajectories(ours, py), "")
+    add_row(
+        scenario,
+        "ours_vs_python",
+        compare_trajectories(ours, py),
+        "",
+        ours,
+        py,
+        str(py.get("ref_version", "")),
+    )
     try:
         cpp = run_cpp_reference(scenario, t_end)
     except unittest.SkipTest as exc:
         add_row(scenario, "ours_vs_cpp", None, f"SKIP {exc}")
         continue
     save_traj(out / f"{scenario}_cpp.npz", cpp)
-    add_row(scenario, "ours_vs_cpp", compare_trajectories(ours, cpp), "")
+    add_row(
+        scenario,
+        "ours_vs_cpp",
+        compare_trajectories(ours, cpp),
+        "",
+        ours,
+        cpp,
+        str(cpp.get("ref_version", "")),
+    )
 
 header = f"{'scenario':<16} {'pair':<16} {'modes_equal':<12} {'min_h_diff_ft':>14} {'final_rms':>12}  status"
 lines = [header, "-" * len(header)]
 for scenario, pair, modes, dh, rms, status in rows:
     lines.append(f"{scenario:<16} {pair:<16} {modes:<12} {dh:>14} {rms:>12}  {status}")
+if failures:
+    lines.append("")
+    lines.extend(failures)
 table = "\n".join(lines) + "\n"
 (out / "metrics.txt").write_text(table)
 sys.stdout.write(table)
