@@ -406,6 +406,28 @@ class TestLookatVsAssisted(unittest.TestCase):
             )
         )
 
+    def test_lookat_el_min_16_holds_path_on_12deg_alt_step(self) -> None:
+        """YASim/viz 20–40 m steps: 12° HSV look-at slams ±20° and zoom-dives."""
+        self.assertTrue(
+            lookat_clears_alt_step(math.radians(12.0), pos_z=20.0, tgt_z=0.0)
+        )
+        self.assertFalse(
+            lookat_clears_alt_step(
+                math.radians(12.0),
+                pos_z=20.0,
+                tgt_z=0.0,
+                el_min_rad=math.radians(16.0),
+            )
+        )
+        self.assertTrue(
+            lookat_clears_alt_step(
+                math.radians(16.0),
+                pos_z=20.0,
+                tgt_z=0.0,
+                el_min_rad=math.radians(16.0),
+            )
+        )
+
 
 class TestStaleTrackAssisted(unittest.TestCase):
     def test_stale_locks_assisted_forever(self) -> None:

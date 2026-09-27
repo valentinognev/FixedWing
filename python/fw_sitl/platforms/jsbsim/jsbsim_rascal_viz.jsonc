@@ -85,8 +85,13 @@
       // Pitch-command LPF (s). Keep 0.50 so intercepts are not lagged.
       "los_pitch_lpf_tau_s": 0.50,
 
-      // Look-at pitch D vs NED vz (rad / (m/s)). 0.08 after the LPF; |el|>8° still skips.
-      "pitch_vz_gain": 0.08,
+      // Look-at pitch D vs NED vz (rad / (m/s)). 0.05 after the LPF (softer than
+      // headless 0.08): FG GT vz is staircased; |el|>8° still skips.
+      "pitch_vz_gain": 0.05,
+
+      // Look-at alt-step gate (rad, 16°). Path-hold a 40 m B1→B2 dive until
+      // HSV el is steep; 12° armed ±20° look-at and zoom-dived through B2.
+      "lookat_el_min_rad": 0.2792526803190927,
 
       // Nominal thrust fraction at cruise.
       "cruise_thrust": 0.62,
@@ -165,6 +170,9 @@
 
       // Pitch-command LPF (s). Keep 0.50 so intercepts are not lagged.
       "los_pitch_lpf_tau_s": 0.50,
+
+      // Look-at alt-step gate (rad, 16°). Same as race_quat.
+      "lookat_el_min_rad": 0.2792526803190927,
 
       // Nominal thrust fraction at cruise.
       "cruise_thrust": 0.62,

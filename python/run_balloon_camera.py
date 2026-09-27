@@ -19,6 +19,7 @@ from fw_sitl.balloon_tracker import track_balloon
 from fw_sitl.camera_model import CameraModel
 from fw_sitl.platforms.yasim.fg_camera import (
     FG_GEO_REFRESH_PERIOD_S,
+    camera_spec_for_fg_grab,
     due_for_refresh,
     find_fg_window_geometry,
     fit_window_outside_rect,
@@ -99,10 +100,18 @@ def main() -> int:
         action="store_true",
         help="Track and PUB without OpenCV window (for headless / e2e)",
     )
+    parser.add_argument(
+        "--fg-intrinsics",
+        action="store_true",
+        help="HSV pinhole matches FG grab (vertical FOV + 4:3 crop), not synth 90×70",
+    )
     args = parser.parse_args()
 
     setup = load_flight_setup(args.setup)
-    camera = CameraModel.from_spec(setup.camera)
+    cam_spec = (
+        camera_spec_for_fg_grab(setup.camera) if args.fg_intrinsics else setup.camera
+    )
+    camera = CameraModel.from_spec(cam_spec)
     img_sub = ImageSubscriber(setup.zmq.image)
     color_sub = ColorSubscriber(setup.zmq.color)
     track_pub = TrackPublisher(setup.zmq.track)
@@ -152,6 +161,11 @@ def main() -> int:
     print(
         f"Camera @ {setup.camera.rate_hz} Hz; image={setup.zmq.image} "
         f"track→{setup.zmq.track}; display={'on' if show_ui else 'off'}"
+        + (
+            f"; FG grab hfov={cam_spec.hfov_deg:.1f} vfov={cam_spec.vfov_deg:.1f}"
+            if args.fg_intrinsics
+            else ""
+        )
     )
 
     next_t = time.time()

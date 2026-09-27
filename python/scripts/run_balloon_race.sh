@@ -353,6 +353,9 @@ CAM_CMD="DISPLAY=${DISPLAY:-:0} QT_X11_NO_MITSHM=1 PYTHONUNBUFFERED=1 ${PYTHON} 
 if [[ "${BALLOON_CAMERA_NO_DISPLAY:-0}" == "1" ]]; then
   CAM_CMD+=" --no-display"
 fi
+if [[ "${MODE}" == "fg" ]]; then
+  CAM_CMD+=" --fg-intrinsics"
+fi
 CTL_CMD="DISPLAY=${DISPLAY:-:0} MPLBACKEND=${MPLBACKEND:-Agg} PYTHONUNBUFFERED=1 ${PYTHON} -u ${PYTHON_ROOT}/run_balloon_control.py --setup ${SETUP} --udp ${MAVLINK_CONTROL_PORT}"
 if [[ -n "${FW_HOMING_LAW:-}" ]]; then
   CTL_CMD="FW_HOMING_LAW=${FW_HOMING_LAW} ${CTL_CMD}"

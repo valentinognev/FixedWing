@@ -40,6 +40,7 @@ from fw_sitl.camera_model import (
 )
 from fw_sitl.flight_history import FlightHistory, extrapolate_ned, slew_toward_rpy
 from fw_sitl.flight_setup import load_flight_setup
+from fw_sitl.platforms.yasim.fg_camera import camera_spec_for_fg_grab, fg_eye_pos_ned
 from fw_sitl.platforms.gz.gz_pose import gz_enu_to_ned, horiz_ned_err_m, ned_sub
 from fw_sitl.mavlink_io import (
     PX4_CUSTOM_MAIN_MODE_OFFBOARD,
@@ -186,15 +187,17 @@ def _gt_reader_loop(tel: FgTelnet, holder: _GtHolder, period_s: float) -> None:
             holder.ms = (t_pose - t_start) * 1000.0
         # Pose snapshot is one Nasal+get. Do not re-walk static balloon models
         # or get FOV/z every cycle: that made pickle 143601 jump 15–92 m / 4 s.
+        # FOV set_prop every cycle also stalled telnet (~2.4 s) and PN-jittered
+        # --viz/--yasim; write FOV only on the first view lock.
         try:
-            tel.set_prop("/sim/current-view/field-of-view", 90.0)
-            tel.set_prop("/sim/current-view/goal-field-of-view", 90.0)
-            tel.set_prop("/sim/current-view/goal-fov", 90.0)
-            tel.set_prop("/sim/view[0]/config/field-of-view", 90.0)
             with holder.lock:
                 need_models = holder.models_xy is None
                 need_view = holder.fov_deg is None
             if need_view:
+                tel.set_prop("/sim/current-view/field-of-view", 90.0)
+                tel.set_prop("/sim/current-view/goal-field-of-view", 90.0)
+                tel.set_prop("/sim/current-view/goal-fov", 90.0)
+                tel.set_prop("/sim/view[0]/config/field-of-view", 90.0)
                 fov = parse_fg_telnet_float(
                     tel.command("get /sim/current-view/field-of-view")
                 )
@@ -705,7 +708,17 @@ def main() -> int:
         )
     )
 
-    camera = CameraModel.from_spec(setup.camera)
+    camera_spec = setup.camera
+    if args.viz or args.yasim:
+        camera_spec = camera_spec_for_fg_grab(setup.camera)
+        print(
+            f"FG grab pinhole hfov={camera_spec.hfov_deg:.2f}° "
+            f"vfov={camera_spec.vfov_deg:.2f}° "
+            f"(FG field-of-view is vertical {setup.camera.hfov_deg:g}°; "
+            f"eye +{setup.camera.fg_eye_forward_m:g} m body X)",
+            flush=True,
+        )
+    camera = CameraModel.from_spec(camera_spec)
     race = RaceGuidance(race_balloons, setup.guidance)
     cmd_mode = parse_body_cmd_mode(setup.guidance.cmd_mode)
     env_homing = os.environ.get("FW_HOMING_LAW", "").strip()
@@ -749,8 +762,8 @@ def main() -> int:
 
     history = FlightHistory()
     history.set_balloon_markers([(b.ned, b.color) for b in race_balloons])
-    history.cam_hfov_deg = float(setup.camera.hfov_deg)
-    history.cam_vfov_deg = float(setup.camera.vfov_deg)
+    history.cam_hfov_deg = float(camera_spec.hfov_deg)
+    history.cam_vfov_deg = float(camera_spec.vfov_deg)
     history.cam_mount_azimuth_deg = float(setup.camera.azimuth_deg)
     history.cam_mount_elevation_deg = float(setup.camera.elevation_deg)
     history.request_streams(master, hz=rate)
@@ -1049,10 +1062,19 @@ def main() -> int:
             # the blob is on the right of balloon_camera). Without dir_cam,
             # path-hold at current altitude and bank onto geometric bearing.
             balloon = race.balloon_ned()
+            cam_pos = pos
+            if args.viz or args.yasim:
+                cam_pos = fg_eye_pos_ned(
+                    pos,
+                    att[0],
+                    att[1],
+                    att[2],
+                    float(setup.camera.fg_eye_forward_m),
+                )
             rel_ned = (
-                balloon[0] - pos[0],
-                balloon[1] - pos[1],
-                balloon[2] - pos[2],
+                balloon[0] - cam_pos[0],
+                balloon[1] - cam_pos[1],
+                balloon[2] - cam_pos[2],
             )
             on_screen = offset_on_screen(
                 rel_ned,
@@ -1123,7 +1145,11 @@ def main() -> int:
                 cam_el_rad = math.radians(el_deg)
             tgt_z = race.balloon_ned()[2]
             if use_lookat and not lookat_clears_alt_step(
-                cam_el_rad, pos[2], tgt_z, currently_lookat=last_use_lookat
+                cam_el_rad,
+                pos[2],
+                tgt_z,
+                currently_lookat=last_use_lookat,
+                el_min_rad=float(plant.lookat_el_min_rad),
             ):
                 use_lookat = False
             if race.check_pass(
@@ -1151,7 +1177,7 @@ def main() -> int:
                 history.note_target(balloon)
                 history.apply_target_to_last(n_before_poll)
                 on_screen = offset_on_screen(
-                    (balloon[0] - pos[0], balloon[1] - pos[1], balloon[2] - pos[2]),
+                    (balloon[0] - cam_pos[0], balloon[1] - cam_pos[1], balloon[2] - cam_pos[2]),
                     camera,
                     att[0],
                     att[1],

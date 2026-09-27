@@ -181,7 +181,7 @@ class TestPlantGainsRegistry(unittest.TestCase):
         self.assertGreater(rpy_from_quat(steep)[1], 0.26)
 
     def test_yasim_rascal_race_quat_center_through(self) -> None:
-        """Outer structure matches GZ chase set; energy stays YASim 28 m/s trim."""
+        """GZ chase outer; wider bank + quieter thrust so B1 turns without zoom-climb."""
         from fw_sitl.attitude_pid import q_des_from_los
         from fw_sitl.quat import rpy_from_quat
 
@@ -193,21 +193,26 @@ class TestPlantGainsRegistry(unittest.TestCase):
         self.assertAlmostEqual(race.los_roll_slew_rad_s, math.radians(45.0))
         self.assertAlmostEqual(race.los_roll_lpf_tau_s, 0.10)
         self.assertAlmostEqual(race.los_pitch_lpf_tau_s, 0.50)
-        self.assertAlmostEqual(race.pitch_vz_gain, 0.08)
+        self.assertAlmostEqual(race.pitch_vz_gain, 0.04)
         self.assertAlmostEqual(euler.pitch_vz_gain, 0.03)
         self.assertAlmostEqual(race.speed_mps, 28.0)
         self.assertAlmostEqual(race.approach_speed_mps, 18.0)
         self.assertAlmostEqual(race.slow_range_m, 280.0)
         self.assertAlmostEqual(race.cruise_thrust, 0.63)
-        self.assertAlmostEqual(race.min_thrust, 0.18)
-        self.assertAlmostEqual(race.bank_max_roll_rad, 0.36)
-        self.assertAlmostEqual(race.bank_kp_heading, 0.78)
+        self.assertAlmostEqual(race.min_thrust, 0.40)
+        self.assertAlmostEqual(race.bank_max_roll_rad, 0.48)
+        self.assertAlmostEqual(race.bank_kp_heading, 1.05)
+        self.assertAlmostEqual(race.lookat_el_min_rad, math.radians(16.0))
         self.assertAlmostEqual(race.kp_elev, euler.kp_elev)
         self.assertAlmostEqual(race.att_los_max_pitch_rad, euler.att_los_max_pitch_rad)
         self.assertAlmostEqual(race.approach_speed_mps, euler.approach_speed_mps)
         self.assertAlmostEqual(race.slow_range_m, euler.slow_range_m)
         self.assertAlmostEqual(race.speed_mps, euler.speed_mps)
         self.assertAlmostEqual(race.cruise_thrust, euler.cruise_thrust)
+        self.assertAlmostEqual(race.min_thrust, euler.min_thrust)
+        self.assertAlmostEqual(race.bank_max_roll_rad, euler.bank_max_roll_rad)
+        self.assertAlmostEqual(race.bank_kp_heading, euler.bank_kp_heading)
+        self.assertAlmostEqual(race.lookat_el_min_rad, euler.lookat_el_min_rad)
         lim = dict(race.px4_inner)
         self.assertAlmostEqual(lim["FW_P_LIM_MIN"], -20.0)
         self.assertAlmostEqual(lim["FW_P_LIM_MAX"], 20.0)
@@ -238,6 +243,10 @@ class TestPlantGainsRegistry(unittest.TestCase):
             p.fingerprint(),
             replace(p, pitch_vz_gain=0.12).fingerprint(),
         )
+        self.assertNotEqual(
+            p.fingerprint(),
+            replace(p, lookat_el_min_rad=0.3).fingerprint(),
+        )
 
     def test_jsbsim_race_quat_leads_body_az(self) -> None:
         """JSBSim 131011: kp=2 + 12 m/s @ 220 m crawled (~15 m/s) and over-banked
@@ -265,9 +274,13 @@ class TestPlantGainsRegistry(unittest.TestCase):
         self.assertAlmostEqual(race_viz.approach_speed_mps, race_jsb.approach_speed_mps)
         self.assertAlmostEqual(race_viz.kp_elev, race_jsb.kp_elev)
         self.assertAlmostEqual(race_viz.att_los_max_pitch_rad, race_jsb.att_los_max_pitch_rad)
-        self.assertAlmostEqual(race_viz.pitch_vz_gain, race_jsb.pitch_vz_gain)
         self.assertAlmostEqual(race_viz.los_roll_slew_rad_s, race_jsb.los_roll_slew_rad_s)
         self.assertAlmostEqual(race_viz.los_roll_lpf_tau_s, race_jsb.los_roll_lpf_tau_s)
+        # FG GT vz is noisier than headless EKF; keep FDM energy, soften D.
+        self.assertAlmostEqual(race_viz.pitch_vz_gain, 0.05)
+        self.assertLess(race_viz.pitch_vz_gain, race_jsb.pitch_vz_gain)
+        self.assertAlmostEqual(race_viz.lookat_el_min_rad, math.radians(16.0))
+        self.assertGreater(race_viz.lookat_el_min_rad, race_jsb.lookat_el_min_rad)
 
 
     def test_every_plant_has_aero_and_pp(self) -> None:

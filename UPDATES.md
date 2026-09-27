@@ -1,5 +1,29 @@
 # Updates
 
+## 0.76.0 - --viz/--yasim HSV pinhole matches FG grab
+- FG `/sim/current-view/field-of-view` is vertical; `sync_camera_view` still writes setup `hfov_deg` (90°) there. Tracker/control now use `camera_spec_for_fg_grab`: 4:3 crop → **HFOV≈106.3° / VFOV=90°** (synth stays 90×70).
+- Geometric `expected_uv` / `on_screen` on `--viz`/`--yasim` project from `fg_eye_forward_m` (body +X), the same lookfrom as the screenshot.
+- Launcher `MODE=fg` passes `balloon_camera --fg-intrinsics`. Host: `test_fg_camera.TestFgGrabPinhole`.
+
+## 0.75.0 - viz/YASim look-at alt-step gate 16°
+- Optional `PlantGains.lookat_el_min_rad` (default 12°) is passed into `lookat_clears_alt_step`. `--viz`/`--yasim` `race_quat`/`race_euler` use **16°** so a 20–40 m post-pass step path-holds and banks instead of arming ±20° HSV pitch.
+- Live `--viz` `/tmp/balloon_race_viz_lookat16.csv`: first circuit B0 **2.98** / B1 **3.32 m**, B2 CPA **16.6 m** (lateral overshoot, not the old zoom-dive). vz flips **6**/120 s vs `viz_conv` 6.89 / 1.98 / no B2. Spawn 533 m / co-alt — not a typical-spawn claim. `slow_range` 200 late-B1 (`viz_lookat16s` 4.74 / 5.90 t=100) reverted; keep 140.
+- YASim keeps 28/18 / `min_thrust` **0.40** (0.25 lost B0: CPA 12.8 m high). Live `yas_lookat16c` B0 **8.80 m** t=91 then B1 CPA 150 m. `yas_conv2` B0 **3.83 m** remains the tighter B0; B1 still open.
+- Host: lookat 16° pins on yasim/viz; fingerprint; control `el_min_rad=plant.lookat_el_min_rad`.
+
+## 0.74.0 - YASim/viz convergence: GT FOV-once + YASim turn/energy
+- `_gt_reader_loop` writes FG FOV telnet props only on first view lock. Every-cycle `set_prop` stalled pose (~2.4 s) and PN-jittered `--viz`/`--yasim`.
+- `yasim_rascal` `race_quat`/`race_euler`: keep 28/18 energy (live `yas_conv` at 24/16 **0 passes**). `min_thrust` 0.18→**0.40**, bank **0.48** rad / heading P **1.05**, `pitch_vz_gain` **0.04**, speed-thrust P 0.04. Live `yas_conv2` B0 **3.83 m** t=70, no B1, vz flips **32** vs tune2 40 / 3.92 m. Bank 0.55 (`yas_conv3`) over-turned, 0 passes. PP unchanged. B1 zoom still open.
+- `jsbsim_rascal_viz` `race_quat` `pitch_vz_gain` 0.08→**0.05** (FG GT vz); FDM energy still matches headless.
+- Host: `test_gt_reader_sets_fov_only_on_first_view_lock`; `test_yasim_rascal_race_quat_center_through` pins. Live `--viz` `/tmp/balloon_race_viz_conv.csv`: B0 **6.89** / B1 **1.98 m**, no B2 (spawn D≈306). Live `--yasim` `yas_conv2` B0 **3.83 m**, no B1, vz flips 32 vs tune2 40.
+
+## 0.73.0 - production race_quat e2e; retract JSBSim 5 m bar
+- `write_race_quat_production_e2e_setup` / `run_race_quat_production_e2e`: same 500/200/10 m `flightSetup.json` course as `./run_balloon_race.sh --duration 120` (`race_quat`+`pn`). Smoke `run_race_quat_e2e.sh` stays on the 50 m `flightSetup.e2e.json` course.
+- Honesty gate: first CSV sample must be a typical JSBSim spawn (range 250–400 m to B0, |D|≤120 m). The 629 m / D≈241 m intercept that produced 2.67 / 1.44 / 2.22 m **fails**. First-circuit score is the first three `event==pass` rows (lap-2 ignored). No 5 m miss assert.
+- Live bar (user typical spawn): headless 120 s `/tmp/balloon_race_20260904_220720.csv` **4.44 / 3.47 / 3.46 m**; 200 s `/tmp/balloon_race_20260904_220218.csv` **5.22 / 6.60 / 3.72 m**. Viz `/tmp/balloon_race_20260904_221031.csv` B0 **7.49 m** incomplete. 5 m first-circuit is not a JSBSim plant achievement.
+- Live production e2e `race_quat_prod_jsbsim_20260904_223744.csv`: spawn **696 m / D=303** (same class as the retracted 629 m run), B0 **1.32 m** at t=104 then no B1/B2. Honesty gate **failed**; that 1.32 m is not published.
+- Opt-in: `FW_SITL_E2E=1 ./python/scripts/run_race_quat_production_e2e.sh`. Host: `tests/test_race_quat_production_e2e.py`.
+
 ## 0.72.1 - shipped race default is headless JSBSim
 - `python/flightSetup.json` `sim.platform` `gz` → `jsbsim` so `./run_balloon_race.sh` matches the 0.72.0 5 m headless bar. `--gz` still selects Cessna.
 

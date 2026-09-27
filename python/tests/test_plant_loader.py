@@ -104,6 +104,7 @@ class TestPlantGainsFromDict(unittest.TestCase):
         self.assertAlmostEqual(p.los_pitch_lpf_tau_s, 0.50)
         self.assertAlmostEqual(p.los_el_bank_atten, 0.0)
         self.assertAlmostEqual(p.pitch_vz_gain, 0.03)
+        self.assertAlmostEqual(p.lookat_el_min_rad, math.radians(12.0))
 
     def test_explicit_kp_elev_and_los_roll_override_defaults(self) -> None:
         flat = merge_plant_controller(self._nested(), "race_quat")
@@ -288,6 +289,7 @@ class TestLoadPlantJsoncFile(unittest.TestCase):
             "approach_speed_mps",
             "slow_range_m",
             "speed_thrust_per_mps",
+            "lookat_el_min_rad",
         )
         # GZ: previously-diverged keys plus slew/LPF/kp_elev now match too.
         gz_shared_attrs = (
@@ -316,6 +318,7 @@ class TestLoadPlantJsoncFile(unittest.TestCase):
             "los_roll_lpf_tau_s",
             "los_pitch_lpf_tau_s",
             "speed_thrust_per_mps",
+            "lookat_el_min_rad",
         )
         for plant_id in KNOWN_PLANT_IDS:
             with self.subTest(plant_id=plant_id):

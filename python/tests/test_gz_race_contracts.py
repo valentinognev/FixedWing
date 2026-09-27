@@ -160,6 +160,7 @@ class TestGzRaceContracts(unittest.TestCase):
         self.assertIn("args.yasim", gate)
         self.assertIn("lookat_clears_alt_step", ctl)
         self.assertIn("currently_lookat=last_use_lookat", ctl)
+        self.assertIn("el_min_rad=float(plant.lookat_el_min_rad)", ctl)
         # Off-blob dir_ned must be geometric even when HSV last_in_view is still
         # true (lookat_clears dropped use_lookat; live 110425 locked 99° east).
         self.assertIn("if not use_lookat:\n                chase = race.geometric_los(pos)", ctl)
@@ -409,6 +410,8 @@ class TestGzRaceContracts(unittest.TestCase):
         self.assertIn("fit_window_outside_rect", cam)
         self.assertIn("moveWindow", cam)
         self.assertIn("find_fg_window_geometry", cam)
+        self.assertIn("--fg-intrinsics", cam)
+        self.assertIn("camera_spec_for_fg_grab", cam)
 
     def test_camera_pane_gets_display(self) -> None:
         """Control already bakes DISPLAY; camera ran under tmux env only."""

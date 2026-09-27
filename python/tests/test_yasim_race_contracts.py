@@ -24,6 +24,20 @@ class TestYasimControlContracts(unittest.TestCase):
         self.assertIn("args.no_sim or args.viz or args.gz or args.yasim or args.xplane", ctl)
         self.assertIn("args.spawn_fg_balloons or args.viz or args.yasim", ctl)
         self.assertIn("--viz, --gz, --yasim, and --xplane are mutually exclusive", ctl)
+        self.assertIn("camera_spec_for_fg_grab", ctl)
+        self.assertIn("fg_eye_pos_ned", ctl)
+
+    def test_gt_reader_sets_fov_only_on_first_view_lock(self) -> None:
+        """FOV set_prop every GT cycle stalls pose (~2.4 s) and PN-jitters viz/YASim."""
+        ctl = _CTL.read_text(encoding="utf-8")
+        loop = ctl[ctl.index("def _gt_reader_loop"): ctl.index("def _race_target_color")]
+        need_at = loop.index("if need_view:")
+        fov_at = loop.index('set_prop("/sim/current-view/field-of-view"')
+        self.assertLess(
+            need_at,
+            fov_at,
+            "FOV telnet writes must sit inside if need_view, not every snapshot",
+        )
 
     def test_gt_pose_z_uses_ekf_settle_datum_not_balloon_z(self) -> None:
         """Live 094707: ~40 m phantom ΔD on visual hits.
@@ -177,6 +191,7 @@ class TestYasimRaceLauncher(unittest.TestCase):
         self.assertIn("kill.sh", text)
         self.assertIn("--all", text)
         self.assertIn("px4-noble-sim-ros", text)
+        self.assertIn('CAM_CMD+=" --fg-intrinsics"', text)
 
     def test_yasim_and_gz_exit_2(self) -> None:
         r = subprocess.run(

@@ -98,9 +98,11 @@ def lookat_clears_alt_step(
     the opposite pitch and stalls the capture. Co-altitude (``|Δz|≤step_m``)
     always allows look-at.
 
-    Enter look-at on a step only when |el|≥12° with the needed sign. Stay
-    until |el|<8° (or wrong sign) so balloon-z path-hold does not chatter
-    thrust at the 12° edge (live proxy-fix 200 s).
+    Enter look-at on a step only when |el|≥``el_min_rad`` (default 12°) with
+    the needed sign. Stay until |el|<8° (or wrong sign) so balloon-z
+    path-hold does not chatter thrust at the enter edge. YASim/viz plants
+    raise this to 16° so a 20–40 m step banks in path-hold instead of
+    slamming ±20° HSV pitch.
     """
     need = float(tgt_z) - float(pos_z)
     if abs(need) <= float(step_m):

@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import os
 import subprocess
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +23,11 @@ _PRODUCTION_SETUP = _PYTHON_ROOT / "flightSetup.json"
 _RACE_SH = _PYTHON_ROOT / "scripts" / "run_balloon_race.sh"
 _KILL_SH = _PYTHON_ROOT / "scripts" / "kill.sh"
 _LOG_DIR = _PYTHON_ROOT / "logs" / "e2e"
+
+# Typical headless JSBSim intercept (user 120/200 s): ~310 m to B0, |D|≲80 m.
+# The 2.67/1.44/2.22 m CSV was a 629 m / D≈241 m spawn and is not the bar.
+JSBSIM_TYPICAL_SPAWN_RANGE_M = (250.0, 400.0)
+JSBSIM_TYPICAL_SPAWN_ABS_D_MAX_M = 120.0
 
 
 def e2e_enabled() -> bool:
@@ -81,6 +88,113 @@ def write_race_quat_e2e_setup(
     if setup.guidance.controller != "race_quat":
         raise RuntimeError(f"setup controller mismatch: {setup.guidance.controller}")
     return out
+
+
+def write_race_quat_production_e2e_setup(
+    path: Path,
+    *,
+    platform: str,
+    duration_s: float = 120.0,
+    gz_model: str = "rc_cessna",
+) -> Path:
+    """Materialize shipped ``flightSetup.json`` course with ``race_quat``+``pn``.
+
+    Same 500/200/10 m triangle the user launches via ``./run_balloon_race.sh``,
+    not the loose 50 m ``flightSetup.e2e.json`` smoke course.
+    """
+    plat = str(platform).strip().lower()
+    if plat not in KNOWN_SIM_PLATFORMS:
+        raise ValueError(
+            f"platform {plat!r} not in {sorted(KNOWN_SIM_PLATFORMS)}"
+        )
+    raw = _PRODUCTION_SETUP.read_text(encoding="utf-8")
+    data = json.loads(strip_jsonc(raw))
+    if not isinstance(data, dict):
+        raise ValueError(f"{_PRODUCTION_SETUP}: root must be an object")
+    sim = dict(data.get("sim") or {})
+    sim["platform"] = plat
+    sim["gz_model"] = str(gz_model).strip().lower()
+    sim["duration_s"] = float(duration_s)
+    data["sim"] = sim
+    guidance = dict(data.get("guidance") or {})
+    guidance["controller"] = "race_quat"
+    guidance["cmd_mode"] = "attitude"
+    guidance["attitude_format"] = "euler"
+    guidance["homing_law"] = str(guidance.get("homing_law") or "pn")
+    guidance["laps"] = 0
+    guidance.pop("duration_s", None)
+    data["guidance"] = guidance
+    zmq = dict(data.get("zmq") or {})
+    zmq.setdefault("pose", "tcp://127.0.0.1:5558")
+    data["zmq"] = zmq
+    out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    setup = load_flight_setup(out)
+    if setup.sim.platform != plat:
+        raise RuntimeError(f"setup platform mismatch: {setup.sim.platform}")
+    if setup.guidance.controller != "race_quat":
+        raise RuntimeError(f"setup controller mismatch: {setup.guidance.controller}")
+    return out
+
+
+@dataclass(frozen=True)
+class CsvSpawn:
+    """First CSV ``sample`` pose vs that tick's balloon target."""
+
+    range_m: float
+    pos_ned: tuple[float, float, float]
+    tgt_ned: tuple[float, float, float]
+
+    @property
+    def pos_d_m(self) -> float:
+        return self.pos_ned[2]
+
+
+def load_csv_spawn(csv_path: Path) -> CsvSpawn:
+    """Range from the first ``sample`` row to its ``tgt_*`` (B0 at t0)."""
+    with Path(csv_path).open(encoding="utf-8") as fh:
+        for row in csv.DictReader(fh):
+            if (row.get("event") or "").strip() != "sample":
+                continue
+            pos = (
+                float(row["pos_n"]),
+                float(row["pos_e"]),
+                float(row["pos_d"]),
+            )
+            tgt = (
+                float(row["tgt_n"]),
+                float(row["tgt_e"]),
+                float(row["tgt_d"]),
+            )
+            return CsvSpawn(
+                range_m=math.hypot(tgt[0] - pos[0], tgt[1] - pos[1], tgt[2] - pos[2]),
+                pos_ned=pos,
+                tgt_ned=tgt,
+            )
+    raise AssertionError(f"no sample row in {csv_path}")
+
+
+def assert_typical_jsbsim_spawn(csv_path: Path) -> CsvSpawn:
+    """Reject non-representative intercepts (629 m / D≈241 m is not the bar)."""
+    spawn = load_csv_spawn(csv_path)
+    lo, hi = JSBSIM_TYPICAL_SPAWN_RANGE_M
+    bad_range = not (lo <= spawn.range_m <= hi)
+    bad_d = abs(spawn.pos_d_m) > JSBSIM_TYPICAL_SPAWN_ABS_D_MAX_M
+    if bad_range or bad_d:
+        raise AssertionError(
+            f"not a typical JSBSim spawn in {csv_path}: "
+            f"range={spawn.range_m:.1f} m (want {lo:.0f}–{hi:.0f}), "
+            f"D={spawn.pos_d_m:.1f} m (want |D|≤{JSBSIM_TYPICAL_SPAWN_ABS_D_MAX_M:.0f})"
+        )
+    return spawn
+
+
+def first_circuit_pass_misses(
+    csv_path: Path,
+) -> list[tuple[int, float, bool]]:
+    """First three ``event==pass`` rows (lap-2 must not enter the published bar)."""
+    return load_pass_misses(csv_path)[:3]
 
 
 def write_race_euler_e2e_setup(
@@ -344,6 +458,118 @@ def run_race_euler_platform_e2e(
         assert_race_euler_csv_ok(
             csv_path, min_passes=min_passes, max_miss_m=max_miss_m
         )
+        return csv_path
+    finally:
+        kill_all_sims()
+        subprocess.run(
+            ["tmux", "kill-session", "-t", session],
+            check=False,
+            capture_output=True,
+        )
+
+
+def _write_first_circuit_report(
+    path: Path,
+    *,
+    platform: str,
+    spawn: CsvSpawn | None,
+    misses: list[tuple[int, float, bool]],
+    typical: bool | None,
+) -> None:
+    lines = [f"platform={platform}"]
+    if spawn is not None:
+        lines.append(f"spawn_range_m={spawn.range_m:.2f}")
+        lines.append(f"spawn_d_m={spawn.pos_d_m:.2f}")
+        lines.append(
+            f"spawn_ned={spawn.pos_ned[0]:.1f},{spawn.pos_ned[1]:.1f},{spawn.pos_ned[2]:.1f}"
+        )
+    if typical is not None:
+        lines.append(f"typical_jsbsim_spawn={str(typical).lower()}")
+    for idx, miss, assisted in misses:
+        lines.append(f"B{idx}_miss_m={miss:.2f} assisted={int(bool(assisted))}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print("\n".join(lines), flush=True)
+
+
+def run_race_quat_production_e2e(
+    platform: str,
+    *,
+    duration_s: float = 120.0,
+    min_passes: int = 3,
+    wait_slack_s: float = 240.0,
+    gz_model: str = "rc_cessna",
+    require_typical_spawn: bool | None = None,
+) -> Path:
+    """Live production-course ``race_quat``; no 5 m miss gate.
+
+    Headless JSBSim must spawn in the typical 250–400 m / |D|≤120 m envelope.
+    First-circuit 3D misses are written next to the CSV and printed; they are
+    not compared to 5 m (that claim was a 629 m spawn).
+    """
+    plat = str(platform).strip().lower()
+    if require_typical_spawn is None:
+        require_typical_spawn = plat == "jsbsim"
+    _LOG_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    csv_path = _LOG_DIR / f"race_quat_prod_{plat}_{stamp}.csv"
+    setup_path = _LOG_DIR / f"race_quat_prod_{plat}_{stamp}_setup.json"
+    session = f"e2e_rqp_{plat}_{stamp[-6:]}"
+    write_race_quat_production_e2e_setup(
+        setup_path,
+        platform=plat,
+        duration_s=duration_s,
+        gz_model=gz_model,
+    )
+    kill_all_sims()
+    try:
+        launched = run_balloon_race_detached(
+            setup=setup_path,
+            csv_path=csv_path,
+            session=session,
+            duration_s=duration_s,
+            platform=plat,
+        )
+        launch_log = _LOG_DIR / f"race_quat_prod_{plat}_{stamp}_launch.log"
+        launch_log.write_text(
+            f"rc={launched.returncode}\n--- stdout ---\n{launched.stdout}\n"
+            f"--- stderr ---\n{launched.stderr}\n",
+            encoding="utf-8",
+        )
+        if launched.returncode != 0:
+            raise RuntimeError(
+                f"race launch failed rc={launched.returncode}; see {launch_log}"
+            )
+        ok = wait_csv_end(csv_path, timeout_s=float(duration_s) + float(wait_slack_s))
+        if not ok:
+            raise TimeoutError(
+                f"timed out waiting for end_* in {csv_path} "
+                f"(duration={duration_s}s + slack={wait_slack_s}s)"
+            )
+        spawn = load_csv_spawn(csv_path)
+        misses = first_circuit_pass_misses(csv_path)
+        typical: bool | None = None
+        if require_typical_spawn:
+            try:
+                assert_typical_jsbsim_spawn(csv_path)
+                typical = True
+            except AssertionError:
+                typical = False
+                _write_first_circuit_report(
+                    csv_path.with_suffix(".first_circuit.txt"),
+                    platform=plat,
+                    spawn=spawn,
+                    misses=misses,
+                    typical=typical,
+                )
+                raise
+        _write_first_circuit_report(
+            csv_path.with_suffix(".first_circuit.txt"),
+            platform=plat,
+            spawn=spawn,
+            misses=misses,
+            typical=typical,
+        )
+        assert_race_quat_csv_ok(csv_path, min_passes=min_passes)
         return csv_path
     finally:
         kill_all_sims()

@@ -62,6 +62,7 @@ _OPTIONAL_PLANT_DEFAULTS = {
     "los_roll_lpf_tau_s": 0.20,
     "los_pitch_lpf_tau_s": 0.50,
     "pitch_vz_gain": 0.03,
+    "lookat_el_min_rad": math.radians(12.0),
 }
 
 

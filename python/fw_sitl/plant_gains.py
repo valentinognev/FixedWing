@@ -75,6 +75,9 @@ class PlantGains:
     los_roll_lpf_tau_s: float
     los_pitch_lpf_tau_s: float
     pitch_vz_gain: float
+    # Look-at alt-step gate (rad). Default 12°. YASim/viz use 16° so path-hold
+    # banks through a 20–40 m step instead of slamming ±20° HSV pitch.
+    lookat_el_min_rad: float
     cruise_thrust: float
     climb_thrust_per_m: float
     min_thrust: float
@@ -125,6 +128,7 @@ class PlantGains:
             self.los_roll_lpf_tau_s,
             self.los_pitch_lpf_tau_s,
             self.pitch_vz_gain,
+            self.lookat_el_min_rad,
             self.cruise_thrust,
             self.climb_thrust_per_m,
             self.min_thrust,

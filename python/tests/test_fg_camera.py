@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import math
 import socket
 import sys
 import unittest
@@ -20,8 +21,11 @@ from fw_sitl.flight_setup import CameraSpec
 from fw_sitl.platforms.yasim.fg_camera import (
     FG_GEO_REFRESH_PERIOD_S,
     FG_VIEW_SYNC_PERIOD_S,
+    camera_spec_for_fg_grab,
     capture_fg_frame,
     due_for_refresh,
+    fg_eye_pos_ned,
+    fg_grab_hfov_vfov_deg,
     find_fg_window_geometry,
     fit_window_outside_rect,
     place_outside_rect,
@@ -93,6 +97,48 @@ class TestSyncCameraView(unittest.TestCase):
         sync_camera_view(tel, cam, 0.0, 0.0, 0.0)
         self.assertEqual(tel.props["/sim/current-view/z-offset-m"], "-2.500")
         self.assertNotIn("/sim/rendering/draw-mask/aircraft", tel.props)
+
+
+class TestFgGrabPinhole(unittest.TestCase):
+    """FG field-of-view is vertical; HSV sees the 4:3 cropped grab, not synth 90×70."""
+
+    def test_4x3_grab_keeps_vertical_fov_and_widens_hfov(self) -> None:
+        hfov, vfov = fg_grab_hfov_vfov_deg(90.0, width_px=640, height_px=480)
+        self.assertAlmostEqual(vfov, 90.0)
+        self.assertAlmostEqual(hfov, math.degrees(2.0 * math.atan(4.0 / 3.0)))
+
+    def test_widescreen_source_width_crop_matches_4x3_grab(self) -> None:
+        hfov, vfov = fg_grab_hfov_vfov_deg(
+            90.0, width_px=640, height_px=480, src_width=1920, src_height=1080
+        )
+        self.assertAlmostEqual(vfov, 90.0)
+        self.assertAlmostEqual(hfov, math.degrees(2.0 * math.atan(4.0 / 3.0)))
+
+    def test_taller_source_height_crop_keeps_hfov(self) -> None:
+        hfov, vfov = fg_grab_hfov_vfov_deg(
+            90.0, width_px=640, height_px=480, src_width=400, src_height=480
+        )
+        vfov_src = math.radians(90.0)
+        hfov_src = 2.0 * math.atan(math.tan(vfov_src / 2.0) * (400.0 / 480.0))
+        self.assertAlmostEqual(hfov, math.degrees(hfov_src))
+        self.assertAlmostEqual(
+            vfov,
+            math.degrees(2.0 * math.atan(math.tan(hfov_src / 2.0) / (4.0 / 3.0))),
+        )
+
+    def test_camera_spec_for_fg_grab_uses_setup_hfov_as_fg_vertical_fov(self) -> None:
+        cam = CameraSpec(hfov_deg=90.0, vfov_deg=70.0, width_px=640, height_px=480)
+        out = camera_spec_for_fg_grab(cam)
+        self.assertAlmostEqual(out.vfov_deg, 90.0)
+        self.assertAlmostEqual(out.hfov_deg, math.degrees(2.0 * math.atan(4.0 / 3.0)))
+        self.assertEqual(out.width_px, 640)
+        self.assertEqual(out.fg_eye_forward_m, cam.fg_eye_forward_m)
+
+    def test_fg_eye_is_body_x_ahead_of_cg(self) -> None:
+        pos = fg_eye_pos_ned((0.0, 0.0, 10.0), 0.0, 0.0, 0.0, 5.0)
+        self.assertAlmostEqual(pos[0], 5.0)
+        self.assertAlmostEqual(pos[1], 0.0)
+        self.assertAlmostEqual(pos[2], 10.0)
 
 
 class TestFindFgWindowGeometryMock(unittest.TestCase):

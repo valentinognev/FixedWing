@@ -1,9 +1,11 @@
 """FlightGear view sync + screenshot capture for balloon race viz."""
 from __future__ import annotations
 
+import math
 import re
 import subprocess
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import cv2
@@ -11,6 +13,7 @@ import numpy as np
 from pymavlink import mavutil
 
 from fw_sitl.balloon_scene import FgTelnet
+from fw_sitl.camera_model import dir_body_to_ned
 from fw_sitl.flight_setup import CameraSpec, FlightSetup, DEFAULT_FG_WINDOW_PATTERN
 from fw_sitl.mavlink_io import connect, poll_mavlink, request_local_position
 from fw_sitl.zmq_bus import ImagePublisher
@@ -416,6 +419,73 @@ def _resize_to_camera(bgr: np.ndarray, camera: CameraSpec) -> np.ndarray:
     return cv2.resize(crop, (tw, th), interpolation=cv2.INTER_AREA)
 
 
+def fg_grab_hfov_vfov_deg(
+    fg_vertical_fov_deg: float,
+    *,
+    width_px: int,
+    height_px: int,
+    src_width: int | None = None,
+    src_height: int | None = None,
+) -> tuple[float, float]:
+    """Pinhole HFOV/VFOV of the HSV frame after ``_resize_to_camera``.
+
+    FlightGear ``/sim/current-view/field-of-view`` is **vertical**. The grab is
+    center-cropped to ``width_px``×``height_px`` (same rule as ``_resize_to_camera``).
+    ``src_*`` omitted means the published frame is already that aspect (width crop
+    or native 4:3).
+    """
+    fov = math.radians(float(fg_vertical_fov_deg))
+    tw = max(int(width_px), 1)
+    th = max(int(height_px), 1)
+    target_aspect = tw / th
+    if src_width is None or src_height is None:
+        src_aspect = target_aspect
+    else:
+        src_aspect = float(src_width) / max(int(src_height), 1)
+    if src_aspect + 1e-9 >= target_aspect:
+        vfov_deg = float(fg_vertical_fov_deg)
+        hfov_deg = math.degrees(2.0 * math.atan(math.tan(fov * 0.5) * target_aspect))
+        return (hfov_deg, vfov_deg)
+    hfov_src = 2.0 * math.atan(math.tan(fov * 0.5) * src_aspect)
+    hfov_deg = math.degrees(hfov_src)
+    vfov_deg = math.degrees(2.0 * math.atan(math.tan(hfov_src * 0.5) / target_aspect))
+    return (hfov_deg, vfov_deg)
+
+
+def camera_spec_for_fg_grab(camera: CameraSpec) -> CameraSpec:
+    """Tracker/control intrinsics for an FG screenshot.
+
+    ``sync_camera_view`` writes ``camera.hfov_deg`` into FG's vertical FOV
+    property. Do not pass this spec back into ``sync_camera_view`` (would
+    double-apply). ``vfov_deg`` in setup is the synth pinhole and is unused here.
+    """
+    hfov, vfov = fg_grab_hfov_vfov_deg(
+        float(camera.hfov_deg),
+        width_px=int(camera.width_px),
+        height_px=int(camera.height_px),
+    )
+    return replace(camera, hfov_deg=hfov, vfov_deg=vfov)
+
+
+def fg_eye_pos_ned(
+    pos_ned: tuple[float, float, float],
+    roll: float,
+    pitch: float,
+    yaw: float,
+    forward_m: float,
+) -> tuple[float, float, float]:
+    """Aircraft CG NED → FG lookfrom (body +X / view −Z by ``forward_m``)."""
+    d = float(forward_m)
+    if d <= 0.0:
+        return pos_ned
+    fwd = dir_body_to_ned((1.0, 0.0, 0.0), roll, pitch, yaw)
+    return (
+        float(pos_ned[0]) + fwd[0] * d,
+        float(pos_ned[1]) + fwd[1] * d,
+        float(pos_ned[2]) + fwd[2] * d,
+    )
+
+
 def sync_camera_view(
     tel: FgTelnet,
     camera: CameraSpec,
@@ -433,7 +503,9 @@ def sync_camera_view(
        writing both live and ``goal-*`` props so FG easing cannot snap back,
     3) hide ownship via ``/sim/rendering/draw-mask/aircraft=0`` (required —
        forward offset alone still leaves grey structure in-frame),
-    4) match mount az/el + HFOV.
+    4) match mount az/el. ``field-of-view`` is FG **vertical** FOV; we write
+       ``camera.hfov_deg`` (setup 90°) there. Tracker uses
+       ``camera_spec_for_fg_grab`` so HSV rays match the cropped grab.
 
     ``roll``/``pitch``/``yaw`` kept for API stability; offsets are body-relative.
     """

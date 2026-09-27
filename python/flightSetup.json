@@ -17,7 +17,7 @@
   // Race launcher plant + length (CLI --viz/--yasim/--gz/--model/--duration override)
   "sim": {
     // jsbsim | viz | yasim | gz
-    "platform": "jsbsim",
+    "platform": "yasim",
     // only used when platform=gz (or CLI --gz): rc_cessna | advanced_plane
     "gz_model": "rc_cessna",
     // 0 = no time limit; >0 = stop after that many seconds (CLI --duration overrides)
