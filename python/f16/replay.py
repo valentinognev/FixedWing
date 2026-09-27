@@ -26,7 +26,6 @@ _FDM_FMT = (
     "Iif"       # cur_time, warp, visibility
     "10f"       # elevator through spoilers
 )
-_AEROBENCH_CODE = "/home/valentin/Projects/FlightSimulation/F16/AeroBenchVVPython/code"
 
 
 def csv_row_to_fdm(row: dict) -> dict:
@@ -89,6 +88,7 @@ def play_anim(csv_path: str, filename: str = "") -> int:
 
     Imports matplotlib only here, when a window or a saved animation is requested.
     ``filename`` empty plots on screen; a path ending in ``.gif`` or ``.mp4`` saves.
+    ``aerobench`` must already import, or ``AEROBENCH_CODE`` must point at its code directory.
     """
     rows = _read_csv(csv_path)
     res = csv_columns_to_frames(rows)
@@ -109,6 +109,8 @@ def send_to_fg(csv_path: str, host: str = "127.0.0.1", port: int = 5500) -> int:
     origin_t = None
     origin_wall = None
     try:
+        # Connected UDP: a later send raises ConnectionRefusedError after ICMP unreachable.
+        sock.connect((host, int(port)))
         for row in rows:
             t = _row_time(row)
             if t is not None and origin_t is not None and origin_wall is not None:
@@ -124,7 +126,7 @@ def send_to_fg(csv_path: str, host: str = "127.0.0.1", port: int = 5500) -> int:
                 if prev_t is not None:
                     dt = t - prev_t
             packet = _pack_native_fdm(row, prev, dt)
-            sock.sendto(packet, (host, int(port)))
+            sock.send(packet)
             sent += 1
             prev = row
     finally:
@@ -218,12 +220,26 @@ def _pack_native_fdm(row: dict, prev: dict | None, dt: float) -> bytes:
 
 
 def _import_anim3d():
-    import sys
-
+    """Same import as the AeroBench examples. ``AEROBENCH_CODE`` is optional and not left on ``sys.path``."""
     try:
         from aerobench.visualize import anim3d
+        return anim3d
     except ImportError:
-        if _AEROBENCH_CODE not in sys.path:
-            sys.path.insert(0, _AEROBENCH_CODE)
+        pass
+    import os
+    import sys
+
+    code = os.environ.get("AEROBENCH_CODE", "").strip()
+    if not code:
+        raise ImportError(
+            "No module named 'aerobench'. Set AEROBENCH_CODE to the AeroBench code directory."
+        )
+    inserted = code not in sys.path
+    if inserted:
+        sys.path.insert(0, code)
+    try:
         from aerobench.visualize import anim3d
+    finally:
+        if inserted:
+            sys.path.remove(code)
     return anim3d
