@@ -13,6 +13,10 @@ class _StopIntegration(Exception):
     """Non-finite state or derivative; keep the partial trajectory."""
 
 
+# RK45.__init__ evaluates the RHS and rejects a non-finite y0 with ValueError.
+_CONSTRUCTOR_FAILURES = (_StopIntegration, FloatingPointError, ValueError)
+
+
 def controlled_derivative(t: float, x_f16: np.ndarray, u_ref: np.ndarray, llc) -> np.ndarray:
     """LQR-controlled derivative. ps and Ny_r follow controlled_f16 with v2_integrators=False."""
     x_f16 = np.asarray(x_f16, dtype=float)
@@ -43,8 +47,10 @@ def run_sim(autopilot, x0_13, t_end, step=1 / 30) -> dict:
     """Integrate 13 plant states plus three zero LQR integrators.
 
     Each sample advances the discrete mode, then the ODE calls get_checked_u_ref.
-    Stops on a non-finite state (last finite sample kept) or on ground contact
-    h <= 0 (contact sample kept).
+    A non-finite initial state or derivative returns that one sample. A later
+    non-finite sample is dropped. Ground contact h <= 0 keeps the contact
+    sample. An RK45 constructor failure on a mode change keeps the samples
+    already collected, including the sample that triggered the rebuild.
     """
     x0 = _pad_state(x0_13)
     times = [0.0]
@@ -62,11 +68,14 @@ def run_sim(autopilot, x0_13, t_end, step=1 / 30) -> dict:
         return xd
 
     tol = 1e-7
-    integrator = RK45(der_func, times[-1], states[-1].copy(), np.inf)
     oldsettings = np.geterr()
     np.seterr(all="raise", under="ignore")
     try:
         if not np.all(np.isfinite(states[-1])) or float(states[-1][11]) <= 0.0:
+            return _result(times, states, modes)
+        try:
+            integrator = RK45(der_func, times[-1], states[-1].copy(), np.inf)
+        except _CONSTRUCTOR_FAILURES:
             return _result(times, states, modes)
 
         while True:
@@ -105,7 +114,10 @@ def run_sim(autopilot, x0_13, t_end, step=1 / 30) -> dict:
                 break
 
             if mode_changed:
-                integrator = RK45(der_func, times[-1], states[-1].copy(), np.inf)
+                try:
+                    integrator = RK45(der_func, times[-1], states[-1].copy(), np.inf)
+                except _CONSTRUCTOR_FAILURES:
+                    break
     finally:
         np.seterr(**oldsettings)
 
