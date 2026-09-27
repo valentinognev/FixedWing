@@ -1,5 +1,10 @@
 # Updates
 
+## 0.77.0 - in-tree F-16 GCAS
+- Host-only `python/f16/`: Morelli 13-state, frozen LQR, straight-and-level, GCAS (standby → roll → pull). Imperial inside; `units.py` is the only metre converter. `fw_sitl` and the balloon race are unchanged.
+- `python/run_f16.py` and `f16_setup.json` write a NED-metre CSV. `--anim` / `--fg` replay after the file is on disk. A bad setup exits 2 before integrating.
+- Parity: `f16/compare.py` and opt-in `scripts/run_f16_reference_e2e.sh` against AeroBench. C++ `f16dynamics` skips when unbuilt. Frozen upright trace: `tests/frozen_gcas_upright.npz`.
+
 ## 0.76.0 - --viz/--yasim HSV pinhole matches FG grab
 - FG `/sim/current-view/field-of-view` is vertical; `sync_camera_view` still writes setup `hfov_deg` (90°) there. Tracker/control now use `camera_spec_for_fg_grab`: 4:3 crop → **HFOV≈106.3° / VFOV=90°** (synth stays 90×70).
 - Geometric `expected_uv` / `on_screen` on `--viz`/`--yasim` project from `fg_eye_forward_m` (body +X), the same lookfrom as the screenshot.
