@@ -19,6 +19,7 @@ from pathlib import Path
 import numpy as np
 
 from f16.compare import (
+    SCENARIO_HORIZONS,
     compare_trajectories,
     run_cpp_reference,
     run_ours,
@@ -26,14 +27,7 @@ from f16.compare import (
 )
 
 out = Path(sys.argv[1])
-# Inverted GCAS from the test IC impacts near 6.5 s. run_sim keeps that
-# ground sample and stops; AeroBench integrates through h < 0. 6 s still
-# covers standby -> roll -> pull while both trajectories are airborne.
-horizons = {
-    "straight_level": 3.0,
-    "gcas_upright": 12.0,
-    "gcas_inverted": 6.0,
-}
+horizons = SCENARIO_HORIZONS
 min_h_limit_ft = 50.0
 rms_limit = 5.0
 rows = []

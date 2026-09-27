@@ -11,6 +11,13 @@ import numpy as np
 PYTHON_REF = Path("/home/valentin/Projects/FlightSimulation/F16/AeroBenchVVPython/code")
 
 _SCENARIOS = ("straight_level", "gcas_upright", "gcas_inverted")
+# Example durations: run_GCAS.py is 3.51 s (return to standby is inside it);
+# run_GCAS_inverted.py is 10 s. Straight-and-level stays a short trim smoke.
+SCENARIO_HORIZONS = {
+    "straight_level": 3.0,
+    "gcas_upright": 3.51,
+    "gcas_inverted": 10.0,
+}
 
 
 def python_ref_version() -> str:
@@ -25,21 +32,43 @@ def python_ref_version() -> str:
 
 
 def scenario_x0(scenario: str) -> np.ndarray:
-    """Initial 13-state used by the straight-and-level and GCAS tests."""
+    """Initial 13-state for straight-and-level trim or the GCAS example files.
+
+    GCAS attitudes, speed, alpha, and power come from ``run_GCAS.py`` and
+    ``run_GCAS_inverted.py`` (vt 540 ft/s, alpha = deg2rad(2.1215), 1000 ft,
+    power 9). Spawn metres may still overwrite pn/pe/h after this returns.
+    """
     from f16.llc import F16Llc
 
     if scenario not in _SCENARIOS:
         raise ValueError(f"unknown scenario {scenario!r}")
-    x0 = F16Llc().xequil.copy()
     if scenario == "straight_level":
-        return x0
-    x0[11] = 1500.0
+        return F16Llc().xequil.copy()
+    # phi/theta: upright -pi/8 and -0.3*pi/2; inverted -0.9*pi and -0.01*pi/2.
     if scenario == "gcas_upright":
-        x0[4] = -0.3
-        return x0
-    x0[4] = float(np.pi) + 0.3
-    x0[3] = float(np.pi)
-    return x0
+        phi = -np.pi / 8.0
+        theta = -0.3 * np.pi / 2.0
+    else:
+        phi = -0.9 * np.pi
+        theta = -0.01 * np.pi / 2.0
+    return np.array(
+        [
+            540.0,
+            float(np.deg2rad(2.1215)),
+            0.0,
+            phi,
+            theta,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1000.0,
+            9.0,
+        ],
+        dtype=float,
+    )
 
 
 def run_ours(scenario: str, t_end: float, step: float = 1 / 30) -> dict:

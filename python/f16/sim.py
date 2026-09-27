@@ -48,35 +48,42 @@ def run_sim(autopilot, x0_13, t_end, step=1 / 30) -> dict:
 
     Each sample advances the discrete mode, then the ODE calls get_checked_u_ref.
     A non-finite initial state or derivative returns that one sample. A later
-    non-finite sample is dropped. Ground contact h <= 0 keeps the contact
-    sample. An RK45 constructor failure on a mode change keeps the samples
-    already collected, including the sample that triggered the rebuild.
+    non-finite sample is not appended; its time is ``rejected_t``. Ground
+    contact h <= 0 keeps the contact sample. An RK45 constructor failure on a
+    mode change keeps the samples already collected, including the sample that
+    triggered the rebuild.
     """
     x0 = _pad_state(x0_13)
+    rejected_t = None
     times = [0.0]
     states = [x0.copy()]
     autopilot.advance_discrete_mode(times[-1], states[-1])
     modes = [autopilot.mode]
 
     def der_func(t: float, full_state: np.ndarray) -> np.ndarray:
-        if not np.all(np.isfinite(full_state)):
-            raise _StopIntegration
-        u_ref = autopilot.get_checked_u_ref(t, full_state)
-        xd = controlled_derivative(t, full_state, u_ref, autopilot.llc)
-        if not np.all(np.isfinite(xd)):
-            raise _StopIntegration
-        return xd
+        nonlocal rejected_t
+        try:
+            if not np.all(np.isfinite(full_state)):
+                raise _StopIntegration
+            u_ref = autopilot.get_checked_u_ref(t, full_state)
+            xd = controlled_derivative(t, full_state, u_ref, autopilot.llc)
+            if not np.all(np.isfinite(xd)):
+                raise _StopIntegration
+            return xd
+        except (_StopIntegration, FloatingPointError):
+            rejected_t = float(t)
+            raise
 
     tol = 1e-7
     oldsettings = np.geterr()
     np.seterr(all="raise", under="ignore")
     try:
         if not np.all(np.isfinite(states[-1])) or float(states[-1][11]) <= 0.0:
-            return _result(times, states, modes)
+            return _result(times, states, modes, rejected_t)
         try:
             integrator = RK45(der_func, times[-1], states[-1].copy(), np.inf)
         except _CONSTRUCTOR_FAILURES:
-            return _result(times, states, modes)
+            return _result(times, states, modes, rejected_t)
 
         while True:
             next_step_time = times[-1] + step
@@ -92,6 +99,8 @@ def run_sim(autopilot, x0_13, t_end, step=1 / 30) -> dict:
                     if integrator.status != "running" or integrator.t <= t_before:
                         raise _StopIntegration
             except (_StopIntegration, FloatingPointError):
+                if rejected_t is None:
+                    rejected_t = float(integrator.t)
                 break
 
             if integrator.status != "running":
@@ -103,6 +112,7 @@ def run_sim(autopilot, x0_13, t_end, step=1 / 30) -> dict:
                 x_next = np.asarray(integrator.dense_output()(next_step_time), dtype=float).copy()
 
             if not np.all(np.isfinite(x_next)):
+                rejected_t = float(next_step_time)
                 break
 
             times.append(float(next_step_time))
@@ -121,14 +131,15 @@ def run_sim(autopilot, x0_13, t_end, step=1 / 30) -> dict:
     finally:
         np.seterr(**oldsettings)
 
-    return _result(times, states, modes)
+    return _result(times, states, modes, rejected_t)
 
 
-def _result(times, states, modes) -> dict:
+def _result(times, states, modes, rejected_t=None) -> dict:
     h = np.array([float(s[11]) for s in states], dtype=float)
     return {
         "times": times,
         "states": states,
         "modes": modes,
         "min_h_ft": float(np.min(h)),
+        "rejected_t": None if rejected_t is None else float(rejected_t),
     }

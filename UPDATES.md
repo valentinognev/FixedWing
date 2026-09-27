@@ -1,5 +1,10 @@
 # Updates
 
+## 0.77.1 - spec GCAS initial conditions
+- Upright and inverted GCAS use the `run_GCAS.py` / `run_GCAS_inverted.py` states (540 ft/s, α 2.1215°, 1000 ft, power 9, those attitudes). `init_mode` stays standby. Inverted runs 10 s; upright runs 3.51 s, which includes the return to standby. The 6 s inverted cutoff is gone.
+- Unittest compares our plant to the Python reference on straight-and-level, upright, and inverted (modes equal, min altitude within 50 ft, final RMS within 5.0). When `f16dynamics` imports, trim derivatives and `get_u_deg` are compared and that module's build identity is recorded.
+- A non-finite sample after t = 0 stays out of the trajectory. `run_sim` records `rejected_t` and the runner prints that step. `replay.py` converts through `f16.units`.
+
 ## 0.77.0 - in-tree F-16 GCAS
 - Host-only `python/f16/`: Morelli 13-state, frozen LQR, straight-and-level, GCAS (standby → roll → pull). Imperial inside; `units.py` is the only metre converter. `fw_sitl` and the balloon race are unchanged.
 - `python/run_f16.py` and `f16_setup.json` write a NED-metre CSV. `--anim` / `--fg` replay after the file is on disk. A bad setup exits 2 before integrating.

@@ -2,31 +2,50 @@ import unittest
 
 import numpy as np
 
+from f16.compare import SCENARIO_HORIZONS, scenario_x0
 from f16.gcas import GcasAutopilot
 from f16.llc import F16Llc
 from f16.sim import run_sim
 
 
+def _collapsed(modes) -> list[str]:
+    seq: list[str] = []
+    for mode in modes:
+        if not seq or seq[-1] != mode:
+            seq.append(mode)
+    return seq
+
+
 class TestGcas(unittest.TestCase):
-    def _fly(self, inverted: bool) -> dict:
+    def _assert_spec_state(self, scenario: str) -> np.ndarray:
+        x0 = scenario_x0(scenario)
+        self.assertAlmostEqual(float(x0[0]), 540.0)
+        self.assertAlmostEqual(float(x0[1]), float(np.deg2rad(2.1215)))
+        self.assertAlmostEqual(float(x0[11]), 1000.0)
+        self.assertAlmostEqual(float(x0[12]), 9.0)
+        if scenario == "gcas_upright":
+            self.assertAlmostEqual(float(x0[3]), -np.pi / 8.0)
+            self.assertAlmostEqual(float(x0[4]), -0.3 * np.pi / 2.0)
+        else:
+            self.assertAlmostEqual(float(x0[3]), -0.9 * np.pi)
+            self.assertAlmostEqual(float(x0[4]), -0.01 * np.pi / 2.0)
+        return x0
+
+    def _fly(self, scenario: str) -> dict:
         llc = F16Llc()
         ap = GcasAutopilot(init_mode="standby", llc=llc)
-        x0 = llc.xequil.copy()
-        x0[11] = 1500.0
-        x0[4] = -0.3 if not inverted else float(np.pi) + 0.3
-        if inverted:
-            x0[3] = float(np.pi)
-        return run_sim(ap, x0, t_end=12.0, step=1 / 30)
+        x0 = self._assert_spec_state(scenario)
+        return run_sim(ap, x0, t_end=SCENARIO_HORIZONS[scenario], step=1 / 30)
 
     def test_mode_sequence_upright(self) -> None:
-        out = self._fly(inverted=False)
-        seq: list[str] = []
-        for m in out["modes"]:
-            if not seq or seq[-1] != m:
-                seq.append(m)
-        self.assertEqual(seq[0], "standby")
-        self.assertIn("roll", seq)
-        self.assertIn("pull", seq)
+        out = self._fly("gcas_upright")
+        # waiting is absent: init_mode standby on the example state never enters it.
+        self.assertEqual(_collapsed(out["modes"]), ["standby", "roll", "pull", "standby"])
+        self.assertGreater(out["min_h_ft"], 0.0)
+
+    def test_mode_sequence_inverted(self) -> None:
+        out = self._fly("gcas_inverted")
+        self.assertEqual(_collapsed(out["modes"]), ["standby", "roll", "pull", "standby"])
         self.assertGreater(out["min_h_ft"], 0.0)
 
     def test_frozen_trace_regression(self) -> None:

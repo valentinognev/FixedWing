@@ -3,9 +3,8 @@ from __future__ import annotations
 
 import math
 
-# AeroBench anim3d states are feet. units.py lives on another branch.
-_M_PER_FT = 0.3048
-_FT_PER_M = 1.0 / _M_PER_FT
+from f16.units import m_to_ft, ms_to_fts
+
 _EARTH_RADIUS_M = 6378137.0
 _MPS_TO_KT = 1.9438444924406048
 _FG_NET_FDM_VERSION = 24
@@ -58,7 +57,7 @@ def csv_columns_to_frames(rows: list[dict]) -> dict:
         modes.append(str(mode) if mode not in ("", None) else "replay")
         # vt, alpha, beta, phi, theta, psi, P, Q, R, pn, pe, h, pow
         states.append([
-            float(row["vt_mps"]) * _FT_PER_M,
+            ms_to_fts(float(row["vt_mps"])),
             _opt_float(row, "alpha"),
             _opt_float(row, "beta"),
             float(row["phi"]),
@@ -67,9 +66,9 @@ def csv_columns_to_frames(rows: list[dict]) -> dict:
             0.0,
             0.0,
             0.0,
-            float(row["n_m"]) * _FT_PER_M,
-            float(row["e_m"]) * _FT_PER_M,
-            -float(row["d_m"]) * _FT_PER_M,
+            m_to_ft(float(row["n_m"])),
+            m_to_ft(float(row["e_m"])),
+            m_to_ft(-float(row["d_m"])),
             0.0,
         ])
         ps_list.append(0.0)
@@ -185,10 +184,10 @@ def _pack_native_fdm(row: dict, prev: dict | None, dt: float) -> bytes:
         phidot = (phi - float(prev["phi"])) / dt
         thetadot = (theta - float(prev["theta"])) / dt
         psidot = (psi - float(prev["psi"])) / dt
-        v_north = (n_m - float(prev["n_m"])) / dt * _FT_PER_M
-        v_east = (e_m - float(prev["e_m"])) / dt * _FT_PER_M
-        v_down = (float(row["d_m"]) - float(prev["d_m"])) / dt * _FT_PER_M
-    vt_fps = fdm["vt_mps"] * _FT_PER_M
+        v_north = ms_to_fts((n_m - float(prev["n_m"])) / dt)
+        v_east = ms_to_fts((e_m - float(prev["e_m"])) / dt)
+        v_down = ms_to_fts((float(row["d_m"]) - float(prev["d_m"])) / dt)
+    vt_fps = ms_to_fts(fdm["vt_mps"])
     cos_a = math.cos(alpha)
     cos_b = math.cos(beta)
     v_body_u = vt_fps * cos_a * cos_b

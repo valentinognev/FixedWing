@@ -36,6 +36,23 @@ class _HoldThenBlow(F16Autopilot):
         return 0.0, 0.0, 0.0, 0.0
 
 
+class _BlowInFlight(F16Llc):
+    """Finite at t = 0; the next derivative evaluation is non-finite."""
+
+    def get_integrator_derivatives(self, t, x_f16, u_ref4, Nz, ps, Ny_r):
+        if t > 0.0:
+            return [float("nan"), 0.0, 0.0]
+        return super().get_integrator_derivatives(t, x_f16, u_ref4, Nz, ps, Ny_r)
+
+
+class _Hold(F16Autopilot):
+    def __init__(self, llc: F16Llc) -> None:
+        super().__init__("hold", llc)
+
+    def get_u_ref(self, t: float, x_f16: np.ndarray) -> tuple[float, float, float, float]:
+        return 0.0, 0.0, 0.0, 0.0
+
+
 class TestSimSl(unittest.TestCase):
     def test_sl_holds_trim(self) -> None:
         llc = F16Llc()
@@ -59,6 +76,7 @@ class TestSimSl(unittest.TestCase):
         self.assertEqual(len(out["modes"]), 1)
         self.assertFalse(np.isfinite(out["states"][0][0]))
         self.assertEqual(out["times"][0], 0.0)
+        self.assertIsNone(out["rejected_t"])
 
     def test_nonfinite_initial_derivative_keeps_sample(self) -> None:
         llc = _BlowLlc()
@@ -80,6 +98,15 @@ class TestSimSl(unittest.TestCase):
         self.assertEqual(len(out["modes"]), len(out["states"]))
         self.assertEqual(out["modes"][-1], "blow")
         self.assertTrue(np.all(np.isfinite(out["states"][-1])))
+
+    def test_inflight_nonfinite_records_time_and_drops_sample(self) -> None:
+        llc = _BlowInFlight()
+        ap = _Hold(llc)
+        out = run_sim(ap, llc.xequil.copy(), t_end=1.0, step=1 / 30)
+        self.assertEqual(len(out["states"]), 1)
+        self.assertTrue(np.all(np.isfinite(out["states"][0])))
+        self.assertIsNotNone(out["rejected_t"])
+        self.assertGreater(float(out["rejected_t"]), 0.0)
 
     def test_ground_contact_initial_state_keeps_sample(self) -> None:
         llc = F16Llc()

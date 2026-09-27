@@ -16,6 +16,7 @@ if str(_PY) not in sys.path:
 
 import numpy as np
 
+from f16.compare import scenario_x0
 from f16.gcas import GcasAutopilot
 from f16.llc import F16Llc
 from f16.sim import run_sim
@@ -24,10 +25,6 @@ from f16.units import f16_ft_to_ned_m, fts_to_ms, ned_m_to_f16_ft
 
 _MANEUVERS = ("straight_level", "gcas_upright", "gcas_inverted")
 _HEADER = ("t", "n_m", "e_m", "d_m", "vt_mps", "alpha", "beta", "phi", "theta", "psi", "mode")
-# Task 4 scenario attitudes on the paper trim. Spawn overwrites pn/pe/h.
-_GCAS_UPRIGHT_THETA = -0.3
-_GCAS_INVERTED_PHI = math.pi
-_GCAS_INVERTED_THETA = math.pi + 0.3
 
 
 def _die(message: str) -> None:
@@ -96,16 +93,11 @@ def _floor_ft(setup: dict) -> float:
     return floor
 
 
-def _initial_state(maneuver: str, n_m: float, e_m: float, d_m: float, llc: F16Llc) -> np.ndarray:
+def _initial_state(maneuver: str, n_m: float, e_m: float, d_m: float) -> np.ndarray:
     pn_ft, pe_ft, h_ft = ned_m_to_f16_ft(n_m, e_m, d_m)
     if not all(math.isfinite(v) for v in (pn_ft, pe_ft, h_ft)) or h_ft <= 0.0:
         _die("bad setup: unphysical spawn")
-    x0 = np.array(llc.xequil, dtype=float, copy=True)
-    if maneuver == "gcas_upright":
-        x0[4] = _GCAS_UPRIGHT_THETA
-    elif maneuver == "gcas_inverted":
-        x0[3] = _GCAS_INVERTED_PHI
-        x0[4] = _GCAS_INVERTED_THETA
+    x0 = scenario_x0(maneuver)
     x0[9] = pn_ft
     x0[10] = pe_ft
     x0[11] = h_ft
@@ -143,13 +135,20 @@ def _write_csv(path: Path, times, states, modes) -> None:
 
 
 def _report(out: dict) -> None:
-    for index, state in enumerate(out["states"]):
-        if not np.all(np.isfinite(state)):
-            print(
-                f"non-finite state at step {index} t={out['times'][index]}",
-                file=sys.stderr,
-            )
-            break
+    rejected = out.get("rejected_t")
+    if rejected is not None:
+        print(
+            f"non-finite state at step {len(out['times'])} t={rejected}",
+            file=sys.stderr,
+        )
+    else:
+        for index, state in enumerate(out["states"]):
+            if not np.all(np.isfinite(state)):
+                print(
+                    f"non-finite state at step {index} t={out['times'][index]}",
+                    file=sys.stderr,
+                )
+                break
     min_h = out["min_h_ft"]
     if min_h <= 0.0:
         print(f"ground contact min_h_ft {min_h}")
@@ -202,7 +201,7 @@ def main(argv: list[str] | None = None) -> int:
     floor_ft = _floor_ft(setup)
 
     llc = F16Llc()
-    x0 = _initial_state(maneuver, n_m, e_m, d_m, llc)
+    x0 = _initial_state(maneuver, n_m, e_m, d_m)
     autopilot = _autopilot(maneuver, x0, llc, floor_ft)
     out = run_sim(autopilot, x0, t_end=duration, step=1 / 30)
 

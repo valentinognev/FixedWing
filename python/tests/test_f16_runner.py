@@ -1,9 +1,11 @@
 import csv
+import io
 import json
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 
 
@@ -44,3 +46,16 @@ class TestRunner(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(r.returncode, 2)
+
+    def test_report_prints_rejected_step(self) -> None:
+        from run_f16 import _report
+
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            _report({
+                "times": [0.0],
+                "states": [[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1000.0, 9.0]],
+                "min_h_ft": 1000.0,
+                "rejected_t": 0.03333333333333333,
+            })
+        self.assertIn("non-finite state at step 1 t=0.03333333333333333", buf.getvalue())
