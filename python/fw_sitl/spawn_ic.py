@@ -16,9 +16,9 @@ from fw_sitl.balloon_scene import (
 from fw_sitl.flight_setup import FlightSetup, SpawnSpec, load_flight_setup
 from fw_sitl.platforms.gz.gz_pose import DEFAULT_GZ_ORIGIN_ENU, ned_to_gz_enu, world_velocity_enu
 
-# Match python/assets/jsb_spawn.xml / fg_spawn.env in-air IC (~30 m/s).
+# Same physical speed as the old 98.4 ft/s line and fg_spawn.env --vc=58.3 kn.
 # GZ velocity comes from flightSetup guidance.speed_mps (spawn), not plant cruise.
-_JSB_VT_FT_S = 98.4
+_JSB_VT_MPS = 98.4 * 0.3048
 _FG_VC_KN = 58.3
 
 
@@ -57,6 +57,7 @@ def _geodetic(spawn: SpawnSpec) -> tuple[float, float, float]:
 
 def jsb_spawn_xml(spawn: SpawnSpec) -> str:
     lat, lon, alt = _geodetic(spawn)
+    psi_rad = math.radians(spawn.heading_deg)
     return (
         '<?xml version="1.0"?>\n'
         "<!-- Generated from flightSetup.json spawn (LSZH origin + NED). -->\n"
@@ -65,11 +66,11 @@ def jsb_spawn_xml(spawn: SpawnSpec) -> str:
         f'  <longitude unit="DEG"> {lon:.8f} </longitude>\n'
         f'  <altitude unit="M"> {alt:.3f} </altitude>\n'
         f'  <elevation unit="M"> {DEFAULT_GROUND_ALT_M} </elevation>\n'
-        f'  <vt unit="FT/SEC"> {_JSB_VT_FT_S} </vt>\n'
-        '  <gamma unit="DEG"> 0.0 </gamma>\n'
-        '  <phi unit="DEG"> 0.0 </phi>\n'
-        '  <theta unit="DEG"> 0.0 </theta>\n'
-        f'  <psi unit="DEG"> {spawn.heading_deg:g} </psi>\n'
+        f'  <vt unit="M/S"> {_JSB_VT_MPS:.5f} </vt>\n'
+        '  <gamma unit="RAD"> 0.0 </gamma>\n'
+        '  <phi unit="RAD"> 0.0 </phi>\n'
+        '  <theta unit="RAD"> 0.0 </theta>\n'
+        f'  <psi unit="RAD"> {psi_rad:.8f} </psi>\n'
         "</initialize>\n"
     )
 

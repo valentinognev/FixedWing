@@ -1,15 +1,17 @@
 <?xml version="1.0"?>
 <!-- JSBSim IC for PX4 headless Rascal (overrides scene/LSZH.xml via mount).
-     In-air ~500 m AGL (MSL = elev 419.2 + 500) at ~30 m/s (≈ 98.4 ft/s),
-     matching FG fg_spawn.env. Extra AGL gives race startup time before OFFBOARD. -->
+     In-air ~500 m AGL (MSL = elev 419.2 + 500) at 29.99232 m/s
+     (the old 98.4 ft/s, matching FG fg_spawn.env vc=58.3 kn).
+     Attitudes are radians. Latitude and longitude stay degrees.
+     Extra AGL gives race startup time before OFFBOARD. -->
 <initialize name="Zurich-inair">
   <latitude type="geodetic" unit="DEG"> 47.458159 </latitude>
   <longitude unit="DEG"> 8.548004 </longitude>
   <altitude unit="M"> 919.2 </altitude>
   <elevation unit="M"> 419.2 </elevation>
-  <vt unit="FT/SEC"> 98.4 </vt>
-  <gamma unit="DEG"> 0.0 </gamma>
-  <phi unit="DEG"> 0.0 </phi>
-  <theta unit="DEG"> 0.0 </theta>
-  <psi unit="DEG"> 0.0 </psi>
+  <vt unit="M/S"> 29.99232 </vt>
+  <gamma unit="RAD"> 0.0 </gamma>
+  <phi unit="RAD"> 0.0 </phi>
+  <theta unit="RAD"> 0.0 </theta>
+  <psi unit="RAD"> 0.0 </psi>
 </initialize>

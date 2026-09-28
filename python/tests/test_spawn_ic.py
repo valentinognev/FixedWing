@@ -66,10 +66,35 @@ class TestJsbAndFgIc(unittest.TestCase):
         root = ET.fromstring(xml)
         lat = float(root.find("latitude").text)
         lon = float(root.find("longitude").text)
-        psi = float(root.find("psi").text)
+        vt = root.find("vt")
+        psi = root.find("psi")
         self.assertGreater(lat, DEFAULT_ORIGIN_LAT_DEG)
         self.assertAlmostEqual(lon, DEFAULT_ORIGIN_LON_DEG, places=5)
-        self.assertAlmostEqual(psi, 45.0, places=5)
+        self.assertEqual(root.find("latitude").get("unit"), "DEG")
+        self.assertEqual(root.find("longitude").get("unit"), "DEG")
+        self.assertEqual(vt.get("unit"), "M/S")
+        self.assertAlmostEqual(float(vt.text), 29.99232, places=5)
+        self.assertEqual(psi.get("unit"), "RAD")
+        self.assertAlmostEqual(float(psi.text), math.radians(45.0), places=8)
+        for tag in ("gamma", "phi", "theta"):
+            node = root.find(tag)
+            self.assertEqual(node.get("unit"), "RAD")
+            self.assertAlmostEqual(float(node.text), 0.0, places=8)
+        self.assertNotIn("FT/SEC", xml)
+
+    def test_shipped_jsb_spawn_matches_generator_units(self) -> None:
+        text = (_PYTHON_ROOT / "assets" / "jsb_spawn.xml").read_text(encoding="utf-8")
+        root = ET.fromstring(text)
+        vt = root.find("vt")
+        self.assertEqual(vt.get("unit"), "M/S")
+        self.assertAlmostEqual(float(vt.text), 29.99232, places=5)
+        for tag in ("gamma", "phi", "theta", "psi"):
+            node = root.find(tag)
+            self.assertEqual(node.get("unit"), "RAD")
+            self.assertAlmostEqual(float(node.text), 0.0, places=8)
+        self.assertEqual(root.find("altitude").get("unit"), "M")
+        self.assertEqual(root.find("latitude").get("unit"), "DEG")
+        self.assertNotIn("FT/SEC", text)
 
     def test_fg_env_has_lat_lon_heading(self) -> None:
         spawn = SpawnSpec(ned=(0.0, 200.0, 0.0), heading_deg=90.0)
@@ -79,6 +104,9 @@ class TestJsbAndFgIc(unittest.TestCase):
         self.assertIn("--lat=", text)
         self.assertIn("--lon=", text)
         self.assertIn("--altitude=", text)
+        self.assertIn("--units-meters", text)
+        self.assertIn("--vc=58.3", text)
+        self.assertNotIn("--vc=30", text)
 
     def test_write_helpers_roundtrip(self) -> None:
         spawn = SpawnSpec(ned=(10.0, -5.0, 0.0), heading_deg=180.0)
