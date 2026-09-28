@@ -28,7 +28,6 @@ from f16.units import (
     XA_M,
     aerobench_deg,
     aerobench_poly_rad,
-    deg_to_rad,
 )
 
 
@@ -158,7 +157,12 @@ def _thrust(power, alt, rmach):
     return thrst
 
 
-def _dampp(alpha):
+def _dampp(alpha_rad):
+    """Stevens damping table. Argument is radians.
+
+    The paper grid is 5 degrees. ``0.2 * aerobench_deg`` is that grid with
+    AeroBench's 57.29578, matching ``subf16_model``.
+    """
     a = np.array([[-.267, -.110, .308, 1.34, 2.08, 2.91, 2.76, 2.05, 1.50, 1.49, 1.83, 1.21],
                   [.882, .852, .876, .958, .962, .974, .819, .483, .590, 1.21, -.493, -1.04],
                   [-.108, -.108, -.188, .110, .258, .226, .344, .362, .611, .529, .298, -2.27],
@@ -168,7 +172,7 @@ def _dampp(alpha):
                   [-7.21, -.540, -5.23, -5.26, -6.11, -6.64, -5.69, -6.00, -6.20, -6.40, -6.60, -6.00],
                   [-.380, -.363, -.378, -.386, -.370, -.453, -.550, -.582, -.595, -.637, -1.02, -.840],
                   [.061, .052, .052, -.012, -.013, -.024, .050, .150, .130, .158, .240, .150]], dtype=float).T
-    s = .2 * alpha
+    s = 0.2 * aerobench_deg(alpha_rad)
     k = _fix(s)
     if k <= -2:
         k = -1
@@ -376,8 +380,6 @@ def _subf16_morelli(x, u):
 
     xd = x.copy()
     vt = x[0]
-    alpha_deg = aerobench_deg(x[1])
-    beta_deg = aerobench_deg(x[2])
     phi = x[3]
     theta = x[4]
     psi = x[5]
@@ -391,8 +393,6 @@ def _subf16_morelli(x, u):
     cpow = _tgear(thtlc)
     xd[12] = _pdot(power, cpow)
     t = _thrust(power, alt, amach)
-    dail = ail / deg_to_rad(20.0)
-    drdr = rdr / deg_to_rad(30.0)
 
     cxt, cyt, czt, clt, cmt, cnt = _morellif16(
         aerobench_poly_rad(x[1]), aerobench_poly_rad(x[2]), el, ail, rdr,
@@ -402,7 +402,7 @@ def _subf16_morelli(x, u):
     b2v = b * tvt
     cq = cbar * q * tvt
 
-    d = _dampp(alpha_deg)
+    d = _dampp(x[1])
     cxt = cxt + cq * d[0]
     cyt = cyt + b2v * (d[1] * r + d[2] * p)
     czt = czt + cq * d[3]
