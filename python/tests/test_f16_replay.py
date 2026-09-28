@@ -3,6 +3,7 @@ import struct
 import unittest
 
 from f16.replay import _pack_native_fdm, csv_columns_to_frames, csv_row_to_fdm
+from f16.units import FT_PER_M, rad_to_deg
 
 _ROW = {
     "n_m": 100.0,
@@ -16,7 +17,6 @@ _ROW = {
     "psi": 1.0,
 }
 _EARTH_RADIUS_M = 6378137.0
-_FT_PER_M = 1.0 / 0.3048
 
 
 class TestReplay(unittest.TestCase):
@@ -42,6 +42,16 @@ class TestReplay(unittest.TestCase):
     def test_anim_frames_feet(self) -> None:
         state = csv_columns_to_frames([_ROW])["states"][0]
         self.assertEqual(len(state), 13)
-        self.assertAlmostEqual(state[9], _ROW["n_m"] * _FT_PER_M, places=6)
-        self.assertAlmostEqual(state[10], _ROW["e_m"] * _FT_PER_M, places=6)
-        self.assertAlmostEqual(state[11], -_ROW["d_m"] * _FT_PER_M, places=6)
+        self.assertAlmostEqual(state[9], _ROW["n_m"] * FT_PER_M, places=6)
+        self.assertAlmostEqual(state[10], _ROW["e_m"] * FT_PER_M, places=6)
+        self.assertAlmostEqual(state[11], -_ROW["d_m"] * FT_PER_M, places=6)
+
+    def test_fdm_angles_use_units(self) -> None:
+        import inspect
+
+        from f16 import replay
+        from f16.units import rad_to_deg
+
+        fdm = csv_row_to_fdm(_ROW)
+        self.assertEqual(fdm["phi_deg"], rad_to_deg(0.1))
+        self.assertNotIn("math.degrees", inspect.getsource(replay.csv_row_to_fdm))

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Host-only F-16 runner. Setup and CSV are NED metres; the plant stays imperial."""
+"""Host-only F-16 runner. Plant state is SI; CSV is NED metres."""
 from __future__ import annotations
 
 import argparse
@@ -21,9 +21,9 @@ from f16.gcas import GcasAutopilot
 from f16.llc import F16Llc
 from f16.sim import run_sim
 from f16.straight_level import StraightLevelAutopilot
-from f16.units import f16_ft_to_ned_m, fts_to_ms, ned_m_to_f16_ft
+from f16.units import GCAS_FLOOR_M, f16_m_to_ned_m, ned_m_to_f16_m
 
-_MANEUVERS = ("straight_level", "gcas_upright", "gcas_inverted")
+_MANEUVERS = ("straight_level", "gcas_upright", "gcas_inverted", "gcas_long")
 _HEADER = ("t", "n_m", "e_m", "d_m", "vt_mps", "alpha", "beta", "phi", "theta", "psi", "mode")
 
 
@@ -81,35 +81,39 @@ def _spawn_m(setup: dict) -> tuple[float, float, float]:
     return n_m, e_m, d_m
 
 
-def _floor_ft(setup: dict) -> float:
-    if "gcas_floor_ft" not in setup:
-        return 1000.0
-    try:
-        floor = float(setup["gcas_floor_ft"])
-    except (TypeError, ValueError):
+def _floor_m(setup: dict) -> float:
+    if "gcas_floor_ft" in setup:
         _die("bad setup: gcas_floor_ft")
+    if "gcas_floor_m" not in setup:
+        return GCAS_FLOOR_M
+    try:
+        floor = float(setup["gcas_floor_m"])
+    except (TypeError, ValueError):
+        _die("bad setup: gcas_floor_m")
     if not math.isfinite(floor) or floor < 0.0:
-        _die("bad setup: unphysical gcas_floor_ft")
+        _die("bad setup: unphysical gcas_floor_m")
     return floor
 
 
 def _initial_state(maneuver: str, n_m: float, e_m: float, d_m: float) -> np.ndarray:
-    pn_ft, pe_ft, h_ft = ned_m_to_f16_ft(n_m, e_m, d_m)
-    if not all(math.isfinite(v) for v in (pn_ft, pe_ft, h_ft)) or h_ft <= 0.0:
+    pn_m, pe_m, h_m = ned_m_to_f16_m(n_m, e_m, d_m)
+    if not all(math.isfinite(v) for v in (pn_m, pe_m, h_m)) or h_m <= 0.0:
         _die("bad setup: unphysical spawn")
     x0 = scenario_x0(maneuver)
-    x0[9] = pn_ft
-    x0[10] = pe_ft
-    x0[11] = h_ft
+    x0[9] = pn_m
+    x0[10] = pe_m
+    x0[11] = h_m
     return x0
 
 
-def _autopilot(maneuver: str, x0: np.ndarray, llc: F16Llc, floor_ft: float):
+def _autopilot(maneuver: str, x0: np.ndarray, llc: F16Llc, floor_m: float):
     if maneuver == "straight_level":
         return StraightLevelAutopilot(float(x0[11]), float(x0[0]), llc=llc)
-    ap = GcasAutopilot(init_mode="standby", llc=llc)
-    ap.cfg_flight_deck = floor_ft
-    return ap
+    if maneuver in ("gcas_upright", "gcas_inverted", "gcas_long"):
+        ap = GcasAutopilot(init_mode="standby", llc=llc)
+        ap.cfg_flight_deck = floor_m
+        return ap
+    _die(f"unknown maneuver {maneuver}")
 
 
 def _write_csv(path: Path, times, states, modes) -> None:
@@ -118,13 +122,14 @@ def _write_csv(path: Path, times, states, modes) -> None:
         writer = csv.writer(handle)
         writer.writerow(_HEADER)
         for t, state, mode in zip(times, states, modes, strict=True):
-            n_m, e_m, d_m = f16_ft_to_ned_m(float(state[9]), float(state[10]), float(state[11]))
+            n_m, e_m, d_m = f16_m_to_ned_m(float(state[9]), float(state[10]), float(state[11]))
+            vt_mps = float(state[0])
             writer.writerow([
                 t,
                 n_m,
                 e_m,
                 d_m,
-                fts_to_ms(float(state[0])),
+                vt_mps,
                 float(state[1]),
                 float(state[2]),
                 float(state[3]),
@@ -149,11 +154,11 @@ def _report(out: dict) -> None:
                     file=sys.stderr,
                 )
                 break
-    min_h = out["min_h_ft"]
+    min_h = out["min_h_m"]
     if min_h <= 0.0:
-        print(f"ground contact min_h_ft {min_h}")
+        print(f"ground contact min_h_m {min_h}")
     else:
-        print(f"min_h_ft {min_h}")
+        print(f"min_h_m {min_h}")
 
 
 def _replay(csv_path: Path, anim: bool, fg: bool) -> int:
@@ -198,11 +203,11 @@ def main(argv: list[str] | None = None) -> int:
     maneuver = _maneuver(setup, args.maneuver)
     duration = _duration(setup, args.duration)
     n_m, e_m, d_m = _spawn_m(setup)
-    floor_ft = _floor_ft(setup)
+    floor_m = _floor_m(setup)
 
     llc = F16Llc()
     x0 = _initial_state(maneuver, n_m, e_m, d_m)
-    autopilot = _autopilot(maneuver, x0, llc, floor_ft)
+    autopilot = _autopilot(maneuver, x0, llc, floor_m)
     out = run_sim(autopilot, x0, t_end=duration, step=1 / 30)
 
     csv_path = _csv_path(args.csv)

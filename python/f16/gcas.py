@@ -4,10 +4,10 @@ from __future__ import annotations
 import math
 
 import numpy as np
-from numpy import deg2rad
 
 from f16.autopilot import F16Autopilot
 from f16.llc import F16Llc
+from f16.units import GCAS_FLOOR_M, deg_to_rad
 
 
 class GcasAutopilot(F16Autopilot):
@@ -18,12 +18,12 @@ class GcasAutopilot(F16Autopilot):
         if llc is None:
             llc = F16Llc()
 
-        self.cfg_eps_phi = deg2rad(5)  # Max abs roll angle before pull
-        self.cfg_eps_p = deg2rad(10)  # Max abs roll rate before pull
-        self.cfg_path_goal = deg2rad(0)  # Min path angle before completion
+        self.cfg_eps_phi = deg_to_rad(5)  # Max abs roll angle before pull
+        self.cfg_eps_p = deg_to_rad(10)  # Max abs roll rate before pull
+        self.cfg_path_goal = deg_to_rad(0)  # Min path angle before completion
         self.cfg_k_prop = 4
         self.cfg_k_der = 2
-        self.cfg_flight_deck = 1000  # ft
+        self.cfg_flight_deck = GCAS_FLOOR_M
         self.cfg_min_pull_time = 2  # s
         self.cfg_nz_des = 5
 

@@ -21,8 +21,8 @@ def controlled_derivative(t: float, x_f16: np.ndarray, u_ref: np.ndarray, llc) -
     """LQR-controlled derivative. ps and Ny_r follow controlled_f16 with v2_integrators=False."""
     x_f16 = np.asarray(x_f16, dtype=float)
     u_ref = np.asarray(u_ref, dtype=float)
-    x_ctrl, u_deg = llc.get_u_deg(u_ref, x_f16)
-    xd_model, Nz, Ny = subf16_derivative(x_f16[:13], u_deg)
+    x_ctrl, u_si = llc.get_u(u_ref, x_f16)
+    xd_model, Nz, Ny = subf16_derivative(x_f16[:13], u_si)
     # Nonlinear (Actual): ps = p * cos(alpha) + r * sin(alpha), via x_ctrl as in the non-v2 branch.
     ps = x_ctrl[4] * cos(x_ctrl[0]) + x_ctrl[5] * sin(x_ctrl[0])
     Ny_r = Ny + x_ctrl[5]
@@ -140,6 +140,6 @@ def _result(times, states, modes, rejected_t=None) -> dict:
         "times": times,
         "states": states,
         "modes": modes,
-        "min_h_ft": float(np.min(h)),
+        "min_h_m": float(np.min(h)),
         "rejected_t": None if rejected_t is None else float(rejected_t),
     }

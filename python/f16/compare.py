@@ -10,14 +10,20 @@ import numpy as np
 
 PYTHON_REF = Path("/home/valentin/Projects/FlightSimulation/F16/AeroBenchVVPython/code")
 
-_SCENARIOS = ("straight_level", "gcas_upright", "gcas_inverted")
-# Example durations: run_GCAS.py is 3.51 s (return to standby is inside it);
-# run_GCAS_inverted.py is 10 s. Straight-and-level stays a short trim smoke.
+_SCENARIOS = ("straight_level", "gcas_upright", "gcas_inverted", "gcas_long")
+# Horizons are seconds. Example durations: run_GCAS.py is 3.51 s (return to
+# standby is inside it); run_GCAS_inverted.py is 10 s. Straight-and-level
+# stays a short trim smoke. gcas_long is the upright initial state integrated
+# for 120 s.
 SCENARIO_HORIZONS = {
     "straight_level": 3.0,
     "gcas_upright": 3.51,
     "gcas_inverted": 10.0,
+    "gcas_long": 120.0,
 }
+# AeroBench raises below AERO_STOP_MPS (60.96 m/s) near t = 118 s.
+# Python compare stops at GCAS_LONG_PYTHON_T_END.
+GCAS_LONG_PYTHON_T_END = 115.0
 
 
 def python_ref_version() -> str:
@@ -32,18 +38,22 @@ def python_ref_version() -> str:
 
 
 def scenario_x0(scenario: str) -> np.ndarray:
-    """Initial 13-state for straight-and-level trim or the GCAS example files.
+    """Initial SI 13-state for straight-and-level trim or the GCAS example files.
 
     GCAS attitudes, speed, alpha, and power come from ``run_GCAS.py`` and
-    ``run_GCAS_inverted.py`` (vt 540 ft/s, alpha = deg2rad(2.1215), 1000 ft,
-    power 9). Spawn metres may still overwrite pn/pe/h after this returns.
+    ``run_GCAS_inverted.py`` (vt = VT_GCAS_MPS, alpha = deg_to_rad(2.1215),
+    h = H_GCAS_M, power 9). Spawn metres may still overwrite pn/pe/h after
+    this returns.
     """
     from f16.llc import F16Llc
+    from f16.units import H_GCAS_M, VT_GCAS_MPS, deg_to_rad
 
     if scenario not in _SCENARIOS:
         raise ValueError(f"unknown scenario {scenario!r}")
     if scenario == "straight_level":
         return F16Llc().xequil.copy()
+    if scenario == "gcas_long":
+        return scenario_x0("gcas_upright").copy()
     # phi/theta: upright -pi/8 and -0.3*pi/2; inverted -0.9*pi and -0.01*pi/2.
     if scenario == "gcas_upright":
         phi = -np.pi / 8.0
@@ -53,8 +63,8 @@ def scenario_x0(scenario: str) -> np.ndarray:
         theta = -0.01 * np.pi / 2.0
     return np.array(
         [
-            540.0,
-            float(np.deg2rad(2.1215)),
+            VT_GCAS_MPS,
+            deg_to_rad(2.1215),
             0.0,
             phi,
             theta,
@@ -64,7 +74,7 @@ def scenario_x0(scenario: str) -> np.ndarray:
             0.0,
             0.0,
             0.0,
-            1000.0,
+            H_GCAS_M,
             9.0,
         ],
         dtype=float,
@@ -81,7 +91,7 @@ def run_ours(scenario: str, t_end: float, step: float = 1 / 30) -> dict:
     llc = F16Llc()
     if scenario == "straight_level":
         ap = StraightLevelAutopilot(float(llc.xequil[11]), float(llc.xequil[0]), llc=llc)
-    elif scenario in ("gcas_upright", "gcas_inverted"):
+    elif scenario in ("gcas_upright", "gcas_inverted", "gcas_long"):
         ap = GcasAutopilot(init_mode="standby", llc=llc)
     else:
         raise ValueError(f"unknown scenario {scenario!r}")
@@ -118,8 +128,10 @@ def _reference_autopilot(scenario: str, x0: np.ndarray):
     if scenario == "straight_level":
         from aerobench.examples.straight_and_level.run import StraightAndLevelAutopilot
         return StraightAndLevelAutopilot(x0)
-    from aerobench.examples.gcas.gcas_autopilot import GcasAutopilot
-    return GcasAutopilot(init_mode="standby")
+    if scenario in ("gcas_upright", "gcas_inverted", "gcas_long"):
+        from aerobench.examples.gcas.gcas_autopilot import GcasAutopilot
+        return GcasAutopilot(init_mode="standby")
+    raise ValueError(f"unknown scenario {scenario!r}")
 
 
 def _pack_run_sim(times, states, modes, ref_version: str | None = None) -> dict:
@@ -129,7 +141,7 @@ def _pack_run_sim(times, states, modes, ref_version: str | None = None) -> dict:
         "times": [float(t) for t in times],
         "states": packed,
         "modes": [str(m) for m in modes],
-        "min_h_ft": float(np.min(h)) if h.size else float("nan"),
+        "min_h_m": float(np.min(h)) if h.size else float("nan"),
     }
     if ref_version is not None:
         out["ref_version"] = ref_version
@@ -137,15 +149,18 @@ def _pack_run_sim(times, states, modes, ref_version: str | None = None) -> dict:
 
 
 def run_python_reference(scenario: str, t_end: float) -> dict:
-    x0 = scenario_x0(scenario)
+    from f16.units import state_imp_to_si, state_si_to_imp
+
+    x0_si = scenario_x0(scenario)
+    x0_imp = state_si_to_imp(x0_si)
     _install_rk45_state_alias()
     _ensure_python_ref_path()
     from aerobench.run_f16_sim import run_f16_sim
 
-    ap = _reference_autopilot(scenario, x0)
-    res = run_f16_sim(x0, float(t_end), ap, step=1 / 30)
-    packed = _pack_run_sim(res["times"], res["states"], res["modes"], python_ref_version())
-    return packed
+    ap = _reference_autopilot(scenario, x0_imp)
+    res = run_f16_sim(x0_imp, float(t_end), ap, step=1 / 30)
+    states_si = [state_imp_to_si(row) for row in res["states"]]
+    return _pack_run_sim(res["times"], states_si, res["modes"], python_ref_version())
 
 
 def run_cpp_reference(scenario: str, t_end: float, step: float = 1 / 30) -> dict:
@@ -153,33 +168,39 @@ def run_cpp_reference(scenario: str, t_end: float, step: float = 1 / 30) -> dict
         import f16dynamics
     except ImportError:
         raise unittest.SkipTest("f16dynamics not built")
+    from f16.cpp_probe import cpp_version
+
     plant = f16dynamics.F16Plant()
 
     import f16.sim as sim
 
     original = sim.subf16_derivative
 
-    def subf16_derivative(x13, u_deg4):
-        x = np.ascontiguousarray(np.asarray(x13, dtype=np.float64).reshape(13))
-        u = np.ascontiguousarray(np.asarray(u_deg4, dtype=np.float64).reshape(4))
+    def subf16_derivative(x13, u_si):
+        from f16.units import state_imp_to_si, state_si_to_imp, u_si_to_imp
+
+        x = np.ascontiguousarray(state_si_to_imp(x13), dtype=np.float64).reshape(13)
+        u = np.ascontiguousarray(u_si_to_imp(u_si), dtype=np.float64).reshape(4)
         full = np.asarray(plant.f16model(x, u), dtype=np.float64).reshape(-1)
-        return full[:13].copy(), float(full[13]), float(full[14])
+        return state_imp_to_si(full[:13]), float(full[13]), float(full[14])
 
     sim.subf16_derivative = subf16_derivative
     try:
         out = run_ours(scenario, t_end, step=step)
     finally:
         sim.subf16_derivative = original
-    out["ref_version"] = "f16dynamics"
+    out["ref_version"] = cpp_version()
     return out
 
 
 def compare_trajectories(a: dict, b: dict) -> dict:
-    fa = np.asarray(a["states"][-1], dtype=float).reshape(-1)[:13]
-    fb = np.asarray(b["states"][-1], dtype=float).reshape(-1)[:13]
+    from f16.units import state_si_to_imp
+
+    fa = state_si_to_imp(np.asarray(a["states"][-1], dtype=float).reshape(-1)[:13])
+    fb = state_si_to_imp(np.asarray(b["states"][-1], dtype=float).reshape(-1)[:13])
     diff = fa - fb
     return {
         "modes_equal": list(a["modes"]) == list(b["modes"]),
-        "min_h_diff_ft": abs(float(a["min_h_ft"]) - float(b["min_h_ft"])),
+        "min_h_diff_m": abs(float(a["min_h_m"]) - float(b["min_h_m"])),
         "final_rms": float(np.sqrt(np.mean(diff * diff))),
     }

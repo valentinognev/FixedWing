@@ -1,17 +1,45 @@
-"""Morelli F-16 state derivative (imperial inside)."""
+"""Morelli F-16 state derivative (SI state, controls, and force)."""
 from __future__ import annotations
 
 from math import ceil, cos, floor, pi, sin, sqrt
 
 import numpy as np
 
+from f16.units import (
+    ALT_FLOOR_M,
+    B_M,
+    C3,
+    C4,
+    C7,
+    C9,
+    CBAR_M,
+    G_MPS2,
+    H_STRAT_M,
+    H_THRUST_STEP_M,
+    HE_KGM2,
+    LAPSE_PER_M,
+    LBF_TO_N,
+    R_AIR,
+    RHO0_KG_M3,
+    RM_PER_KG,
+    S_M2,
+    T0_K,
+    T_STRAT_K,
+    XA_M,
+    aerobench_deg,
+    aerobench_poly_rad,
+    deg_to_rad,
+)
 
-def subf16_derivative(x13, u_deg4):
+
+def subf16_derivative(x13, u4, model: str = "morelli"):
     x13 = np.asarray(x13, dtype=float)
-    u_deg4 = np.asarray(u_deg4, dtype=float)
-    if x13.shape != (13,) or u_deg4.shape != (4,):
-        raise ValueError(f"expected x13 (13,) and u (4,), got {x13.shape} {u_deg4.shape}")
-    xd, Nz, Ny, _, _ = _subf16_morelli(x13, u_deg4)
+    u4 = np.asarray(u4, dtype=float)
+    if model != "morelli":
+        raise ValueError(f"model {model!r} is not implemented")
+    if x13.shape != (13,) or u4.shape != (4,):
+        raise ValueError(f"expected x13 (13,) and u (4,), got {x13.shape} {u4.shape}")
+    xd, Nz, Ny, _, _ = _subf16_morelli(x13, u4)
     return xd, float(Nz), float(Ny)
 
 
@@ -32,14 +60,13 @@ def _sign(ele):
 
 
 def _adc(vt, alt):
-    ro = 2.377e-3
-    tfac = 1 - .703e-5 * alt
-    if alt >= 35000:
-        t = 390
+    tfac = 1 - LAPSE_PER_M * alt
+    if alt >= H_STRAT_M:
+        t = T_STRAT_K
     else:
-        t = 519 * tfac
-    rho = ro * tfac**4.14
-    a = sqrt(1.4 * 1716.3 * t)
+        t = T0_K * tfac
+    rho = RHO0_KG_M3 * tfac**4.14
+    a = sqrt(1.4 * R_AIR * t)
     amach = vt / a
     qbar = .5 * rho * vt * vt
     return amach, qbar
@@ -87,22 +114,22 @@ def _thrust(power, alt, rmach):
                   [60, 25, 345, 755, 1130, 1525],
                   [-1020, -170, -300, 350, 910, 1360],
                   [-2700, -1900, -1300, -247, 600, 1100],
-                  [-3600, -1400, -595, -342, -200, 700]], dtype=float).T
+                  [-3600, -1400, -595, -342, -200, 700]], dtype=float).T * LBF_TO_N
     b = np.array([[12680, 9150, 6200, 3950, 2450, 1400],
                   [12680, 9150, 6313, 4040, 2470, 1400],
                   [12610, 9312, 6610, 4290, 2600, 1560],
                   [12640, 9839, 7090, 4660, 2840, 1660],
                   [12390, 10176, 7750, 5320, 3250, 1930],
-                  [11680, 9848, 8050, 6100, 3800, 2310]], dtype=float).T
+                  [11680, 9848, 8050, 6100, 3800, 2310]], dtype=float).T * LBF_TO_N
     c = np.array([[20000, 15000, 10800, 7000, 4000, 2500],
                   [21420, 15700, 11225, 7323, 4435, 2600],
                   [22700, 16860, 12250, 8154, 5000, 2835],
                   [24240, 18910, 13760, 9285, 5700, 3215],
                   [26070, 21075, 15975, 11115, 6860, 3950],
-                  [28886, 23319, 18300, 13484, 8642, 5057]], dtype=float).T
-    if alt < 0:
-        alt = 0.01
-    h = .0001 * alt
+                  [28886, 23319, 18300, 13484, 8642, 5057]], dtype=float).T * LBF_TO_N
+    if alt < ALT_FLOOR_M:
+        alt = ALT_FLOOR_M
+    h = alt / H_THRUST_STEP_M
     i = _fix(h)
     if i >= 5:
         i = 4
@@ -330,28 +357,27 @@ def _subf16_morelli(x, u):
 
     thtlc, el, ail, rdr = u
 
-    s = 300
-    b = 30
-    cbar = 11.32
-    rm = 1.57e-3
+    s = S_M2
+    b = B_M
+    cbar = CBAR_M
+    rm = RM_PER_KG
     xcgr = .35
-    he = 160.0
+    he = HE_KGM2
     c1 = -.770
     c2 = .02755
-    c3 = 1.055e-4
-    c4 = 1.642e-6
+    c3 = C3
+    c4 = C4
     c5 = .9604
     c6 = 1.759e-2
-    c7 = 1.792e-5
+    c7 = C7
     c8 = -.7336
-    c9 = 1.587e-5
-    rtod = 57.29578
-    g = 32.17
+    c9 = C9
+    g = G_MPS2
 
     xd = x.copy()
     vt = x[0]
-    alpha = x[1] * rtod
-    beta = x[2] * rtod
+    alpha_deg = aerobench_deg(x[1])
+    beta_deg = aerobench_deg(x[2])
     phi = x[3]
     theta = x[4]
     psi = x[5]
@@ -365,18 +391,18 @@ def _subf16_morelli(x, u):
     cpow = _tgear(thtlc)
     xd[12] = _pdot(power, cpow)
     t = _thrust(power, alt, amach)
-    dail = ail / 20
-    drdr = rdr / 30
+    dail = ail / deg_to_rad(20.0)
+    drdr = rdr / deg_to_rad(30.0)
 
     cxt, cyt, czt, clt, cmt, cnt = _morellif16(
-        alpha * pi / 180, beta * pi / 180, el * pi / 180, ail * pi / 180, rdr * pi / 180,
+        aerobench_poly_rad(x[1]), aerobench_poly_rad(x[2]), el, ail, rdr,
         p, q, r, cbar, b, vt, xcg, xcgr)
 
     tvt = .5 / vt
     b2v = b * tvt
     cq = cbar * q * tvt
 
-    d = _dampp(alpha)
+    d = _dampp(alpha_deg)
     cxt = cxt + cq * d[0]
     cyt = cyt + b2v * (d[1] * r + d[2] * p)
     czt = czt + cq * d[3]
@@ -433,7 +459,7 @@ def _subf16_morelli(x, u):
     xd[10] = u * s2 + v * s4 + w * s7
     xd[11] = u * sth - v * s5 - w * s8
 
-    xa = 15.0
+    xa = XA_M
     az = az - xa * xd[7]
     ay = ay + xa * xd[8]
 

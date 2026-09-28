@@ -61,9 +61,11 @@ class TestSimSl(unittest.TestCase):
         h = np.array([s[11] for s in out["states"]])
         vt = np.array([s[0] for s in out["states"]])
         self.assertTrue(np.all(np.isfinite(h)))
-        self.assertLess(float(np.abs(h - h[0]).max()), 15.0)
-        self.assertLess(float(np.abs(vt - vt[0]).max()), 8.0)
-        self.assertGreater(out["min_h_ft"], 900.0)
+        from f16.units import SL_H_BAND_M, SL_MIN_H_M, SL_VT_BAND_MPS
+
+        self.assertLess(float(np.abs(h - h[0]).max()), SL_H_BAND_M)
+        self.assertLess(float(np.abs(vt - vt[0]).max()), SL_VT_BAND_MPS)
+        self.assertGreater(out["min_h_m"], SL_MIN_H_M)
 
     def test_nonfinite_initial_state_keeps_sample(self) -> None:
         llc = F16Llc()
@@ -116,7 +118,7 @@ class TestSimSl(unittest.TestCase):
         out = run_sim(ap, x0, t_end=1.0, step=1 / 30)
         self.assertEqual(len(out["states"]), 1)
         self.assertLessEqual(float(out["states"][0][11]), 0.0)
-        self.assertLessEqual(out["min_h_ft"], 0.0)
+        self.assertLessEqual(out["min_h_m"], 0.0)
         self.assertEqual(len(out["modes"]), 1)
         self.assertEqual(out["times"], [0.0])
 
@@ -129,5 +131,5 @@ class TestSimSl(unittest.TestCase):
         out = run_sim(ap, x0, t_end=1.0, step=1 / 30)
         self.assertEqual(len(out["states"]), 1)
         self.assertLessEqual(float(out["states"][0][11]), 0.0)
-        self.assertLessEqual(out["min_h_ft"], 0.0)
+        self.assertLessEqual(out["min_h_m"], 0.0)
         self.assertEqual(len(out["modes"]), 1)

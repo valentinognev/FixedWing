@@ -6,6 +6,7 @@ from f16.compare import SCENARIO_HORIZONS, scenario_x0
 from f16.gcas import GcasAutopilot
 from f16.llc import F16Llc
 from f16.sim import run_sim
+from f16.units import H_GCAS_M, VT_GCAS_MPS, deg_to_rad
 
 
 def _collapsed(modes) -> list[str]:
@@ -19,10 +20,12 @@ def _collapsed(modes) -> list[str]:
 class TestGcas(unittest.TestCase):
     def _assert_spec_state(self, scenario: str) -> np.ndarray:
         x0 = scenario_x0(scenario)
-        self.assertAlmostEqual(float(x0[0]), 540.0)
-        self.assertAlmostEqual(float(x0[1]), float(np.deg2rad(2.1215)))
-        self.assertAlmostEqual(float(x0[11]), 1000.0)
-        self.assertAlmostEqual(float(x0[12]), 9.0)
+        self.assertAlmostEqual(float(x0[0]), VT_GCAS_MPS, places=6)
+        self.assertAlmostEqual(float(x0[0]), 164.592, places=6)
+        self.assertAlmostEqual(float(x0[1]), deg_to_rad(2.1215), places=9)
+        self.assertAlmostEqual(float(x0[11]), H_GCAS_M, places=6)
+        self.assertAlmostEqual(float(x0[11]), 304.8, places=6)
+        self.assertAlmostEqual(float(x0[12]), 9.0, places=6)
         if scenario == "gcas_upright":
             self.assertAlmostEqual(float(x0[3]), -np.pi / 8.0)
             self.assertAlmostEqual(float(x0[4]), -0.3 * np.pi / 2.0)
@@ -41,12 +44,12 @@ class TestGcas(unittest.TestCase):
         out = self._fly("gcas_upright")
         # waiting is absent: init_mode standby on the example state never enters it.
         self.assertEqual(_collapsed(out["modes"]), ["standby", "roll", "pull", "standby"])
-        self.assertGreater(out["min_h_ft"], 0.0)
+        self.assertGreater(out["min_h_m"], 0.0)
 
     def test_mode_sequence_inverted(self) -> None:
         out = self._fly("gcas_inverted")
         self.assertEqual(_collapsed(out["modes"]), ["standby", "roll", "pull", "standby"])
-        self.assertGreater(out["min_h_ft"], 0.0)
+        self.assertGreater(out["min_h_m"], 0.0)
 
     def test_frozen_trace_regression(self) -> None:
         ref = np.load("tests/frozen_gcas_upright.npz")

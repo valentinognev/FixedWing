@@ -2,5 +2,5 @@
   "maneuver": "gcas_upright",
   "duration_s": 30.0,
   "spawn": {"n_m": 0.0, "e_m": 0.0, "d_m": -457.2},
-  "gcas_floor_ft": 1000.0
+  "gcas_floor_m": 304.8
 }

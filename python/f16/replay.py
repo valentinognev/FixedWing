@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 
-from f16.units import m_to_ft, ms_to_fts
+from f16.units import m_to_ft, ms_to_fts, rad_to_deg
 
 _EARTH_RADIUS_M = 6378137.0
 _MPS_TO_KT = 1.9438444924406048
@@ -32,9 +32,9 @@ def csv_row_to_fdm(row: dict) -> dict:
     out = {
         "alt_m": alt_m,
         "vt_mps": float(row["vt_mps"]),
-        "phi_deg": math.degrees(float(row["phi"])),
-        "theta_deg": math.degrees(float(row["theta"])),
-        "psi_deg": math.degrees(float(row["psi"])),
+        "phi_deg": rad_to_deg(float(row["phi"])),
+        "theta_deg": rad_to_deg(float(row["theta"])),
+        "psi_deg": rad_to_deg(float(row["psi"])),
     }
     assert math.isfinite(out["alt_m"]) and math.isfinite(out["vt_mps"])
     return out
