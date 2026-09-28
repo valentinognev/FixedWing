@@ -1,5 +1,9 @@
 # Updates
 
+## 0.80.0 - SI damping index and JSBSim IC
+- `_dampp` takes angle of attack in radians. The paper grid stays every 5 AeroBench degrees via `aerobench_deg` (`57.29578`) inside that function. Trim parity is unchanged. Unused `alpha_deg`, `beta_deg`, `dail`, and `drdr` are gone.
+- `assets/jsb_spawn.xml` and `jsb_spawn_xml` use `vt` `M/S` `29.99232` (the old `98.4` ft/s) and radian attitudes. Latitude and longitude stay degrees. FG `--vc=58.3` knots, FGNetFDM speeds in ft/s, and balloon `elevation-ft` stay.
+
 ## 0.79.0 - F-16 plant in SI
 - In-tree `python/f16/` state, surface commands, and the Morelli derivative are SI (metres, m/s, radians, newtons; Nz/Ny stay in g). Paper `xequil` / `uequil` / `K_lqr` and the straight-and-level altitude and speed gains are scaled. `units.py` is the only converter.
 - AeroBench and `f16dynamics` stay imperial. `compare.py` converts at that boundary. Altitude parity gate is 15.24 m (50 ft). Final RMS stays 5.0 on the imperial-equivalent 13-state. Python `gcas_long` compare stays 115 s; the runner horizon stays 120 s. Time is seconds.
