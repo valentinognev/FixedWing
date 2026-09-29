@@ -44,3 +44,4 @@ python/assets/xplane/plugin/**/*.xpl
 *.pem
 *.key
 credentials.json
+refs/*.pdf

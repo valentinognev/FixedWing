@@ -55,3 +55,30 @@ class TestReplay(unittest.TestCase):
         fdm = csv_row_to_fdm(_ROW)
         self.assertEqual(fdm["phi_deg"], rad_to_deg(0.1))
         self.assertNotIn("math.degrees", inspect.getsource(replay.csv_row_to_fdm))
+
+    def test_anim_imports_default_python_ref(self) -> None:
+        import os
+        import sys
+
+        from f16.compare import PYTHON_REF
+        from f16.replay import _import_anim3d
+
+        ref = str(PYTHON_REF)
+        self.assertTrue((PYTHON_REF / "aerobench").is_dir())
+        saved_path = list(sys.path)
+        saved_modules = {
+            name: sys.modules.pop(name)
+            for name in list(sys.modules)
+            if name == "aerobench" or name.startswith("aerobench.")
+        }
+        saved_env = os.environ.pop("AEROBENCH_CODE", None)
+        sys.path[:] = [entry for entry in sys.path if entry != ref]
+        try:
+            anim3d = _import_anim3d()
+            self.assertTrue(callable(anim3d.make_anim))
+            self.assertNotIn(ref, sys.path)
+        finally:
+            sys.path[:] = saved_path
+            sys.modules.update(saved_modules)
+            if saved_env is not None:
+                os.environ["AEROBENCH_CODE"] = saved_env

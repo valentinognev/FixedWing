@@ -3,6 +3,30 @@
 ## 0.85.0 - Separate Stevens and Morelli aero
 - `subf16_derivative(..., model="stevens"|"morelli")` and `run_f16.py --aero`. Stevens is the Appendix A.8 tables plus the Stevens damping table and one CG shift. Morelli is the polynomial model only; its own rate derivatives stay, and the Stevens damping table is not added. Default `--aero` is `morelli`. GCAS trajectory parity against AeroBench's mixed Morelli plant is retired. Straight-and-level parity stays.
 
+## 0.84.4 - Stevens idle thrust at Mach 0.6
+- Idle thrust at 10,000 ft, Mach 0.6 is −710 lbf (Stevens Appendix A.7). The in-tree table, both AeroBench copies, and `f16-flight-dynamics` had −170.
+
+## 0.84.3 - F-16 --anim AeroBench path
+- `--anim` loads `aerobench.visualize.anim3d` from `compare.PYTHON_REF` when `AEROBENCH_CODE` is unset. That directory is still removed from `sys.path` after the import.
+
+## 0.84.2 - F-16 mission wrapper --help
+- `python/scripts/run_f16_{straight_level,gcas_upright,gcas_inverted,gcas_long}.sh` print comprehensive `--help`/`-h` and exit 0 without running the sim.
+
+## 0.84.1 - F-16 mission root shims
+- Root `run_f16_{straight_level,gcas_upright,gcas_inverted,gcas_long}.sh` exec the existing `python/scripts/` wrappers; real launchers stay put.
+
+## 0.84.0 - F-16 gcas_long host wrapper
+- `python/scripts/run_f16_gcas_long.sh` runs host-only `run_f16.py --maneuver gcas_long` (default 120.0 s from `LONG_HORIZONS` / `SCENARIO_HORIZONS`). Optional `--csv` / `--duration`; leftover args pass through. No Docker/PX4/MAVLink. Python compare stays 115 s.
+
+## 0.83.0 - F-16 gcas_inverted host wrapper
+- `python/scripts/run_f16_gcas_inverted.sh` runs host-only `run_f16.py --maneuver gcas_inverted` (default 10.0 s from `SCENARIO_HORIZONS`). Optional `--csv` / `--duration`; leftover args pass through. No Docker/PX4/MAVLink.
+
+## 0.82.0 - F-16 gcas_upright host wrapper
+- `python/scripts/run_f16_gcas_upright.sh` runs host-only `run_f16.py --maneuver gcas_upright` (default 3.51 s from `SCENARIO_HORIZONS`). Optional `--csv` / `--duration`; leftover args pass through. No Docker/PX4/MAVLink.
+
+## 0.81.0 - F-16 straight_level host wrapper
+- `python/scripts/run_f16_straight_level.sh` runs host-only `run_f16.py --maneuver straight_level` (default 3.0 s from `SCENARIO_HORIZONS`). Optional `--csv` / `--duration`; leftover args pass through. No Docker/PX4/MAVLink.
+
 ## 0.80.0 - SI damping index and JSBSim IC
 - `_dampp` takes angle of attack in radians. The paper grid stays every 5 AeroBench degrees via `aerobench_deg` (`57.29578`) inside that function. Trim parity is unchanged. Unused `alpha_deg`, `beta_deg`, `dail`, and `drdr` are gone.
 - `assets/jsb_spawn.xml` and `jsb_spawn_xml` use `vt` `M/S` `29.99232` (the old `98.4` ft/s) and radian attitudes. Latitude and longitude stay degrees. FG `--vc=58.3` knots, FGNetFDM speeds in ft/s, and balloon `elevation-ft` stay.

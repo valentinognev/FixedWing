@@ -87,7 +87,8 @@ def play_anim(csv_path: str, filename: str = "") -> int:
 
     Imports matplotlib only here, when a window or a saved animation is requested.
     ``filename`` empty plots on screen; a path ending in ``.gif`` or ``.mp4`` saves.
-    ``aerobench`` must already import, or ``AEROBENCH_CODE`` must point at its code directory.
+    ``aerobench`` must already import, ``AEROBENCH_CODE`` must point at its code
+    directory, or ``compare.PYTHON_REF`` must be that checkout.
     """
     rows = _read_csv(csv_path)
     res = csv_columns_to_frames(rows)
@@ -219,7 +220,10 @@ def _pack_native_fdm(row: dict, prev: dict | None, dt: float) -> bytes:
 
 
 def _import_anim3d():
-    """Same import as the AeroBench examples. ``AEROBENCH_CODE`` is optional and not left on ``sys.path``."""
+    """Same import as the AeroBench examples.
+
+    ``AEROBENCH_CODE`` overrides ``compare.PYTHON_REF``. That directory is not left on ``sys.path``.
+    """
     try:
         from aerobench.visualize import anim3d
         return anim3d
@@ -230,6 +234,10 @@ def _import_anim3d():
 
     code = os.environ.get("AEROBENCH_CODE", "").strip()
     if not code:
+        from f16.compare import PYTHON_REF
+
+        code = str(PYTHON_REF)
+    if not code or not os.path.isdir(code):
         raise ImportError(
             "No module named 'aerobench'. Set AEROBENCH_CODE to the AeroBench code directory."
         )

@@ -116,6 +116,10 @@ Code defaults for missing keys: controller `pure_pursuit_quat`, homing_law `look
 
 cd python && python3 run_f16.py          # GCAS upright; bad setup exits 2; NED-metre CSV; --anim / --fg only after the CSV is on disk
 cd python && python3 run_f16.py --aero stevens   # same runner; Appendix A.8 aero instead of Morelli polynomials
+./run_f16_straight_level.sh  # host-only straight_level (3.0 s); --csv / --duration optional; extra args to run_f16.py
+./run_f16_gcas_upright.sh  # host-only gcas_upright (3.51 s); --csv / --duration optional; extra args to run_f16.py
+./run_f16_gcas_inverted.sh  # host-only gcas_inverted (10.0 s); --csv / --duration optional; extra args to run_f16.py
+./run_f16_gcas_long.sh  # host-only gcas_long (120.0 s); --csv / --duration optional; extra args to run_f16.py
 ./python/scripts/run_f16_reference_e2e.sh  # opt-in AeroBench parity; C++ f16dynamics skips when unbuilt
 cd python && python3 -m unittest discover -s tests
 FW_SITL_E2E=1 ./python/scripts/run_race_quat_e2e.sh   # opt-in live SITL (50 m smoke course)
