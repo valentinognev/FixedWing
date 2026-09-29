@@ -194,10 +194,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--setup", default=str(_PY / "f16_setup.json"))
     parser.add_argument("--maneuver", default=None)
     parser.add_argument("--duration", type=float, default=None)
+    parser.add_argument("--aero", default="morelli")
     parser.add_argument("--csv", default=None)
     parser.add_argument("--anim", action="store_true")
     parser.add_argument("--fg", action="store_true")
     args = parser.parse_args(argv)
+
+    if args.aero not in ("morelli", "stevens"):
+        _die(f"unknown aero {args.aero}")
 
     setup = _load_setup(Path(args.setup))
     maneuver = _maneuver(setup, args.maneuver)
@@ -208,7 +212,7 @@ def main(argv: list[str] | None = None) -> int:
     llc = F16Llc()
     x0 = _initial_state(maneuver, n_m, e_m, d_m)
     autopilot = _autopilot(maneuver, x0, llc, floor_m)
-    out = run_sim(autopilot, x0, t_end=duration, step=1 / 30)
+    out = run_sim(autopilot, x0, t_end=duration, step=1 / 30, aero=args.aero)
 
     csv_path = _csv_path(args.csv)
     _write_csv(csv_path, out["times"], out["states"], out["modes"])

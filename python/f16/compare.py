@@ -176,7 +176,7 @@ def run_cpp_reference(scenario: str, t_end: float, step: float = 1 / 30) -> dict
 
     original = sim.subf16_derivative
 
-    def subf16_derivative(x13, u_si):
+    def subf16_derivative(x13, u_si, model=None):
         from f16.units import state_imp_to_si, state_si_to_imp, u_si_to_imp
 
         x = np.ascontiguousarray(state_si_to_imp(x13), dtype=np.float64).reshape(13)

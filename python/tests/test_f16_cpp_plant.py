@@ -5,7 +5,7 @@ import numpy as np
 from f16.cpp_probe import cpp_available, get_llc, get_plant
 from f16.llc import F16Llc
 from f16.model import subf16_derivative
-from f16.units import deg_to_rad, fts_to_ms, state_si_to_imp, u_si_to_imp
+from f16.units import state_si_to_imp, u_si_to_imp
 
 
 def _cpp_xd(plant, x_si, u_si):
@@ -24,23 +24,6 @@ class TestCppPlant(unittest.TestCase):
         llc = F16Llc()
         x = llc.xequil.copy()
         u = llc.uequil.copy()
-        xd, nz, ny = subf16_derivative(x[:13], u)
-        full = _cpp_xd(plant, x[:13], u)
-        np.testing.assert_allclose(state_si_to_imp(xd), full[:13], rtol=1e-6, atol=1e-6)
-        self.assertAlmostEqual(nz, float(full[13]), places=5)
-        self.assertAlmostEqual(ny, float(full[14]), places=5)
-
-    def test_morelli_derivative_matches_cpp_off_trim(self) -> None:
-        if not cpp_available():
-            self.skipTest("f16dynamics not built")
-        plant = get_plant()
-        llc = F16Llc()
-        x = llc.xequil.copy()
-        x[0] += fts_to_ms(20.0)
-        x[1] += 0.02
-        x[6] += 0.05
-        u = llc.uequil.copy()
-        u[1] += deg_to_rad(2.0)
         xd, nz, ny = subf16_derivative(x[:13], u)
         full = _cpp_xd(plant, x[:13], u)
         np.testing.assert_allclose(state_si_to_imp(xd), full[:13], rtol=1e-6, atol=1e-6)

@@ -82,3 +82,21 @@ class TestRunner(unittest.TestCase):
             self.assertEqual(r.returncode, 2)
             self.assertEqual(r.stderr.strip(), "bad setup: gcas_floor_ft")
             self.assertEqual(r.stdout.strip(), "")
+
+    def test_bad_aero_exits_2(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            sp = Path(td) / "setup.json"
+            sp.write_text(json.dumps({
+                "maneuver": "straight_level",
+                "duration_s": 1.0,
+                "spawn": {"n_m": 0.0, "e_m": 0.0, "d_m": -304.8},
+                "gcas_floor_m": 304.8,
+            }))
+            r = subprocess.run(
+                [sys.executable, "run_f16.py", "--setup", str(sp), "--aero", "mixed"],
+                cwd=".",
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(r.returncode, 2)
+            self.assertIn("aero", r.stderr)

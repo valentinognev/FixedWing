@@ -50,11 +50,3 @@ class TestGcas(unittest.TestCase):
         out = self._fly("gcas_inverted")
         self.assertEqual(_collapsed(out["modes"]), ["standby", "roll", "pull", "standby"])
         self.assertGreater(out["min_h_m"], 0.0)
-
-    def test_frozen_trace_regression(self) -> None:
-        ref = np.load("tests/frozen_gcas_upright.npz")
-        llc = F16Llc()
-        ap = GcasAutopilot(init_mode="standby", llc=llc)
-        out = run_sim(ap, ref["x0"], t_end=float(ref["t_end"]), step=1 / 30)
-        ours = np.array([s[:13] for s in out["states"]])
-        np.testing.assert_allclose(ours[-1], ref["final"], rtol=1e-4, atol=1e-2)

@@ -1,5 +1,8 @@
 # Updates
 
+## 0.85.0 - Separate Stevens and Morelli aero
+- `subf16_derivative(..., model="stevens"|"morelli")` and `run_f16.py --aero`. Stevens is the Appendix A.8 tables plus the Stevens damping table and one CG shift. Morelli is the polynomial model only; its own rate derivatives stay, and the Stevens damping table is not added. Default `--aero` is `morelli`. GCAS trajectory parity against AeroBench's mixed Morelli plant is retired. Straight-and-level parity stays.
+
 ## 0.80.0 - SI damping index and JSBSim IC
 - `_dampp` takes angle of attack in radians. The paper grid stays every 5 AeroBench degrees via `aerobench_deg` (`57.29578`) inside that function. Trim parity is unchanged. Unused `alpha_deg`, `beta_deg`, `dail`, and `drdr` are gone.
 - `assets/jsb_spawn.xml` and `jsb_spawn_xml` use `vt` `M/S` `29.99232` (the old `98.4` ft/s) and radian attitudes. Latitude and longitude stay degrees. FG `--vc=58.3` knots, FGNetFDM speeds in ft/s, and balloon `elevation-ft` stay.

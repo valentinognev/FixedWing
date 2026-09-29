@@ -17,12 +17,14 @@ class _StopIntegration(Exception):
 _CONSTRUCTOR_FAILURES = (_StopIntegration, FloatingPointError, ValueError)
 
 
-def controlled_derivative(t: float, x_f16: np.ndarray, u_ref: np.ndarray, llc) -> np.ndarray:
+def controlled_derivative(
+    t: float, x_f16: np.ndarray, u_ref: np.ndarray, llc, model: str = "morelli"
+) -> np.ndarray:
     """LQR-controlled derivative. ps and Ny_r follow controlled_f16 with v2_integrators=False."""
     x_f16 = np.asarray(x_f16, dtype=float)
     u_ref = np.asarray(u_ref, dtype=float)
     x_ctrl, u_si = llc.get_u(u_ref, x_f16)
-    xd_model, Nz, Ny = subf16_derivative(x_f16[:13], u_si)
+    xd_model, Nz, Ny = subf16_derivative(x_f16[:13], u_si, model=model)
     # Nonlinear (Actual): ps = p * cos(alpha) + r * sin(alpha), via x_ctrl as in the non-v2 branch.
     ps = x_ctrl[4] * cos(x_ctrl[0]) + x_ctrl[5] * sin(x_ctrl[0])
     Ny_r = Ny + x_ctrl[5]
@@ -43,7 +45,7 @@ def _pad_state(x0_13: np.ndarray) -> np.ndarray:
     return x0
 
 
-def run_sim(autopilot, x0_13, t_end, step=1 / 30) -> dict:
+def run_sim(autopilot, x0_13, t_end, step=1 / 30, aero: str = "morelli") -> dict:
     """Integrate 13 plant states plus three zero LQR integrators.
 
     Each sample advances the discrete mode, then the ODE calls get_checked_u_ref.
@@ -66,7 +68,7 @@ def run_sim(autopilot, x0_13, t_end, step=1 / 30) -> dict:
             if not np.all(np.isfinite(full_state)):
                 raise _StopIntegration
             u_ref = autopilot.get_checked_u_ref(t, full_state)
-            xd = controlled_derivative(t, full_state, u_ref, autopilot.llc)
+            xd = controlled_derivative(t, full_state, u_ref, autopilot.llc, model=aero)
             if not np.all(np.isfinite(xd)):
                 raise _StopIntegration
             return xd
