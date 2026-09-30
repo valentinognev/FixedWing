@@ -16,7 +16,6 @@ if str(_PY) not in sys.path:
 
 import numpy as np
 
-from f16.compare import scenario_x0
 from f16.gcas import GcasAutopilot
 from f16.llc import F16Llc
 from f16.sim import run_sim
@@ -95,15 +94,21 @@ def _floor_m(setup: dict) -> float:
     return floor
 
 
-def _initial_state(maneuver: str, n_m: float, e_m: float, d_m: float) -> np.ndarray:
+def _initial_state(maneuver: str, aero: str, n_m: float, e_m: float, d_m: float):
+    from f16.trim_table import trimmed_initial
+
     pn_m, pe_m, h_m = ned_m_to_f16_m(n_m, e_m, d_m)
     if not all(math.isfinite(v) for v in (pn_m, pe_m, h_m)) or h_m <= 0.0:
         _die("bad setup: unphysical spawn")
-    x0 = scenario_x0(maneuver)
+    try:
+        x0, u0 = trimmed_initial(maneuver, aero=aero, height_m=h_m)
+    except ValueError as exc:
+        _die(f"trim lookup failed: {exc}")
+    x0 = x0.copy()
+    x0[5] = 0.0
     x0[9] = pn_m
     x0[10] = pe_m
-    x0[11] = h_m
-    return x0
+    return x0, u0.copy()
 
 
 def _autopilot(maneuver: str, x0: np.ndarray, llc: F16Llc, floor_m: float):
@@ -210,7 +215,9 @@ def main(argv: list[str] | None = None) -> int:
     floor_m = _floor_m(setup)
 
     llc = F16Llc()
-    x0 = _initial_state(maneuver, n_m, e_m, d_m)
+    x0, u0 = _initial_state(maneuver, args.aero, n_m, e_m, d_m)
+    llc.xequil = x0.copy()
+    llc.uequil = u0
     autopilot = _autopilot(maneuver, x0, llc, floor_m)
     out = run_sim(autopilot, x0, t_end=duration, step=1 / 30, aero=args.aero)
 

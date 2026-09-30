@@ -37,7 +37,7 @@ def python_ref_version() -> str:
         return "unknown"
 
 
-def scenario_x0(scenario: str) -> np.ndarray:
+def paper_x0(scenario: str) -> np.ndarray:
     """Initial SI 13-state for straight-and-level trim or the GCAS example files.
 
     GCAS attitudes, speed, alpha, and power come from ``run_GCAS.py`` and
@@ -53,7 +53,7 @@ def scenario_x0(scenario: str) -> np.ndarray:
     if scenario == "straight_level":
         return F16Llc().xequil.copy()
     if scenario == "gcas_long":
-        return scenario_x0("gcas_upright").copy()
+        return paper_x0("gcas_upright").copy()
     # phi/theta: upright -pi/8 and -0.3*pi/2; inverted -0.9*pi and -0.01*pi/2.
     if scenario == "gcas_upright":
         phi = -np.pi / 8.0
@@ -81,6 +81,16 @@ def scenario_x0(scenario: str) -> np.ndarray:
     )
 
 
+def scenario_x0(scenario: str, aero: str = "morelli", height_m: float | None = None) -> np.ndarray:
+    """Flown SI state from the trim table. Parity uses paper_x0 instead."""
+    from f16.trim_table import trimmed_initial
+
+    if scenario not in _SCENARIOS:
+        raise ValueError(f"unknown scenario {scenario!r}")
+    x, _ = trimmed_initial(scenario, aero=aero, height_m=height_m)
+    return x
+
+
 def run_ours(scenario: str, t_end: float, step: float = 1 / 30) -> dict:
     """In-process plant. Same autopilots and ICs as the scenario tests."""
     from f16.gcas import GcasAutopilot
@@ -95,7 +105,7 @@ def run_ours(scenario: str, t_end: float, step: float = 1 / 30) -> dict:
         ap = GcasAutopilot(init_mode="standby", llc=llc)
     else:
         raise ValueError(f"unknown scenario {scenario!r}")
-    return run_sim(ap, scenario_x0(scenario), t_end, step=step)
+    return run_sim(ap, paper_x0(scenario), t_end, step=step)
 
 
 def _install_rk45_state_alias() -> None:
@@ -151,7 +161,7 @@ def _pack_run_sim(times, states, modes, ref_version: str | None = None) -> dict:
 def run_python_reference(scenario: str, t_end: float) -> dict:
     from f16.units import state_imp_to_si, state_si_to_imp
 
-    x0_si = scenario_x0(scenario)
+    x0_si = paper_x0(scenario)
     x0_imp = state_si_to_imp(x0_si)
     _install_rk45_state_alias()
     _ensure_python_ref_path()

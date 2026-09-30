@@ -8,6 +8,8 @@ import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
 
+import numpy as np
+
 
 class TestRunner(unittest.TestCase):
     def test_runner_writes_csv(self) -> None:
@@ -100,3 +102,87 @@ class TestRunner(unittest.TestCase):
             )
             self.assertEqual(r.returncode, 2)
             self.assertIn("aero", r.stderr)
+
+    def test_straight_level_starts_at_the_morelli_trim_row(self) -> None:
+        from f16.trim_table import lookup_trim
+        from f16.units import ft_to_m, fts_to_ms
+
+        vt = fts_to_ms(502.0)
+        height = ft_to_m(1000.0)
+        x, _ = lookup_trim("morelli", vt, height)
+        setup = {
+            "maneuver": "straight_level",
+            "duration_s": 1.0,
+            "spawn": {"n_m": 10.0, "e_m": -4.0, "d_m": -height},
+            "gcas_floor_m": 304.8,
+        }
+        with tempfile.TemporaryDirectory() as td:
+            sp = Path(td) / "setup.json"
+            cp = Path(td) / "out.csv"
+            sp.write_text(json.dumps(setup))
+            r = subprocess.run(
+                [sys.executable, "run_f16.py", "--setup", str(sp), "--csv", str(cp), "--aero", "morelli"],
+                cwd=".",
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(r.returncode, 0, r.stderr)
+            row = next(csv.DictReader(cp.read_text().splitlines()))
+            self.assertAlmostEqual(float(row["vt_mps"]), vt, places=4)
+            self.assertAlmostEqual(float(row["d_m"]), -height, places=4)
+            self.assertAlmostEqual(float(row["n_m"]), 10.0, places=4)
+            self.assertAlmostEqual(float(row["alpha"]), float(x[1]), places=6)
+            self.assertAlmostEqual(float(row["theta"]), float(x[1]), places=6)
+            self.assertAlmostEqual(float(row["phi"]), 0.0, places=6)
+            self.assertAlmostEqual(float(row["psi"]), 0.0, places=6)
+
+    def test_stevens_alpha_differs_from_morelli(self) -> None:
+        from f16.trim_table import lookup_trim
+        from f16.units import ft_to_m, fts_to_ms
+
+        height = ft_to_m(1500.0)
+        morelli, _ = lookup_trim("morelli", fts_to_ms(540.0), height)
+        stevens, _ = lookup_trim("stevens", fts_to_ms(540.0), height)
+        setup = {
+            "maneuver": "gcas_upright",
+            "duration_s": 0.1,
+            "spawn": {"n_m": 0.0, "e_m": 0.0, "d_m": -height},
+            "gcas_floor_m": 304.8,
+        }
+        alphas = []
+        with tempfile.TemporaryDirectory() as td:
+            sp = Path(td) / "setup.json"
+            sp.write_text(json.dumps(setup))
+            for aero in ("morelli", "stevens"):
+                cp = Path(td) / f"{aero}.csv"
+                r = subprocess.run(
+                    [sys.executable, "run_f16.py", "--setup", str(sp), "--csv", str(cp), "--aero", aero],
+                    cwd=".",
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(r.returncode, 0, r.stderr)
+                row = next(csv.DictReader(cp.read_text().splitlines()))
+                alphas.append(float(row["alpha"]))
+        self.assertAlmostEqual(alphas[0], float(morelli[1]), places=6)
+        self.assertAlmostEqual(alphas[1], float(stevens[1]), places=6)
+        self.assertFalse(np.allclose(morelli, stevens, atol=1e-4))
+
+    def test_spawn_outside_the_table_exits_2(self) -> None:
+        setup = {
+            "maneuver": "straight_level",
+            "duration_s": 1.0,
+            "spawn": {"n_m": 0.0, "e_m": 0.0, "d_m": -100.0},
+            "gcas_floor_m": 304.8,
+        }
+        with tempfile.TemporaryDirectory() as td:
+            sp = Path(td) / "setup.json"
+            sp.write_text(json.dumps(setup))
+            r = subprocess.run(
+                [sys.executable, "run_f16.py", "--setup", str(sp)],
+                cwd=".",
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(r.returncode, 2)
+            self.assertIn("trim lookup failed", r.stderr)

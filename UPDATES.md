@@ -1,5 +1,13 @@
 # Updates
 
+## 0.87.0 - Trim survey launcher
+- `./run_trim_survey.sh` solves one wings-level grid into `data/planes/<plane>/<model>.json`. Default plane is `f16` and default model is `morelli`. `--model stevens` is the other F-16 aero model. An unknown plane or model exits 2.
+
+## 0.86.0 - F-16 trim tables
+- Wings-level `(vt, altitude)` trim for `stevens` and `morelli` is solved into `data/planes/f16/{stevens,morelli}.json`.
+- `run_f16.py` starts every maneuver from the bilinear lookup at the maneuver speed (straight-level 502 ft/s, GCAS 540 ft/s) and the setup spawn altitude, and copies that trim into `xequil` / `uequil`. `K_lqr` stays the paper gain.
+- Cells with Mach > 0.6, angle of attack outside −10° to +45°, or throttle or elevator outside its stop are omitted. A lookup outside a complete rectangle exits 2.
+
 ## 0.85.0 - Separate Stevens and Morelli aero
 - `subf16_derivative(..., model="stevens"|"morelli")` and `run_f16.py --aero`. Stevens is the Appendix A.8 tables plus the Stevens damping table and one CG shift. Morelli is the polynomial model only; its own rate derivatives stay, and the Stevens damping table is not added. Default `--aero` is `morelli`. GCAS trajectory parity against AeroBench's mixed Morelli plant is retired. Straight-and-level parity stays.
 
