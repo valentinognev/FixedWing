@@ -27,6 +27,26 @@ _MORELLI_GROUPS = (
     "cnda",
     "cndr",
 )
+_STEVENS_GROUPS = (
+    "cx",
+    "cz",
+    "cl",
+    "cm",
+    "cn",
+    "dlda",
+    "dldr",
+    "dnda",
+    "dndr",
+    "damp",
+    "cy_beta",
+    "cy_aileron",
+    "cy_rudder",
+    "aileron_norm_deg",
+    "rudder_norm_deg",
+    "beta_norm_deg",
+    "cz_elevator",
+    "elevator_norm_deg",
+)
 
 
 def load_aero_coefficients(model: str, root: Path | None = None) -> dict:
@@ -47,8 +67,13 @@ def load_aero_coefficients(model: str, root: Path | None = None) -> dict:
     if not isinstance(coefficients, dict):
         raise ValueError("missing coefficients")
     if model == "morelli":
-        for name in _MORELLI_GROUPS:
-            if name not in coefficients:
-                raise ValueError(f"missing {name}")
+        groups = _MORELLI_GROUPS
+    elif model == "stevens":
+        groups = _STEVENS_GROUPS
+    else:
+        groups = ()
+    for name in groups:
+        if name not in coefficients:
+            raise ValueError(f"missing {name}")
     _CACHE[path] = coefficients
     return coefficients
