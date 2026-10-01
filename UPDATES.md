@@ -1,5 +1,9 @@
 # Updates
 
+## 0.88.0 - F-16 aerodynamic coefficients in JSON
+- `data/planes/f16/{morelli,stevens}.json` carry each model's aerodynamic coefficients. `morelli_coefficients` and `stevens_coefficients` load that object at runtime.
+- `write_trim_survey` keeps an existing `coefficients` object when it rewrites a trim file.
+
 ## 0.87.0 - Trim survey launcher
 - `./run_trim_survey.sh` solves one wings-level grid into `data/planes/<plane>/<model>.json`. Default plane is `f16` and default model is `morelli`. `--model stevens` is the other F-16 aero model. An unknown plane or model exits 2.
 

@@ -139,6 +139,21 @@ def _solve_point(model: str, vt: float, alt: float) -> dict | None:
     return None
 
 
+def _existing_coefficients(path: Path) -> dict | None:
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    coefficients = data.get("coefficients")
+    if not isinstance(coefficients, dict):
+        return None
+    return coefficients
+
+
 def write_trim_survey(plane: str = "f16", model: str = "morelli", root: Path | None = None) -> Path:
     """Solve one wings-level grid and write data/planes/<plane>/<model>.json."""
     if plane != "f16":
@@ -173,6 +188,9 @@ def write_trim_survey(plane: str = "f16", model: str = "morelli", root: Path | N
         "points": points,
     }
     path = directory / f"{model}.json"
+    coefficients = _existing_coefficients(path)
+    if coefficients is not None:
+        payload["coefficients"] = coefficients
     path.write_text(json.dumps(payload, indent=2) + "\n")
     return path
 

@@ -30,6 +30,20 @@ class TestTrimSurvey(unittest.TestCase):
             self.assertEqual(payload["points"], [])
             self.assertFalse((Path(td) / "stevens.json").exists())
 
+    def test_keeps_existing_coefficients(self) -> None:
+        from f16.trim_table import write_trim_survey
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "morelli.json").write_text(
+                '{"model": "morelli", "coefficients": {"cx": [-0.5]}}'
+            )
+            with patch("f16.trim_table._solve_point", return_value=None):
+                path = write_trim_survey("f16", "morelli", root=root)
+            payload = json.loads(path.read_text())
+            self.assertEqual(payload["coefficients"], {"cx": [-0.5]})
+            self.assertEqual(payload["points"], [])
+
     def test_help_names_the_defaults(self) -> None:
         result = subprocess.run(
             [str(SCRIPT), "--help"],
