@@ -9,7 +9,7 @@ derivation recorded below.
 Sign convention, derived from ``plane/dynamics.py`` and nothing else
 -----------------------------------------------------------------
 ``xd[11] = ub*sin(theta) - vb*cos(theta)*sin(phi) - wb*cos(phi)*cos(theta)``
-(dynamics.py:71) is the NED altitude rate
+(dynamics.py:73) is the NED altitude rate
 ``h_dot = u sin(theta) + v cos(theta) sin(phi) - w cos(theta) cos(phi)``, so
 **positive ``w`` is downward** and the body **z axis points down**.
 
@@ -44,7 +44,7 @@ and ``c9 = ixx/gamma > 0`` for any physical inertia:
     xd[7] = ... + qbar*S*cbar * c7 * cm                pitch rate     (dynamics.py:58)
     xd[8] = ... + qbar*S*b   * (c4 * cl + c9 * cn)     yaw rate       (dynamics.py:59)
 
-and ``xd[4] = q cos(phi) - r sin(phi)`` is ``theta_dot`` (dynamics.py:53), so
+and ``xd[4] = q cos(phi) - r sin(phi)`` is ``theta_dot`` (dynamics.py:54), so
 positive ``q`` is nose up, positive ``p`` is a roll to the right and positive
 ``r`` is a yaw to the right.  Reading that chain through:
 
@@ -124,16 +124,17 @@ each bullet is pinned by a one-arm test:
 
 The sign of the ``dx`` term comes from that cross product and from nothing else.
 It is deliberately **not** cross-checked against ``f16/aero_morelli.py`` line 65
-(``Cm = Cm0 + Cmq*qhat + Cz*(xcgref - xcg)``): that term is identically zero
-everywhere in this repository, because every in-tree reference sets
-``xcg == xcg_ref`` -- ``data/planes/linear/morelli.json`` lines 8-9,
-``f16/model.py:164`` (``xcg = 0.35``) with ``:172`` (``xcgr = .35``),
-``f16/aero_stevens.py:411``, and the four test fixtures
-(``test_plane_aircraft.py:25``, ``test_plane_dynamics.py:44``,
-``test_plane_model_select.py:24``, ``test_plane_sim.py:27``).  Nothing in this
-repository documents Morelli's own x-axis direction for those station numbers, so
-that expression cannot witness a convention here.  The unit tests are what pin
-it, one arm at a time.
+(``Cm = Cm0 + Cmq*qhat + Cz*(xcgref - xcg)``).  What was verified about that term is
+narrower than a convention claim: on every path reachable in this repository it is
+identically zero, because every reference that feeds it sets ``xcg == xcg_ref``.
+The plant's own path is ``plane/dynamics.py:24``, which forwards
+``aircraft.xcg`` and ``aircraft.xcg_ref`` into ``morelli_coefficients``; both come
+from ``data/planes/linear/morelli.json`` lines 8-9 (``0.25`` and ``0.25``), and the
+other reachable call, ``f16/model.py:164`` (``xcg = 0.35``) with ``:172``
+(``xcgr = .35``), is degenerate for the same reason.  ``f16/aero_stevens.py:411``
+carries the same shape.  Nothing here documents Morelli's own x-axis direction for
+those station numbers, so the expression cannot witness a convention.  The unit tests
+are what pin it, one arm at a time.
 
 ``s_ref`` is accepted because the shift is meaningless without the reference
 geometry, but it does not appear in the result: the coefficients handed in are
@@ -271,34 +272,48 @@ def shift_moments_to_cg(
         dy = 0,  dz = 0                (both stations have y = z = 0)
 
     A solver that reports lift with an up-positive sign passes ``cz = -CL``, so the
-    same case is ``cz = -4.363``.  The x axis is the only one the aft-positive flip
-    touches for this aircraft, but the general rule above governs all three.
+    same case is ``cz = -4.363``.  Of the three axes only x needs the aft-positive
+    flip for this aircraft, because ``dy`` and ``dz`` are zero; the general rule above
+    governs all three, and with ``cx = cy = 0`` here it is ``dx`` alone that moves the
+    pitch moment.  Pass the measured side force as ``cy`` even though ``dy = 0``: the
+    yaw line ``Cn + (dy*cx - dx*cy)/b_ref`` shifts on ``dx*cy`` alone, so zeroing
+    ``cy`` to "simplify" would silently discard a real yaw moment.  For the same
+    reason the roll and yaw moments come back unchanged in this worked example only
+    because ``cx`` and ``cy`` are both zero here -- no ``cl_m`` or ``cn`` figure for
+    this aircraft is quoted anywhere, and neither needs to be: pass whatever the solver
+    reported about ``O`` and the same formula shifts it.
 
     Those two signs multiply into ``dx*cz``, so **a wrong pairing still returns a
     plausible number**.  Worked with ``cm = -7.720`` per radian as measured about
     ``ref_point``, ``s_ref = ft(24.0)`` from ``AERO.SREF``, ``b_ref = ft(12.0)`` from
     ``AERO.BLREF`` and ``c_ref = ft(2.0) = 0.6096`` from ``AERO.CBARR``:
 
-    ==========================  ======================  ================
-    call                        shifted Cm_a             static margin
-    ==========================  ======================  ================
-    ``cz=-4.363, dx=-0.896112``  ``-1.3063899999999986``  0.2994 cbar  correct
-    ``cz=-4.363, dx=+0.896112``  ``-14.133610000000001``  3.2394 cbar  visibly wrong
-    ``cz=+4.363, dx=+0.896112``  ``-1.3063899999999986``  0.2994 cbar  the trap
-    ``cz=+4.363, dx=-0.896112``  ``-14.133610000000001``  3.2394 cbar  wrong
-    ==========================  ======================  ================
+    ===========================  =======================  ===============  =============
+    call                         shifted Cm_a             margin (normal)  verdict
+    ``cz=-4.363, dx=-0.896112``  ``-1.3063899999999986``  0.2994 cbar      correct
+    ``cz=-4.363, dx=+0.896112``  ``-14.133610000000001``  3.2394 cbar      visibly wrong
+    ``cz=+4.363, dx=+0.896112``  ``-1.3063899999999986``  0.2994 cbar      the trap
+    ``cz=+4.363, dx=-0.896112``  ``-14.133610000000001``  3.2394 cbar      wrong
+    ===========================  =======================  ===============  =============
 
-    So sanity-check the result rather than the arguments: after shifting, the static
+    **Order of operations: shift first, normalise afterwards.**  This function does not
+    normalise and does not return normalised values -- it hands ``cz`` straight back --
+    so the two ``cz=+4.363`` rows have a **negative** margin at this point
+    (``-0.2994`` and ``-3.2394``), not the positive column above.  The positive column
+    is what the arrays carry once ``aero_convert.normalise_sign`` has flipped ``cz[1]``
+    to negative, which ``aero_convert.morelli.to_morelli`` does for every field it
+    writes, from ``SIGN_INVARIANTS["cl_alpha"] = -1``.
+
+    So sanity-check the result rather than the arguments: after normalising, the static
     margin ``cm_alpha / cl_alpha`` must land in 0.05 ... 0.45 cbar -- in the written
     arrays that is ``coefficients["cm"][1] / coefficients["cz"][1]``, where ``cl_alpha``
     is the ``DerivativeSet`` slot that becomes ``cz[1]``, hence **negative** for a
-    stable aircraft and ``-1`` in ``SIGN_INVARIANTS``; the physical ``CL_alpha`` is
-    ``-cz[1]`` and positive, and using it here would invert the ratio and condemn the
-    correct answer.  A value outside the band means the frame or the ``cz`` sign is
-    wrong, not that the aircraft is unusual -- and the third row above passes the
-    number check with the convention still wrong, which is why the geometry has to be
-    right first.  See the module docstring for the derivation and the per-arm physical
-    reading of all six terms.
+    stable aircraft; the physical ``CL_alpha`` is ``-cz[1]`` and positive, and using it
+    here would invert the ratio and condemn the correct answer.  A value outside the
+    band means the frame or the ``cz`` sign is wrong, not that the aircraft is unusual
+    -- and the third row above passes the number check with the convention still wrong,
+    which is why the geometry has to be right first.  See the module docstring for the
+    derivation and the per-arm physical reading of all six terms.
     """
     if s_ref <= 0.0 or b_ref <= 0.0 or c_ref <= 0.0:
         raise ValueError(

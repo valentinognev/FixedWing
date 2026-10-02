@@ -213,8 +213,10 @@ class TestShiftMomentsToCg(unittest.TestCase):
 
     def test_measured_tornado_pitch_moment(self) -> None:
         # Measured on the C172: Tornado reports about ref_point = [0, 0, 0] while
-        # the CG is at [2.94, 0, 0] ft, both at y = z = 0, so only x moves.  That
-        # source frame has x AFT positive --
+        # the CG is at [2.94, 0, 0] ft, both at y = z = 0, so dy = dz = 0 here and
+        # only dx carries the station offset.  (Only because this worked example has
+        # cx = cy = 0 does that make the yaw term -dx*cy/b vanish as well; with a
+        # measured side force it would not.)  That source frame has x AFT positive --
         # ../USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc lists the
         # wing at AERO.XW = 2.2, the CG at AERO.XCG = 2.94 and the tail at
         # AERO.XH = 8.75 ft from the nose -- so the reference sits 2.94 ft AHEAD of
