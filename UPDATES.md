@@ -1,5 +1,10 @@
 # Updates
 
+## 0.89.0 - Linear Morelli host 6DOF
+- `python/plane/` integrates a 13-state airplane with `morelli_coefficients`. Nonlinear slots in `data/planes/linear/morelli.json` are zero.
+- `python/run_plane.py --plane linear` writes a host-only CSV. No PX4, MAVLink, Docker, or FlightGear.
+- README documents `python/plane/`, the linear runner, and the host-only known limit.
+
 ## 0.88.0 - F-16 aerodynamic coefficients in JSON
 - `data/planes/f16/{morelli,stevens}.json` carry each model's aerodynamic coefficients. `morelli_coefficients` and `stevens_coefficients` load that object at runtime.
 - `write_trim_survey` keeps an existing `coefficients` object when it rewrites a trim file.
