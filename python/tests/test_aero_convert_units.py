@@ -133,28 +133,69 @@ class TestShiftMomentsToCg(unittest.TestCase):
 
 
 class TestNormaliseSign(unittest.TestCase):
+    def test_keeps_a_negative_cl_alpha(self) -> None:
+        # cz = -CL, so a negative CL_alpha is already correct: cz[1] must be negative.
+        self.assertEqual(normalise_sign("cz_alpha", -4.0), (-4.0, False))
+
     def test_flips_a_disagreeing_sign(self) -> None:
-        self.assertEqual(normalise_sign("cz_alpha", -4.0), (4.0, True))
+        self.assertEqual(normalise_sign("cz_alpha", 4.0), (-4.0, True))
+        self.assertEqual(normalise_sign("cn_beta", -0.2), (0.2, True))
 
     def test_keeps_an_agreeing_sign(self) -> None:
-        self.assertEqual(normalise_sign("cz_alpha", 5.0), (5.0, False))
+        self.assertEqual(normalise_sign("cz_alpha", -5.0), (-5.0, False))
         self.assertEqual(normalise_sign("cy_beta", -0.6), (-0.6, False))
+        self.assertEqual(normalise_sign("cn_beta", 0.2), (0.2, False))
 
     def test_zero_has_no_sign_to_disagree_with(self) -> None:
         self.assertEqual(normalise_sign("cz_alpha", 0.0), (0.0, False))
         self.assertEqual(normalise_sign("cd0", 0.0), (0.0, False))
 
-    def test_every_derivative_field_has_an_invariant(self) -> None:
+    def test_a_slot_with_no_invariant_is_left_alone(self) -> None:
+        # cm0 (Cm0) is deliberately absent from the invariant table: the two in-tree
+        # reference files disagree on its sign and it is tail rigging, not a convention.
+        self.assertEqual(normalise_sign("cm0", -0.05), (-0.05, False))
+        self.assertEqual(normalise_sign("cm0", 0.05), (0.05, False))
+
+    def test_an_unknown_slot_name_is_left_alone(self) -> None:
+        # No invariant means no normalisation, never an exception: a caller may pass
+        # any field name and a typo must not fail a conversion.
+        self.assertEqual(normalise_sign("cz", 0.0), (0.0, False))
+        self.assertEqual(normalise_sign("cz", 1.25), (1.25, False))
+        self.assertEqual(normalise_sign("cz_nonesuch", -1.0), (-1.0, False))
+
+    def test_the_four_signposted_rows(self) -> None:
+        self.assertEqual(SIGN_INVARIANTS["cl0"], -1)
+        self.assertEqual(SIGN_INVARIANTS["cd_q"], 1)
+        self.assertEqual(SIGN_INVARIANTS["cy_p"], -1)
+        self.assertEqual(SIGN_INVARIANTS["cy_r"], 1)
+        self.assertEqual(normalise_sign("cl0", -0.2), (-0.2, False))
+        self.assertEqual(normalise_sign("cl0", 0.2), (-0.2, True))
+        self.assertEqual(normalise_sign("cd_q", 0.3), (0.3, False))
+        self.assertEqual(normalise_sign("cd_q", -0.3), (0.3, True))
+        self.assertEqual(normalise_sign("cy_p", -0.1), (-0.1, False))
+        self.assertEqual(normalise_sign("cy_p", 0.1), (-0.1, True))
+        self.assertEqual(normalise_sign("cy_r", 0.25), (0.25, False))
+        self.assertEqual(normalise_sign("cy_r", -0.25), (0.25, True))
+
+    def test_every_derivative_field_but_cm0_has_an_invariant(self) -> None:
         from aero_convert.morelli import DerivativeSet
 
-        for field in DerivativeSet.__dataclass_fields__:
-            self.assertIn(field, SIGN_INVARIANTS)
+        # Exactly the 24 rows of the plan's "Physics invariants" table: no field
+        # beyond them, and no invented row.
+        self.assertNotIn("cm0", SIGN_INVARIANTS)
+        fields = set(DerivativeSet.__dataclass_fields__)
+        self.assertEqual(set(SIGN_INVARIANTS), fields - {"cm0"})
         for name, sign in SIGN_INVARIANTS.items():
             self.assertIn(sign, (1, -1), name)
 
-    def test_unknown_slot_name_is_rejected(self) -> None:
-        with self.assertRaises(KeyError):
-            normalise_sign("cz_nonesuch", 1.0)
+    def test_static_margin_convention_is_ratio_of_two_negative_slots(self) -> None:
+        # CL_alpha = -cz[1], so -Cm_alpha / CL_alpha reduces to cm[1] / cz[1].
+        cz_alpha = normalise_sign("cz_alpha", -4.363)[0]
+        cm_alpha = normalise_sign("cm_alpha", -1.31)[0]
+        margin = cm_alpha / cz_alpha
+        self.assertAlmostEqual(margin, 1.31 / 4.363, delta=1e-12)
+        self.assertGreater(margin, 0.0)
+        self.assertLess(margin, 0.45)
 
 
 if __name__ == "__main__":

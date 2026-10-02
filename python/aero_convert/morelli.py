@@ -7,6 +7,12 @@ units, and every present value passes through
 ``aero_convert.units.normalise_sign`` so an array can never carry the sign the
 invariant table forbids.  That pass is idempotent, so an adapter that has
 already normalised its own value, and logged the flip, is not undone here.
+
+Sign note, because it is easy to get backwards: ``plane/dynamics.py`` applies
+``cz`` as the body-z force with **z down**, so ``cz = -CL``.  ``cl_alpha`` and
+``cl_q`` therefore carry the opposite sign to the aerodynamic ``CL_alpha`` and
+``CL_q``, and a solver that reports lift with an up-positive convention (Tornado
+does) is normalised by the table rather than by hand.
 """
 from __future__ import annotations
 
@@ -27,7 +33,8 @@ class DerivativeSet:
     guessed.  ``x``-axis moments are named ``cl_*`` because
     ``plane/dynamics.py`` spells the roll coefficient ``cl``; the coefficients
     themselves are the ``plane/dynamics.py`` ones, so ``cl_alpha`` is what the
-    model reads as ``cz[1]``.
+    model reads as ``cz[1]`` and ``cz = -CL``.  ``cm0`` carries no sign
+    invariant and is written through untouched.
     """
 
     cl0: float | None = None

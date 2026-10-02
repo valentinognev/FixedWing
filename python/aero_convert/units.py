@@ -8,30 +8,33 @@ derivation recorded below.
 
 Sign convention, derived from ``plane/dynamics.py`` and nothing else
 -----------------------------------------------------------------
-``plane/dynamics.py`` resolves the body-axis force as
+``xd[11] = ub*sin(theta) - vb*cos(theta)*sin(phi) - wb*cos(phi)*cos(theta)``
+(dynamics.py:71) is the NED altitude rate
+``h_dot = u sin(theta) + v cos(theta) sin(phi) - w cos(theta) cos(phi)``, so
+**positive ``w`` is downward** and the body **z axis points down**.
+
+The force is then resolved as
 
     ax = (qbar * S) * cx / m                                        (dynamics.py:42)
     ay = (qbar * S) * cy / m                                        (dynamics.py:43)
     az = (qbar * S) * cz / m                                        (dynamics.py:44)
 
-and the body-frame rates as
+so ``cz`` is the body-z force coefficient with **down** positive:
+**``cz = -CL``**.  That is the load-bearing fact of this module.  A downward
+force does raise ``alpha_dot``, because ``az`` reaches ``wdot``
+(dynamics.py:47) and ``xd[1] = (ub*wdot - wb*udot) / (ub^2 + wb^2)`` is
+``alpha_dot`` (dynamics.py:51) -- but a downward force is not lift.  Reading
+that alpha response as "positive ``cz`` is lift up" is the mistake this
+docstring exists to prevent; it inverts the lift slope and flies the aircraft
+upside down.
 
-    udot = r*vb - q*wb - G sin(theta) + ax                          (dynamics.py:45)
-    vdot = p*wb - r*ub + G cos(theta) sin(phi) + ay                 (dynamics.py:46)
-    wdot = q*ub - p*vb + G cos(theta) cos(phi) + az                  (dynamics.py:47)
-    xd[1] = (ub*wdot - wb*udot) / (ub^2 + wb^2)      is alpha_dot    (dynamics.py:51)
-    xd[2] = (vt*vdot - vb*xd[0]) cos(beta) / (ub^2 + wb^2)
-                                                        is beta_dot    (dynamics.py:52)
+The rest of that chain, which does need no frame argument:
 
-with ``vb = vt sin(beta)`` and ``ub = vt cos(alpha) cos(beta)``.  Reading that
-chain through:
-
-* ``cz`` reaches ``wdot``, hence ``alpha_dot``, with a positive coefficient, so
-  positive ``cz`` is lift up;
-* ``cy`` reaches ``vdot``, hence ``beta_dot``, with a positive coefficient, so
+* ``cy`` reaches ``vdot`` (dynamics.py:46), hence ``xd[2]``
+  (dynamics.py:52), which is ``beta_dot``, with a positive coefficient, so
   positive ``cy`` raises beta;
-* ``xd[0]``, the total speed derivative, receives ``(cx*qbar*S + thrust)/m``
-  (dynamics.py:42), so negative ``cx`` is drag.
+* ``xd[0]``, the total speed derivative, receives ``(cx*qbar*S + thrust)/m``,
+  so negative ``cx`` is drag.
 
 The moments reach the rate vector through ``plane/aircraft.py``'s
 ``_inertia_coefficients``, in which ``c3 = izz/gamma > 0``, ``c7 = 1/iyy > 0``
@@ -50,21 +53,26 @@ positive ``q`` is nose up, positive ``p`` is a roll to the right and positive
 * positive ``cl`` rolls right (right wing down).
 
 A statically stable aeroplane has a lift slope that grows with alpha and a
-pitching moment that falls with it, so ``cz[1]`` (CL_alpha) must be **positive**
-and ``cm[1]`` (Cm_alpha) must be **negative**.  That is the origin of the
-``cl_alpha: +1`` and ``cm_alpha: -1`` entries in ``SIGN_INVARIANTS``; the other
-eighteen entries come from the plan's "Physics invariants" table, which is
-derived from the same force and moment algebra plus conventional aerodynamics.
+pitching moment that falls with it.  Since ``CL_alpha = -cz[1]``, that means
+**``cz[1]`` is negative** -- so that ``CL_alpha = -cz[1] > 0`` -- and
+**``cm[1]`` is negative**.  The static margin in cbar is therefore
+``cm[1] / cz[1]``: the textbook ``-Cm_alpha / CL_alpha`` with
+``CL_alpha = -cz[1]``, and both slots being negative makes the ratio positive.
 
-Recorded for the reviewer, unresolved: ``az`` enters ``wdot`` with a plus sign
-in a z-DOWN body frame, so read strictly as a body force a positive ``cz`` is a
-*downward* force, and the trimmed in-tree F-16 dataset
-(``data/planes/f16/morelli.json``) carries ``cz[1] = -4.211`` with
-``cz[5] = -0.435`` and ``cx[0] = -0.019`` -- lift up, lift up with the elevator,
-drag, all with a negative ``cz`` or ``cx``.  This module follows the plan's
-ruling, which reads ``cz`` as lift up and therefore requires ``cz[1] > 0``, and
-records the tension here rather than resolving it silently.  Task 5's trim is
-where that reading is proved or broken.
+Independent confirmation of ``cz = -CL``, from the in-tree F-16 set that
+``run_f16.py`` trims successfully: ``cm[0] = -0.0203`` and
+``cm[1] = +0.0466`` give ``alpha_trim = -cm0/cm1 = +0.4354 rad``, and
+``cz[0] + cz[1]*alpha_trim = -0.1378 + (-4.2114)(0.4354) = -1.97``.  Only
+``cz = -CL`` turns that into a plausible lift coefficient (``CL = +1.97``);
+``cz = +CL`` gives negative lift.
+
+``cm[0]`` (Cm0) is deliberately **absent** from ``SIGN_INVARIANTS`` and is never
+sign-normalised: the two in-tree reference files disagree on it
+(``data/planes/linear/morelli.json`` has ``+0.05``, the F-16 set has
+``-0.0203``), and Cm0's sign is tail rigging rather than a derivable
+convention.  Task 5's trim test validates it instead.  An absent key is not an
+error: ``normalise_sign`` returns the value untouched for any name the table
+does not pin.
 
 Moving moments to the CG
 ------------------------
@@ -122,13 +130,12 @@ G_FT_S2 = 32.174
 
 # Required sign of every derivative the converter writes, keyed by the
 # DerivativeSet field name: +1 when the quantity must be positive, -1 when it
-# must be negative.  The twenty entries that the plan's "Physics invariants"
-# table pins are derived in the module docstring; the five that table does not
-# list have no stability invariant, so their sign is the one the trimmed in-tree
-# F-16 dataset exhibits for the same array slot (cz[0], cxq[0], cyp[0], cyr[0],
-# cm[0]) and must not be read as an aero invariant.
+# must be negative.  Every row is transcribed from the plan's "Physics
+# invariants" table; `cl_alpha` is negative because `cz = -CL` and a stable
+# aircraft needs a positive lift slope.  `cm0` is absent on purpose and is never
+# normalised.  An absent key means "no derivable invariant", not an error.
 SIGN_INVARIANTS: dict[str, int] = {
-    "cl_alpha": 1,
+    "cl_alpha": -1,
     "cl_q": -1,
     "cl_de": -1,
     "cm_alpha": -1,
@@ -140,6 +147,8 @@ SIGN_INVARIANTS: dict[str, int] = {
     "cl_da": -1,
     "cl_dr": 1,
     "cy_beta": -1,
+    "cy_p": -1,
+    "cy_r": 1,
     "cy_da": 1,
     "cy_dr": 1,
     "cn_beta": 1,
@@ -148,11 +157,8 @@ SIGN_INVARIANTS: dict[str, int] = {
     "cn_da": -1,
     "cn_dr": -1,
     "cd0": -1,
-    "cl0": -1,
     "cd_q": 1,
-    "cy_p": -1,
-    "cy_r": 1,
-    "cm0": -1,
+    "cl0": -1,
 }
 
 # The plan's invariant table names a slot by its Morelli array ("cz[1]"), so
@@ -232,13 +238,18 @@ def normalise_sign(name: str, value: float) -> tuple[float, bool]:
     -1 and reported as flipped, so the caller can log it.  Zero is not flipped:
     it has no sign to disagree with, and a zero slot is a declared absence, not
     a value.
+
+    A name the table does not pin -- ``cm0``, whose sign the two in-tree
+    reference files disagree on, or any other name a caller may pass -- is
+    returned unchanged and never raises, because no derivable invariant exists
+    for it and silently inverting it would be worse than leaving it alone.
     """
     key = _KEY_ALIASES.get(name, name)
-    if key not in SIGN_INVARIANTS:
-        raise KeyError(f"no sign invariant for {name!r}")
     value = float(value)
     if value == 0.0:
         return 0.0, False
+    if key not in SIGN_INVARIANTS:
+        return value, False
     if (value > 0.0) == (SIGN_INVARIANTS[key] > 0):
         return value, False
     return -value, True

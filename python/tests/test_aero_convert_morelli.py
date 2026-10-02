@@ -10,21 +10,25 @@ from plane.groups import MORELLI_LENGTHS, nonlinear_index
 
 # Every slot the plan's "Physics invariants" table pins, with a value inside the
 # table's plausible magnitude range and of the required sign.  Transcribed row by
-# row: Morelli array -> slot -> (DerivativeSet field, value).
+# row: Morelli array -> slot -> (DerivativeSet field, value).  `cl_alpha` is
+# negative because `plane/dynamics.py` applies `cz` as the body-z force with z
+# down, i.e. `cz = -CL`.  `cm0` has no invariant, so its sign here is arbitrary:
+# +0.05 is the value `data/planes/linear/morelli.json` carries, the opposite sign
+# to the F-16 set's -0.0203, which is why the plan excludes it.
 INVARIANT_ROWS: dict[str, dict[int, tuple[str, float]]] = {
     "cx": {0: ("cd0", -0.035)},
     "cxq": {0: ("cd_q", 0.30)},
     "cy": {0: ("cy_beta", -0.45), 1: ("cy_da", 0.02), 2: ("cy_dr", 0.08)},
     "cyp": {0: ("cy_p", -0.10)},
     "cyr": {0: ("cy_r", 0.25)},
-    "cz": {0: ("cl0", -0.20), 1: ("cl_alpha", 4.5), 5: ("cl_de", -0.60)},
+    "cz": {0: ("cl0", -0.20), 1: ("cl_alpha", -4.5), 5: ("cl_de", -0.60)},
     "czq": {0: ("cl_q", -8.0)},
     "cl": {0: ("cl_beta", -0.08)},
     "clp": {0: ("cl_p", -0.35)},
     "clr": {0: ("cl_r", 0.06)},
     "clda": {0: ("cl_da", -0.12)},
     "cldr": {0: ("cl_dr", 0.015)},
-    "cm": {0: ("cm0", -0.05), 1: ("cm_alpha", -0.8), 2: ("cm_de", -1.2)},
+    "cm": {0: ("cm0", 0.05), 1: ("cm_alpha", -0.8), 2: ("cm_de", -1.2)},
     "cmq": {0: ("cm_q", -14.0)},
     "cn": {0: ("cn_beta", 0.12)},
     "cnp": {0: ("cn_p", -0.05)},
@@ -79,7 +83,7 @@ class TestToMorelliShapes(unittest.TestCase):
         self.assertEqual(missing, ALL_MISSING)
 
     def test_only_absent_slots_are_reported(self) -> None:
-        _, missing = to_morelli(DerivativeSet(cl_alpha=4.5, cm_alpha=-0.8))
+        _, missing = to_morelli(DerivativeSet(cl_alpha=-4.5, cm_alpha=-0.8))
         self.assertEqual(missing, [slot for slot in ALL_MISSING if slot not in ("cz[1]", "cm[1]")])
 
 
@@ -119,10 +123,20 @@ class TestToMorelliSigns(unittest.TestCase):
     def test_a_disagreeing_reported_sign_is_normalised(self) -> None:
         # Tornado is measured to invert CL_q and Cn_beta relative to the Morelli
         # body-axis convention; the arrays must still come out with the sign the
-        # invariant table requires.
-        coefficients, _ = to_morelli(DerivativeSet(cl_q=9.59, cn_beta=-0.247))
+        # invariant table requires.  Tornado also reports CL_a = +4.363 with lift
+        # up positive, while the model reads cz = -CL.
+        coefficients, _ = to_morelli(
+            DerivativeSet(cl_q=9.59, cn_beta=-0.247, cl_alpha=4.363)
+        )
         self.assertEqual(coefficients["czq"][0], -9.59)
         self.assertEqual(coefficients["cn"][0], 0.247)
+        self.assertEqual(coefficients["cz"][1], -4.363)
+
+    def test_cm0_sign_is_never_normalised(self) -> None:
+        self.assertNotIn("cm0", SIGN_INVARIANTS)
+        for value in (-0.05, 0.05, 0.0):
+            coefficients, _ = to_morelli(DerivativeSet(cm0=value))
+            self.assertEqual(coefficients["cm"][0], value)
 
     def test_every_written_value_is_finite(self) -> None:
         coefficients, _ = to_morelli(_full())
@@ -130,12 +144,23 @@ class TestToMorelliSigns(unittest.TestCase):
             for index, value in enumerate(array):
                 self.assertTrue(value == value and abs(value) != float("inf"), f"{name}[{index}]")
 
-    def test_sign_invariants_cover_every_mapped_field(self) -> None:
+    def test_sign_invariants_cover_every_mapped_field_but_cm0(self) -> None:
         for slots in INVARIANT_ROWS.values():
             for field, value in slots.values():
+                if field == "cm0":
+                    continue
                 self.assertIn(field, SIGN_INVARIANTS)
                 expected = 1.0 if value > 0.0 else -1.0
                 self.assertEqual(expected, float(SIGN_INVARIANTS[field]), field)
+
+    def test_lift_slope_is_written_negative_and_margin_is_the_slot_ratio(self) -> None:
+        # The measured Tornado pair after the CG shift: CL_a = 4.363, Cm_a = -1.3107.
+        coefficients, _ = to_morelli(DerivativeSet(cl_alpha=4.363, cm_alpha=-1.3107))
+        self.assertEqual(coefficients["cz"][1], -4.363)
+        # CL_alpha = -cz[1], so the textbook -Cm_alpha / CL_alpha is cm[1] / cz[1].
+        margin = coefficients["cm"][1] / coefficients["cz"][1]
+        self.assertAlmostEqual(margin, 1.3107 / 4.363, delta=1e-12)
+        self.assertTrue(0.05 <= margin <= 0.45, margin)
 
 
 if __name__ == "__main__":
