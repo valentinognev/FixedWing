@@ -213,22 +213,25 @@ class TestShiftMomentsToCg(unittest.TestCase):
 
     def test_measured_tornado_pitch_moment(self) -> None:
         # Measured on the C172: Tornado reports about ref_point = [0, 0, 0] while
-        # the CG is at [2.94, 0, 0] ft.  That source frame has x AFT positive --
+        # the CG is at [2.94, 0, 0] ft, both at y = z = 0, so only x moves.  That
+        # source frame has x AFT positive --
         # ../USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc lists the
-        # wing at XW = 2.2, the CG at XCG = 2.94 and the tail at XH = 8.75 ft from
-        # the nose -- so the reference sits 2.94 ft = 0.895512 m AHEAD of the CG.
-        # In the forward-positive body frame that is dx = -0.895512 m, and the lift
-        # is cz = -CL = -4.363.  Both signs flip relative to quoting the raw source
-        # numbers, and they cancel, so the shifted Cm is the plan's value:
-        #     dx*cz/c = (-0.895512)(-4.363)/0.6096 = +6.409315708661418
+        # wing at AERO.XW = 2.2, the CG at AERO.XCG = 2.94 and the tail at
+        # AERO.XH = 8.75 ft from the nose -- so the reference sits 2.94 ft AHEAD of
+        # the CG.  In the forward-positive body frame that is dx = -ft(2.94), and
+        # the lift is cz = -CL = -4.363.  Both signs flip relative to quoting the raw
+        # source numbers and they cancel, so:
+        #     dx*cz/c = (-ft(2.94))(-4.363)/ft(2.0) = +6.413610000000001
         # Lift up ahead of the CG pitches the nose up, which is what turns Tornado's
-        # unphysical -7.720/rad (177 % MAC) into -1.3107/rad (30 % MAC).
+        # unphysical -7.720/rad (177 % MAC) into -1.3064/rad (29.9 % MAC).  The
+        # reference geometry is the aircraft's own: AERO.SREF 24 ft, AERO.BLREF
+        # 12 ft, AERO.CBARR 2 ft.
         shifted = shift_moments_to_cg(
             -4.363, 0.0, 0.0, 0.0, -7.720, 0.0,
-            dx=-0.895512, dy=0.0, dz=0.0, s_ref=1.0, b_ref=1.0, c_ref=0.6096,
+            dx=-ft(2.94), dy=0.0, dz=0.0, s_ref=ft(24.0), b_ref=ft(12.0), c_ref=ft(2.0),
         )
-        self.assertAlmostEqual(shifted[4], -7.720 + 0.895512 * 4.363 / 0.6096, delta=1e-6)
-        self.assertAlmostEqual(shifted[4], -1.3106842913385819, delta=1e-6)
+        self.assertAlmostEqual(shifted[4], -7.720 + ft(2.94) * 4.363 / ft(2.0), delta=1e-6)
+        self.assertAlmostEqual(shifted[4], -1.3063899999999986, delta=1e-6)
 
     def test_reference_at_the_cg_is_a_no_op(self) -> None:
         base = shift_moments_to_cg(

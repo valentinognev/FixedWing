@@ -123,13 +123,17 @@ each bullet is pinned by a one-arm test:
   and ``dy*cx`` is then negative, as it must be.
 
 The sign of the ``dx`` term comes from that cross product and from nothing else.
-It is deliberately **not** evidenced by ``f16/aero_morelli.py`` line 65
-(``Cm = Cm0 + Cmq*qhat + Cz*(xcgref - xcg)``): that expression reduces to the same
-``+dx*cz/c``, but every in-tree file sets ``xcg == xcg_ref`` -- both
-``data/planes/f16/morelli.json`` and ``data/planes/linear/morelli.json``, and
-``f16/model.py`` passes ``xcg = 0.35`` with ``xcgr = .35`` -- so the term is
-identically zero in this repository and cannot witness a convention.  The unit
-tests are what pin it, one arm at a time.
+It is deliberately **not** cross-checked against ``f16/aero_morelli.py`` line 65
+(``Cm = Cm0 + Cmq*qhat + Cz*(xcgref - xcg)``): that term is identically zero
+everywhere in this repository, because every in-tree reference sets
+``xcg == xcg_ref`` -- ``data/planes/linear/morelli.json`` lines 8-9,
+``f16/model.py:164`` (``xcg = 0.35``) with ``:172`` (``xcgr = .35``),
+``f16/aero_stevens.py:411``, and the four test fixtures
+(``test_plane_aircraft.py:25``, ``test_plane_dynamics.py:44``,
+``test_plane_model_select.py:24``, ``test_plane_sim.py:27``).  Nothing in this
+repository documents Morelli's own x-axis direction for those station numbers, so
+that expression cannot witness a convention here.  The unit tests are what pin
+it, one arm at a time.
 
 ``s_ref`` is accepted because the shift is meaningless without the reference
 geometry, but it does not appear in the result: the coefficients handed in are
@@ -240,39 +244,60 @@ def shift_moments_to_cg(
     """Move a coefficient set's moments from ``O`` to the CG.
 
     ``r = CG - O`` is expressed in the ``python/plane/dynamics.py`` frame:
-    **x forward, y right, z down**.  The three force coefficients are that file's
-    variables divided by ``qbar * S`` -- ``cz`` the ``az`` coefficient (body +z,
-    down, so ``cz = -CL``), ``cx`` the ``ax`` coefficient (body +x, so drag is a
-    negative ``cx``), ``cy`` the ``ay`` coefficient -- and ``cl_m``, ``cm``, ``cn``
-    are the roll, pitch and yaw moment coefficients about ``O``.  All lengths are
-    metres.  The three force coefficients are returned unchanged, in the order
-    they came in; only the moments move.
+    **x forward, y right, z down**, and all three of ``dx``, ``dy``, ``dz`` are metres.
+    The three force coefficients are that file's variables divided by ``qbar * S``
+    -- ``cz`` the ``az`` coefficient (body +z, down, so ``cz = -CL``), ``cx`` the
+    ``ax`` coefficient (body +x, so drag is a negative ``cx``), ``cy`` the ``ay``
+    coefficient -- and ``cl_m``, ``cm``, ``cn`` are the roll, pitch and yaw moment
+    coefficients about ``O``.  ``b_ref`` and ``c_ref`` are the reference span and
+    mean chord in metres; ``s_ref`` is the reference area in square metres, is
+    validated, and cancels out of the result (the coefficients are already divided
+    by ``qbar * S``).  The three force coefficients are returned unchanged, in the
+    order they came in; only the moments move.  The shift is exact for a coefficient
+    set that is linear in alpha and it applies unchanged to the **slopes**, because
+    differentiating the shift differentiates the same expression -- which is how a
+    ``Cm_alpha`` reported about a non-CG reference is corrected, with the lift slope
+    passed as ``cz``.
 
-    Read this before building the arguments: **the Cessna 172 source frame is x
-    AFT positive and this function's is x FORWARD positive.**  The source file
-    lists ``WG.X = 2.2``, ``XCG = 2.94`` and ``XH = 8.75`` ft, so x grows aft, and
-    Tornado's ``geo["CG"] = [2.94, 0, 0]`` means the CG is 2.94 ft *aft* of its
-    ``ref_point = [0, 0, 0]`` -- i.e. the reference is 0.895512 m *ahead* of the CG
-    and ``dx = -0.895512``, not ``+0.895512``.  A solver that reports lift passes
-    ``cz = -CL``, so the same case is ``cz = -4.363``.
+    **The Cessna 172 source frame is x AFT positive; this function's is x FORWARD
+    positive.**  The source file's stations are in feet from the nose with x growing
+    aft -- ``AERO.XW = 2.2`` (wing), ``AERO.XCG = 2.94`` (CG), ``AERO.XH = 8.75``
+    (tail) -- and Tornado's ``geo["CG"] = [2.94, 0, 0]`` against its
+    ``geo["ref_point"] = [0, 0, 0]`` therefore means the CG is 2.94 ft *aft* of the
+    reference, i.e. the reference is ``ft(2.94) = 0.896112`` m *ahead* of the CG
+    (``ft()`` being this module's feet-to-metres helper) and
+
+        dx = -ft(2.94) = -0.896112      NOT  +0.896112
+        dy = 0,  dz = 0                (both stations have y = z = 0)
+
+    A solver that reports lift with an up-positive sign passes ``cz = -CL``, so the
+    same case is ``cz = -4.363``.  The x axis is the only one the aft-positive flip
+    touches for this aircraft, but the general rule above governs all three.
 
     Those two signs multiply into ``dx*cz``, so **a wrong pairing still returns a
-    plausible number**:
+    plausible number**.  Worked with ``cm = -7.720`` per radian as measured about
+    ``ref_point``, ``s_ref = ft(24.0)`` from ``AERO.SREF``, ``b_ref = ft(12.0)`` from
+    ``AERO.BLREF`` and ``c_ref = ft(2.0) = 0.6096`` from ``AERO.CBARR``:
 
-    ==========================  ================  ==================
-    call                        shifted Cm_a      static margin
-    ==========================  ================  ==================
-    ``cz=-4.363, dx=-0.895512``  ``-1.3107``       0.30 cbar  correct
-    ``cz=-4.363, dx=+0.895512``  ``-14.1293``      3.24 cbar  visibly wrong
-    ``cz=+4.363, dx=+0.895512``  ``-1.3107``       0.30 cbar  the trap
-    ==========================  ================  ==================
+    ==========================  ======================  ================
+    call                        shifted Cm_a             static margin
+    ==========================  ======================  ================
+    ``cz=-4.363, dx=-0.896112``  ``-1.3063899999999986``  0.2994 cbar  correct
+    ``cz=-4.363, dx=+0.896112``  ``-14.133610000000001``  3.2394 cbar  visibly wrong
+    ``cz=+4.363, dx=+0.896112``  ``-1.3063899999999986``  0.2994 cbar  the trap
+    ``cz=+4.363, dx=-0.896112``  ``-14.133610000000001``  3.2394 cbar  wrong
+    ==========================  ======================  ================
 
-    So sanity-check the result rather than the arguments: after shifting,
-    ``cm_alpha / cl_alpha`` must land in 0.05 ... 0.45 cbar.  A value outside that
-    band means the frame or the ``cz`` sign is wrong, not that the aircraft is
-    unusual -- and the third row above is the case that passes the number check
-    while the convention is still wrong, which is why the geometry has to be right
-    first.  See the module docstring for the derivation and the per-arm physical
+    So sanity-check the result rather than the arguments: after shifting, the static
+    margin ``cm_alpha / cl_alpha`` must land in 0.05 ... 0.45 cbar -- in the written
+    arrays that is ``coefficients["cm"][1] / coefficients["cz"][1]``, where ``cl_alpha``
+    is the ``DerivativeSet`` slot that becomes ``cz[1]``, hence **negative** for a
+    stable aircraft and ``-1`` in ``SIGN_INVARIANTS``; the physical ``CL_alpha`` is
+    ``-cz[1]`` and positive, and using it here would invert the ratio and condemn the
+    correct answer.  A value outside the band means the frame or the ``cz`` sign is
+    wrong, not that the aircraft is unusual -- and the third row above passes the
+    number check with the convention still wrong, which is why the geometry has to be
+    right first.  See the module docstring for the derivation and the per-arm physical
     reading of all six terms.
     """
     if s_ref <= 0.0 or b_ref <= 0.0 or c_ref <= 0.0:
