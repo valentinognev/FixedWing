@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from f16.aero_data import load_aero_coefficients, resolve_model_file, strip_jsonc_comments
+from f16.aero_data import _MODELS, load_aero_coefficients, resolve_model_file, strip_jsonc_comments
 
 _AIRCRAFT_KEYS = (
     "mass_kg", "s_m2", "b_m", "cbar_m", "xcg", "xcg_ref",
@@ -55,6 +55,8 @@ class Aircraft:
 
 
 def load_aircraft(plane: str, model: str = "morelli", root: Path | None = None) -> Aircraft:
+    if model not in _MODELS:
+        raise ValueError(f"model {model!r} not implemented")
     directory = _plane_directory(plane, root)
     payload = json.loads(strip_jsonc_comments(resolve_model_file(directory, model).read_text()))
     if not isinstance(payload, dict):

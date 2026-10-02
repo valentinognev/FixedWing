@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 
 _CACHE: dict[Path, dict] = {}
-_MODELS = ("morelli", "stevens", "tornado", "datcom", "avl", "flow5")
 _MORELLI_GROUPS = (
     "cx",
     "cxq",
@@ -55,6 +54,7 @@ _GROUPS: dict[str, tuple[str, ...]] = {
     "avl": _MORELLI_GROUPS,
     "flow5": _MORELLI_GROUPS,
 }
+_MODELS = tuple(_GROUPS)
 
 
 def strip_jsonc_comments(text: str) -> str:

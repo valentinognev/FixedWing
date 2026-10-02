@@ -76,6 +76,9 @@ class TestModelSelectAeroData(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            (root / "tornado.json").write_text(json.dumps({
+                "model": "tornado", "coefficients": _morelli_coefficients(-0.25),
+            }))
             payload = {
                 "model": "tornado",
                 "source": "http://example.invalid/a//b",
@@ -86,6 +89,24 @@ class TestModelSelectAeroData(unittest.TestCase):
             raw = (root / "tornado.jsonc").read_text()
         self.assertEqual(coefficients["cx"][0], -0.75)
         self.assertEqual(json.loads(strip_jsonc_comments(raw))["source"], "http://example.invalid/a//b")
+
+    def test_second_call_reuses_the_cached_coefficients(self) -> None:
+        from f16.aero_data import load_aero_coefficients
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "tornado.json"
+            path.write_text(json.dumps({
+                "model": "tornado", "coefficients": _morelli_coefficients(-0.5),
+            }))
+            first = load_aero_coefficients("tornado", root=root)
+            path.write_text(json.dumps({
+                "model": "tornado", "coefficients": _morelli_coefficients(-0.99),
+            }))
+            second = load_aero_coefficients("tornado", root=root)
+        self.assertEqual(first["cx"][0], -0.5)
+        self.assertEqual(second["cx"][0], -0.5)
+        self.assertIs(second, first)
 
     def test_stevens_keeps_its_own_group_set(self) -> None:
         from f16.aero_data import load_aero_coefficients
@@ -121,6 +142,13 @@ class TestModelSelectAircraft(unittest.TestCase):
         aircraft = load_aircraft("linear")
         self.assertEqual(aircraft.model, "morelli")
         self.assertEqual(aircraft.mass_kg, 1000)
+
+    def test_unregistered_model_raises_not_implemented(self) -> None:
+        from plane.aircraft import load_aircraft
+
+        with self.assertRaises(ValueError) as caught:
+            load_aircraft("linear", "nonesuch")
+        self.assertIn("not implemented", str(caught.exception))
 
     def test_plane_directory_tornado_jsonc(self) -> None:
         from plane.aircraft import load_aircraft
@@ -165,7 +193,7 @@ class TestModelSelectMorelli(unittest.TestCase):
 
 
 class TestModelSelectRunner(unittest.TestCase):
-    def test_unknown_model_exits_2_with_stderr(self) -> None:
+    def test_unregistered_model_exits_2_with_not_implemented(self) -> None:
         from run_plane import main
 
         with tempfile.TemporaryDirectory() as directory:
@@ -177,7 +205,20 @@ class TestModelSelectRunner(unittest.TestCase):
                     "--duration", "0.1", "--csv", str(csv_path),
                 ])
         self.assertEqual(code, 2)
-        self.assertIn("missing nonesuch.json", stderr.getvalue())
+        self.assertIn("not implemented", stderr.getvalue())
+
+    def test_unknown_plane_exits_2_with_stderr(self) -> None:
+        from run_plane import main
+
+        with tempfile.TemporaryDirectory() as directory:
+            csv_path = Path(directory) / "out.csv"
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                code = main([
+                    "--plane", "no-such-plane", "--duration", "0.1", "--csv", str(csv_path),
+                ])
+        self.assertEqual(code, 2)
+        self.assertTrue(stderr.getvalue().strip())
 
 
 if __name__ == "__main__":
