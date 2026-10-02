@@ -70,9 +70,11 @@ Independent confirmation of ``cz = -CL``, from the in-tree F-16 set that
 sign-normalised: the two in-tree reference files disagree on it
 (``data/planes/linear/morelli.json`` has ``+0.05``, the F-16 set has
 ``-0.0203``), and Cm0's sign is tail rigging rather than a derivable
-convention.  Task 5's trim test validates it instead.  An absent key is not an
-error: ``normalise_sign`` returns the value untouched for any name the table
-does not pin.
+convention.  Task 5's trim test validates it instead.  It is named explicitly in
+``NO_INVARIANT`` so that an absent key is never silently treated as "no
+invariant": ``normalise_sign`` normalises a name in ``SIGN_INVARIANTS``,
+returns a name in ``NO_INVARIANT`` untouched, and raises ``KeyError`` for
+anything else, so a misspelled slot fails at the call site.
 
 Moving moments to the CG
 ------------------------
@@ -100,31 +102,34 @@ with ``b = b_ref`` and ``c = c_ref``:
     Cm_cg = Cm + (dx*cz - dz*cx) / c      M about y, nose up positive
     Cn_cg = Cn + (dy*cx - dx*cy) / b      M about z, yaw right positive
 
-The signs are not a convention choice, they are the cross product.  With the
-source geometry of the C172 (``dx``, ``dy``, ``dz`` in the body frame) they read
-as follows, and each is pinned by a one-arm test:
+Each moment component collects exactly the force components that have an arm
+about its own axis -- roll (about x) from the y and z forces, pitch (about y)
+from the x and z forces, yaw (about z) from the x and y forces -- which is why
+``dz*cz``, ``dy*cz``'s counterpart in pitch, and the other impossible pairings
+appear nowhere.  With the source geometry of the C172 that reads as follows, and
+each bullet is pinned by a one-arm test:
 
 * lift up (``cz < 0``) behind the CG (``dx > 0``) pitches the nose **down**, and
   ``dx*cz`` is then negative, as it must be;
 * lift up left of the CG (``dy > 0``) rolls the aircraft **right**, and
   ``-dy*cz`` is then positive;
-* lift up below the CG (``dz < 0``) pitches the nose down, and ``dz*cz``'s
-  absence from the pitch line is correct -- the z arm cannot reach the pitch
-  moment, because a force along the pitch axis has no arm about that axis;
+* a lift force cannot yaw or pitch about its own axis, so ``dy*cz`` is absent
+  from the yaw line and a force along the pitch axis has no arm about that axis,
+  so ``dz*cz`` is absent from the pitch line;
 * **drag** (``cx < 0``) above the CG (``dz > 0``) pitches the nose **up**, and
   ``-dz*cx`` is then positive; below the CG (``dz < 0``) it pitches the nose
   down, because ``-dz*cx`` is negative;
 * drag left of the CG (``dy > 0``) pulls the tail left, so the nose goes left,
   and ``dy*cx`` is then negative, as it must be.
 
-Cross-check on the ``dx`` term against the in-tree model: ``f16/aero_morelli.py``
-line 65 computes ``Cm = Cm0 + Cmq*qhat + Cz*(xcgref - xcg)``, i.e. it adds the
-moment of the lift about the CG to a ``Cm`` tabulated at the reference station
-``xcgref``.  With ``dx = xcg - xcgref`` and ``cz = -CL``, that term is
-``(xcgref - xcg)*CL/cbar = -dx*cz/c``, which is the ``(dx*cz)/c`` of the pitch
-line above -- same convention, same sign, and it is the reason the C172's
-Tornado moment comes out 0.30 cbar from the CG instead of 1.77 cbar at the
-reference.
+The sign of the ``dx`` term comes from that cross product and from nothing else.
+It is deliberately **not** evidenced by ``f16/aero_morelli.py`` line 65
+(``Cm = Cm0 + Cmq*qhat + Cz*(xcgref - xcg)``): that expression reduces to the same
+``+dx*cz/c``, but every in-tree file sets ``xcg == xcg_ref`` -- both
+``data/planes/f16/morelli.json`` and ``data/planes/linear/morelli.json``, and
+``f16/model.py`` passes ``xcg = 0.35`` with ``xcgr = .35`` -- so the term is
+identically zero in this repository and cannot witness a convention.  The unit
+tests are what pin it, one arm at a time.
 
 ``s_ref`` is accepted because the shift is meaningless without the reference
 geometry, but it does not appear in the result: the coefficients handed in are
@@ -157,8 +162,9 @@ G_FT_S2 = 32.174
 # DerivativeSet field name: +1 when the quantity must be positive, -1 when it
 # must be negative.  Every row is transcribed from the plan's "Physics
 # invariants" table; `cl_alpha` is negative because `cz = -CL` and a stable
-# aircraft needs a positive lift slope.  `cm0` is absent on purpose and is never
-# normalised.  An absent key means "no derivable invariant", not an error.
+# aircraft needs a positive lift slope.  `cm0` is deliberately not here; see
+# NO_INVARIANT below.  A name in neither table is a caller error, not a licence
+# to pass a value through, so normalise_sign raises for it.
 SIGN_INVARIANTS: dict[str, int] = {
     "cl_alpha": -1,
     "cl_q": -1,
@@ -233,17 +239,41 @@ def shift_moments_to_cg(
 ) -> tuple[float, float, float, float, float, float]:
     """Move a coefficient set's moments from ``O`` to the CG.
 
-    The three force coefficients are the ``plane/dynamics.py`` ones, each already
-    divided by ``qbar * S``: ``cz`` is the body +z force with z **down**, so
-    ``cz = -CL`` and lift up is a negative ``cz``; ``cx`` is the body +x force,
-    so drag is a negative ``cx``; ``cy`` is the body +y force.  ``cl_m``, ``cm``
-    and ``cn`` are the roll, pitch and yaw moment coefficients about ``O``.
-    ``(dx, dy, dz)`` is the position of the CG relative to ``O`` in the same body
-    frame, so a reference point ahead of the CG has ``dx < 0``.  All lengths are
+    ``r = CG - O`` is expressed in the ``python/plane/dynamics.py`` frame:
+    **x forward, y right, z down**.  The three force coefficients are that file's
+    variables divided by ``qbar * S`` -- ``cz`` the ``az`` coefficient (body +z,
+    down, so ``cz = -CL``), ``cx`` the ``ax`` coefficient (body +x, so drag is a
+    negative ``cx``), ``cy`` the ``ay`` coefficient -- and ``cl_m``, ``cm``, ``cn``
+    are the roll, pitch and yaw moment coefficients about ``O``.  All lengths are
     metres.  The three force coefficients are returned unchanged, in the order
-    they came in; only the moments move.  See the module docstring for the
-    derivation, the per-arm physical reading, and the measured Tornado case this
-    pins.
+    they came in; only the moments move.
+
+    Read this before building the arguments: **the Cessna 172 source frame is x
+    AFT positive and this function's is x FORWARD positive.**  The source file
+    lists ``WG.X = 2.2``, ``XCG = 2.94`` and ``XH = 8.75`` ft, so x grows aft, and
+    Tornado's ``geo["CG"] = [2.94, 0, 0]`` means the CG is 2.94 ft *aft* of its
+    ``ref_point = [0, 0, 0]`` -- i.e. the reference is 0.895512 m *ahead* of the CG
+    and ``dx = -0.895512``, not ``+0.895512``.  A solver that reports lift passes
+    ``cz = -CL``, so the same case is ``cz = -4.363``.
+
+    Those two signs multiply into ``dx*cz``, so **a wrong pairing still returns a
+    plausible number**:
+
+    ==========================  ================  ==================
+    call                        shifted Cm_a      static margin
+    ==========================  ================  ==================
+    ``cz=-4.363, dx=-0.895512``  ``-1.3107``       0.30 cbar  correct
+    ``cz=-4.363, dx=+0.895512``  ``-14.1293``      3.24 cbar  visibly wrong
+    ``cz=+4.363, dx=+0.895512``  ``-1.3107``       0.30 cbar  the trap
+    ==========================  ================  ==================
+
+    So sanity-check the result rather than the arguments: after shifting,
+    ``cm_alpha / cl_alpha`` must land in 0.05 ... 0.45 cbar.  A value outside that
+    band means the frame or the ``cz`` sign is wrong, not that the aircraft is
+    unusual -- and the third row above is the case that passes the number check
+    while the convention is still wrong, which is why the geometry has to be right
+    first.  See the module docstring for the derivation and the per-arm physical
+    reading of all six terms.
     """
     if s_ref <= 0.0 or b_ref <= 0.0 or c_ref <= 0.0:
         raise ValueError(
@@ -281,8 +311,11 @@ def normalise_sign(name: str, value: float) -> tuple[float, bool]:
     """
     key = _KEY_ALIASES.get(name, name)
     if key not in SIGN_INVARIANTS and key not in NO_INVARIANT:
-        valid = sorted(set(SIGN_INVARIANTS) | set(NO_INVARIANT))
-        raise KeyError(f"no sign invariant for {name!r}; valid names are {valid}")
+        canonical = sorted(set(SIGN_INVARIANTS) | set(NO_INVARIANT))
+        raise KeyError(
+            f"no sign invariant for {name!r}; accepted names are {canonical} "
+            f"or the array-named aliases {sorted(_KEY_ALIASES)}"
+        )
     value = float(value)
     if value == 0.0:
         return 0.0, False

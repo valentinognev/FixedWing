@@ -4,6 +4,7 @@ Nothing here touches a solver or a data file: the maths is proved on its own.
 """
 from __future__ import annotations
 
+import dataclasses
 import math
 import unittest
 
@@ -66,10 +67,11 @@ _EXPECTED_SHIFTED = (
     0.07250000000000001,
 )
 
-# One case per arm, so a wrong sign on any single term shows up.  Same force as
-# above, realistic signs: cz = -0.35 is lift UP (cz = -CL, see units.py), cx =
-# -0.05 is drag, cy = -0.20 is a side force to the left.  Base moments
-# cl_m = 0.02, cm = -0.10, cn = 0.07; b = 3.0, c = 0.6.
+# One case per arm, so a wrong sign on any single term shows up.  Unlike the
+# case above, which uses cz = +0.35 (a downforce) to keep that arithmetic short,
+# these use the signs a real solver produces: cz = -0.35 is lift UP (cz = -CL,
+# see units.py), cx = -0.05 is drag, cy = -0.20 is a side force to the left.  Base
+# moments cl_m = 0.02, cm = -0.10, cn = 0.07; b = 3.0, c = 0.6.
 #
 # Longitudinal arm only (dx = +0.10, the reference 0.10 m behind the CG):
 #     (O - G) = (-0.10, 0, 0),  F = (-0.05, -0.20, -0.35)
@@ -307,7 +309,7 @@ class TestNormaliseSign(unittest.TestCase):
         # Exactly the 24 rows of the plan's "Physics invariants" table: no field
         # beyond them, and no invented row.
         self.assertNotIn("cm0", SIGN_INVARIANTS)
-        fields = set(DerivativeSet.__dataclass_fields__)
+        fields = {field.name for field in dataclasses.fields(DerivativeSet)}
         self.assertEqual(set(SIGN_INVARIANTS), fields - {"cm0"})
         for name, sign in SIGN_INVARIANTS.items():
             self.assertIn(sign, (1, -1), name)
