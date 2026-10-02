@@ -16,6 +16,7 @@ def main(argv: list[str] | None = None) -> int:
         description="Integrate a host-only Morelli airplane and write a CSV.",
     )
     parser.add_argument("--plane", default="linear")
+    parser.add_argument("--model", default="morelli")
     parser.add_argument("--duration", type=float, required=True)
     parser.add_argument("--csv", type=Path, required=True)
     try:
@@ -29,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     try:
-        aircraft = load_aircraft(args.plane)
+        aircraft = load_aircraft(args.plane, args.model)
         result = integrate(
             state_vector(aircraft.initial),
             control_vector(aircraft.controls),

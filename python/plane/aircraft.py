@@ -1,4 +1,4 @@
-"""Load a host airplane's mass, inertia, and thrust from morelli.json."""
+"""Load a host airplane's mass, inertia, and thrust from <model>.json(c)."""
 from __future__ import annotations
 
 import json
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from f16.aero_data import load_aero_coefficients
+from f16.aero_data import load_aero_coefficients, resolve_model_file, strip_jsonc_comments
 
 _AIRCRAFT_KEYS = (
     "mass_kg", "s_m2", "b_m", "cbar_m", "xcg", "xcg_ref",
@@ -39,6 +39,7 @@ class Aircraft:
     t_max_n: float
     tau_s: float
     v_ref_mps: float
+    model: str
     c1: float
     c2: float
     c3: float
@@ -53,11 +54,11 @@ class Aircraft:
     controls: dict
 
 
-def load_aircraft(plane: str, root: Path | None = None) -> Aircraft:
+def load_aircraft(plane: str, model: str = "morelli", root: Path | None = None) -> Aircraft:
     directory = _plane_directory(plane, root)
-    payload = json.loads((directory / "morelli.json").read_text())
+    payload = json.loads(strip_jsonc_comments(resolve_model_file(directory, model).read_text()))
     if not isinstance(payload, dict):
-        raise ValueError("morelli.json must be an object")
+        raise ValueError(f"{model}.json must be an object")
     body = _require_object(payload, "aircraft")
     values = _require_keys(body, _AIRCRAFT_KEYS)
     for name in _POSITIVE_KEYS:
@@ -69,7 +70,7 @@ def load_aircraft(plane: str, root: Path | None = None) -> Aircraft:
     controls = _require_object(payload, "controls")
     _require_keys(initial, _STATE_KEYS)
     _require_keys(controls, _CONTROL_KEYS)
-    load_aero_coefficients("morelli", root=directory)
+    load_aero_coefficients(model, root=directory)
     c1, c2, c3, c4, c5, c6, c7, c8, c9 = _inertia_coefficients(
         values["ixx"], values["iyy"], values["izz"], values["ixz"],
     )
@@ -88,6 +89,7 @@ def load_aircraft(plane: str, root: Path | None = None) -> Aircraft:
         t_max_n=values["t_max_n"],
         tau_s=values["tau_s"],
         v_ref_mps=values["v_ref_mps"],
+        model=model,
         c1=c1,
         c2=c2,
         c3=c3,

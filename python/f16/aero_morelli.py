@@ -7,13 +7,13 @@ from f16.aero_data import load_aero_coefficients
 
 
 def morelli_coefficients(
-    alpha, beta, de, da, dr, p, q, r, cbar, b, V, xcg, xcgref, *, root: Path | None = None,
+    alpha, beta, de, da, dr, p, q, r, cbar, b, V, xcg, xcgref, *, root: Path | None = None, model: str = "morelli",
 ):
     phat = p * b / (2 * V)
     qhat = q * cbar / (2 * V)
     rhat = r * b / (2 * V)
 
-    coeff = load_aero_coefficients("morelli", root=root)
+    coeff = load_aero_coefficients(model, root=root)
     cx = coeff["cx"]
     cxq = coeff["cxq"]
     cy = coeff["cy"]

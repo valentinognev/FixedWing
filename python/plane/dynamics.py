@@ -26,6 +26,7 @@ def plane_derivative(x: np.ndarray, u: np.ndarray, aircraft: Aircraft) -> np.nda
         de, da, dr, p, q, r,
         aircraft.cbar_m, aircraft.b_m, vt, aircraft.xcg, aircraft.xcg_ref,
         root=aircraft.coeff_dir,
+        model=aircraft.model,
     )
     thrust = thrust_n(power, vt, aircraft)
     cb = math.cos(beta)
