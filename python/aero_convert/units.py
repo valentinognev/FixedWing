@@ -76,31 +76,55 @@ does not pin.
 
 Moving moments to the CG
 ------------------------
-``shift_moments_to_cg`` takes the coefficients as ``plane/dynamics.py`` resolves
-them, so the force at the reference point ``O`` is ``qbar * S * (-cd, cy, cl)``
-in a body frame with x forward, y right and z down (drag is the negative x force,
-see the derivation above).  ``(dx, dy, dz)`` is the position of the CG relative
-to ``O``, so ``O - G = (-dx, -dy, -dz)``, and the rigid-body relation
+The three force coefficients are named exactly as ``plane/dynamics.py`` names
+them, because a "lift"/"drag" spelling invites reading a drag magnitude where a
+signed body force belongs.  Each argument is that file's variable divided by
+``qbar * S``:
+
+* ``cz`` -- the ``az`` coefficient.  It is the body **+z** force with **z down**,
+  so it is down-positive and ``cz = -CL``: lift up is a negative ``cz``.
+* ``cx`` -- the ``ax`` coefficient.  It is the body **+x** force, so drag is a
+  negative ``cx``.
+* ``cy`` -- the ``ay`` coefficient, the body **+y** force.
+
+``(dx, dy, dz)`` is the position of the CG relative to the reference point ``O``,
+in the same body frame, so ``O - G = (-dx, -dy, -dz)`` and the rigid-body
+relation
 
     M about G = M about O + (O - G) x F
 
 gives, after dividing by ``qbar * S`` and by the reference length of each axis,
 with ``b = b_ref`` and ``c = c_ref``:
 
-    Cl_cg = Cl + (dz*cy - dy*cl) / b      M about x, right roll positive
-    Cm_cg = Cm + (dx*cl + dz*cd) / c      M about y, nose up positive
-    Cn_cg = Cn - (dy*cd + dx*cy) / b      M about z, yaw right positive
+    Cl_cg = Cl + (dz*cy - dy*cz) / b      M about x, right roll positive
+    Cm_cg = Cm + (dx*cz - dz*cx) / c      M about y, nose up positive
+    Cn_cg = Cn + (dy*cx - dx*cy) / b      M about z, yaw right positive
 
-The signs are not a convention choice, they are the cross product:
+The signs are not a convention choice, they are the cross product.  With the
+source geometry of the C172 (``dx``, ``dy``, ``dz`` in the body frame) they read
+as follows, and each is pinned by a one-arm test:
 
-* a *downward* force behind the CG rotates the nose up, and ``dx * cl`` with both
-  positive does exactly that, which is what the measured Tornado case below
-  checks;
-* a *downward* force left of the CG rolls the aircraft left, i.e. negative roll,
-  and ``-dy * cl`` with ``dy`` and ``cl`` positive is negative, as it must be;
-* a *drag* force above the CG pitches the nose up, and ``dz * cd`` with ``dz``
-  negative is negative, i.e. nose down, which is what a drag force above the CG
-  does: it pulls the tail up.
+* lift up (``cz < 0``) behind the CG (``dx > 0``) pitches the nose **down**, and
+  ``dx*cz`` is then negative, as it must be;
+* lift up left of the CG (``dy > 0``) rolls the aircraft **right**, and
+  ``-dy*cz`` is then positive;
+* lift up below the CG (``dz < 0``) pitches the nose down, and ``dz*cz``'s
+  absence from the pitch line is correct -- the z arm cannot reach the pitch
+  moment, because a force along the pitch axis has no arm about that axis;
+* **drag** (``cx < 0``) above the CG (``dz > 0``) pitches the nose **up**, and
+  ``-dz*cx`` is then positive; below the CG (``dz < 0``) it pitches the nose
+  down, because ``-dz*cx`` is negative;
+* drag left of the CG (``dy > 0``) pulls the tail left, so the nose goes left,
+  and ``dy*cx`` is then negative, as it must be.
+
+Cross-check on the ``dx`` term against the in-tree model: ``f16/aero_morelli.py``
+line 65 computes ``Cm = Cm0 + Cmq*qhat + Cz*(xcgref - xcg)``, i.e. it adds the
+moment of the lift about the CG to a ``Cm`` tabulated at the reference station
+``xcgref``.  With ``dx = xcg - xcgref`` and ``cz = -CL``, that term is
+``(xcgref - xcg)*CL/cbar = -dx*cz/c``, which is the ``(dx*cz)/c`` of the pitch
+line above -- same convention, same sign, and it is the reason the C172's
+Tornado moment comes out 0.30 cbar from the CG instead of 1.77 cbar at the
+reference.
 
 ``s_ref`` is accepted because the shift is meaningless without the reference
 geometry, but it does not appear in the result: the coefficients handed in are
@@ -114,6 +138,7 @@ __all__ = [
     "DEG_TO_RAD",
     "FT_TO_M",
     "G_FT_S2",
+    "NO_INVARIANT",
     "SIGN_INVARIANTS",
     "SLUG_TO_KG",
     "ft",
@@ -161,6 +186,13 @@ SIGN_INVARIANTS: dict[str, int] = {
     "cl0": -1,
 }
 
+# Derivative fields that deliberately carry no sign invariant.  `cm0` (Cm0) is
+# absent from the plan's "Physics invariants" table: the two in-tree reference
+# files disagree on it (`data/planes/linear/morelli.json` has +0.05, the F-16 set
+# has -0.0203) and Cm0's sign is tail rigging, not a derivable convention.  These
+# names are listed so a misspelling is still an error; the value passes through.
+NO_INVARIANT: frozenset[str] = frozenset({"cm0"})
+
 # The plan's invariant table names a slot by its Morelli array ("cz[1]"), so
 # "cz_alpha" is a spelling of the DerivativeSet field "cl_alpha".  Both
 # spellings resolve; the field name is canonical.
@@ -185,8 +217,8 @@ def ft(value: float) -> float:
 
 
 def shift_moments_to_cg(
-    cl: float,
-    cd: float,
+    cz: float,
+    cx: float,
     cy: float,
     cl_m: float,
     cm: float,
@@ -201,33 +233,35 @@ def shift_moments_to_cg(
 ) -> tuple[float, float, float, float, float, float]:
     """Move a coefficient set's moments from ``O`` to the CG.
 
-    ``cl`` is the coefficient of the body +z force as ``plane/dynamics.py``
-    computes it, ``cd`` the positive drag magnitude (so the body x force is
-    ``-cd``) and ``cy`` the coefficient of the body +y force.  ``cl_m``, ``cm``
+    The three force coefficients are the ``plane/dynamics.py`` ones, each already
+    divided by ``qbar * S``: ``cz`` is the body +z force with z **down**, so
+    ``cz = -CL`` and lift up is a negative ``cz``; ``cx`` is the body +x force,
+    so drag is a negative ``cx``; ``cy`` is the body +y force.  ``cl_m``, ``cm``
     and ``cn`` are the roll, pitch and yaw moment coefficients about ``O``.
-    ``(dx, dy, dz)`` is the position of the CG relative to ``O`` in the body
-    frame, x forward, y right, z down, so a reference point behind the CG has
-    ``dx > 0``.  All lengths are metres.  The three force coefficients are
-    returned unchanged; only the moments move.  See the module docstring for the
-    derivation and for the measured Tornado case this pins.
+    ``(dx, dy, dz)`` is the position of the CG relative to ``O`` in the same body
+    frame, so a reference point ahead of the CG has ``dx < 0``.  All lengths are
+    metres.  The three force coefficients are returned unchanged, in the order
+    they came in; only the moments move.  See the module docstring for the
+    derivation, the per-arm physical reading, and the measured Tornado case this
+    pins.
     """
     if s_ref <= 0.0 or b_ref <= 0.0 or c_ref <= 0.0:
         raise ValueError(
             f"reference geometry must be positive, got s_ref={s_ref}, b_ref={b_ref}, c_ref={c_ref}"
         )
-    cl = float(cl)
-    cd = float(cd)
+    cz = float(cz)
+    cx = float(cx)
     cy = float(cy)
     dx = float(dx)
     dy = float(dy)
     dz = float(dz)
     return (
-        cl,
-        cd,
+        cz,
+        cx,
         cy,
-        float(cl_m) + (dz * cy - dy * cl) / b_ref,
-        float(cm) + (dx * cl + dz * cd) / c_ref,
-        float(cn) - (dy * cd + dx * cy) / b_ref,
+        float(cl_m) + (dz * cy - dy * cz) / b_ref,
+        float(cm) + (dx * cz - dz * cx) / c_ref,
+        float(cn) + (dy * cx - dx * cy) / b_ref,
     )
 
 
@@ -235,20 +269,24 @@ def normalise_sign(name: str, value: float) -> tuple[float, bool]:
     """Return ``(value, flipped)`` with ``value`` on the invariant side of zero.
 
     A value whose sign disagrees with ``SIGN_INVARIANTS[name]`` is multiplied by
-    -1 and reported as flipped, so the caller can log it.  Zero is not flipped:
-    it has no sign to disagree with, and a zero slot is a declared absence, not
-    a value.
+    -1 and reported as flipped, so the caller can log it.  Zero is never flipped
+    and never returns negative zero: it has no sign to disagree with, and a zero
+    slot is a declared absence rather than a value.
 
-    A name the table does not pin -- ``cm0``, whose sign the two in-tree
-    reference files disagree on, or any other name a caller may pass -- is
-    returned unchanged and never raises, because no derivable invariant exists
-    for it and silently inverting it would be worse than leaving it alone.
+    A name in ``NO_INVARIANT`` -- ``cm0``, whose sign the two in-tree reference
+    files disagree on -- is returned unchanged.  Any other name the tables do not
+    know raises ``KeyError``: Tasks 3 and 4 call this directly to log flips into
+    ``provenance``, so a misspelled slot must fail loudly instead of shipping an
+    inverted sign that no test would catch.
     """
     key = _KEY_ALIASES.get(name, name)
+    if key not in SIGN_INVARIANTS and key not in NO_INVARIANT:
+        valid = sorted(set(SIGN_INVARIANTS) | set(NO_INVARIANT))
+        raise KeyError(f"no sign invariant for {name!r}; valid names are {valid}")
     value = float(value)
     if value == 0.0:
         return 0.0, False
-    if key not in SIGN_INVARIANTS:
+    if key in NO_INVARIANT:
         return value, False
     if (value > 0.0) == (SIGN_INVARIANTS[key] > 0):
         return value, False

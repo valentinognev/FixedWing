@@ -4,12 +4,14 @@ Nothing here touches a solver or a data file: the maths is proved on its own.
 """
 from __future__ import annotations
 
+import math
 import unittest
 
 from aero_convert.units import (
     DEG_TO_RAD,
     FT_TO_M,
     G_FT_S2,
+    NO_INVARIANT,
     SIGN_INVARIANTS,
     SLUG_TO_KG,
     ft,
@@ -27,9 +29,10 @@ from aero_convert.units import (
 #     dz = -0.05 m   O is 0.05 m above the CG   (z is down, hence negative)
 #
 # plane/dynamics.py resolves the force as (qbar * S) * (cx, cy, cz) with
-# ax = cx, ay = cy, az = cz, so the coefficient of the body +z force is `cl` and
-# the body x force is -cd (negative cx is drag).  With qbar * S = 1 the force at
-# O is F = (-0.05, -0.20, +0.35) N.  The moment about the CG is
+# ax = cx, ay = cy, az = cz, so the argument names here are exactly the force
+# coefficients dynamics.py uses -- no "lift"/"drag" spelling that could be read
+# with the wrong sign.  With qbar * S = 1 the force at O is
+# F = (cx, cy, cz) = (-0.05, -0.20, +0.35) N, and the moment about the CG is
 # M_G = M_O + (O - G) x F with (O - G) = (-0.10, -0.25, +0.05):
 #
 #     (O - G) x F = ( (-0.25)(0.35) - (0.05)(-0.20),
@@ -47,7 +50,7 @@ from aero_convert.units import (
 #
 # so the shifted moments are -0.005833333333333329, -0.045833333333333344 and
 # 0.07250000000000001, and the force coefficients are untouched.
-_HAND_WORKED = (0.35, 0.05, -0.20, 0.02, -0.10, 0.07)
+_HAND_WORKED = (0.35, -0.05, -0.20, 0.02, -0.10, 0.07)
 _SHIFT_KWARGS = {
     "dx": 0.10,
     "dy": 0.25,
@@ -57,11 +60,47 @@ _SHIFT_KWARGS = {
     "c_ref": 0.6,
 }
 _EXPECTED_SHIFTED = (
-    0.35, 0.05, -0.20,
+    0.35, -0.05, -0.20,
     -0.005833333333333329,
     -0.045833333333333344,
     0.07250000000000001,
 )
+
+# One case per arm, so a wrong sign on any single term shows up.  Same force as
+# above, realistic signs: cz = -0.35 is lift UP (cz = -CL, see units.py), cx =
+# -0.05 is drag, cy = -0.20 is a side force to the left.  Base moments
+# cl_m = 0.02, cm = -0.10, cn = 0.07; b = 3.0, c = 0.6.
+#
+# Longitudinal arm only (dx = +0.10, the reference 0.10 m behind the CG):
+#     (O - G) = (-0.10, 0, 0),  F = (-0.05, -0.20, -0.35)
+#     x = 0*(-0.35) - 0*(-0.20)                        =  0.0000 -> Cl = 0.02
+#     y = 0*(-0.05) - (-0.10)(-0.35)                    = -0.0350 -> Cm = -0.10 - 0.0583333...
+#     z = (-0.10)(-0.20) - 0*(-0.05)                    = +0.0200 -> Cn = 0.07 + 0.0066666...
+# Lift up behind the CG pitches the nose down, and the leftward side force
+# behind the CG yaws the nose right.  Both agree with the signs above.
+_LONGITUDINAL = (0.02, -0.15833333333333333, 0.07666666666666667)
+
+# Lateral arm only (dy = +0.25, the reference 0.25 m to the left of the CG):
+#     (O - G) = (0, -0.25, 0)
+#     x = (-0.25)(-0.35) - 0*(-0.20)                   = +0.0875 -> Cl = 0.02 + 0.0291666...
+#     y = 0*(-0.05) - 0*(-0.35)                        =  0.0000 -> Cm = -0.10 unchanged
+#     z = 0*(-0.20) - (-0.25)(-0.05)                   = -0.0125 -> Cn = 0.07 - 0.0041666...
+# Lift up left of the CG rolls right (positive), and drag left of the CG pulls
+# the tail left, so the nose goes left (negative).
+_LATERAL = (0.049166666666666664, -0.1, 0.06583333333333334)
+
+# Vertical arm only (dz = -0.05, the reference 0.05 m BELOW the CG, since z is
+# down and dz is the CG relative to the reference):
+#     (O - G) = (0, 0, +0.05)
+#     x = 0*(-0.35) - (0.05)(-0.20)                    = +0.0100 -> Cl = 0.02 + 0.0033333...
+#     y = (0.05)(-0.05) - 0*(-0.35)                    = -0.0025 -> Cm = -0.10 - 0.0041666...
+#     z = 0*(-0.20) - 0*(-0.05)                        =  0.0000 -> Cn = 0.07 unchanged
+# Lift up below the CG pitches the nose down, and drag below the CG pushes the
+# bottom backwards, which also pitches the nose down.
+_VERTICAL = (0.023333333333333334, -0.10416666666666667, 0.07)
+
+# All three arms at once: (dx, dy, dz) = (0.10, 0.25, -0.05).
+_ALL_ARMS = (0.052500000000000005, -0.1625, 0.07250000000000001)
 
 
 class TestAeroConvertConstants(unittest.TestCase):
@@ -113,13 +152,78 @@ class TestShiftMomentsToCg(unittest.TestCase):
         self.assertAlmostEqual(moved_y[4], -0.045833333333333344, delta=1e-12)
         self.assertAlmostEqual(moved_y[5], 0.07583333333333334, delta=1e-12)
 
-    def test_measured_tornado_pitch_moment(self) -> None:
-        # Measured on the C172: Tornado reports about ref_point = (0, 0, 0) while
-        # the CG is at (2.94, 0, 0) ft, so the CG is 2.94 ft = 0.895512 m ahead of
-        # the reference.  Raw Cm_a = -7.720/rad there, CL_a = 4.363/rad.
+    def test_longitudinal_arm_alone(self) -> None:
         shifted = shift_moments_to_cg(
-            4.363, 0.0, 0.0, 0.0, -7.720, 0.0,
-            dx=0.895512, dy=0.0, dz=0.0, s_ref=1.0, b_ref=1.0, c_ref=0.6096,
+            -0.35, -0.05, -0.20, 0.02, -0.10, 0.07,
+            dx=0.10, dy=0.0, dz=0.0, s_ref=0.5, b_ref=3.0, c_ref=0.6,
+        )
+        for got, expected in zip(shifted[3:], _LONGITUDINAL):
+            self.assertAlmostEqual(got, expected, delta=1e-12)
+
+    def test_lateral_arm_alone(self) -> None:
+        shifted = shift_moments_to_cg(
+            -0.35, -0.05, -0.20, 0.02, -0.10, 0.07,
+            dx=0.0, dy=0.25, dz=0.0, s_ref=0.5, b_ref=3.0, c_ref=0.6,
+        )
+        for got, expected in zip(shifted[3:], _LATERAL):
+            self.assertAlmostEqual(got, expected, delta=1e-12)
+
+    def test_vertical_arm_alone(self) -> None:
+        shifted = shift_moments_to_cg(
+            -0.35, -0.05, -0.20, 0.02, -0.10, 0.07,
+            dx=0.0, dy=0.0, dz=-0.05, s_ref=0.5, b_ref=3.0, c_ref=0.6,
+        )
+        for got, expected in zip(shifted[3:], _VERTICAL):
+            self.assertAlmostEqual(got, expected, delta=1e-12)
+
+    def test_all_three_arms_at_once(self) -> None:
+        shifted = shift_moments_to_cg(
+            -0.35, -0.05, -0.20, 0.02, -0.10, 0.07,
+            dx=0.10, dy=0.25, dz=-0.05, s_ref=0.5, b_ref=3.0, c_ref=0.6,
+        )
+        for got, expected in zip(shifted[3:], _ALL_ARMS):
+            self.assertAlmostEqual(got, expected, delta=1e-12)
+
+    def test_drag_is_signed_not_magnitude(self) -> None:
+        # The drag cross-product terms are the only ones that carry cx, so a
+        # solver-relative sign error in cx shows up here and nowhere else.
+        # Reversing cx to +0.05 (which is a thrust, not drag, in this frame):
+        #     y = (dz)(cx) flips with it, so Cm changes by -2*dz*cx/c
+        #     z = (dy)(cx) flips with it, so Cn changes by 2*dy*cx/b
+        thrust = shift_moments_to_cg(
+            -0.35, 0.05, -0.20, 0.02, -0.10, 0.07,
+            dx=0.10, dy=0.25, dz=-0.05, s_ref=0.5, b_ref=3.0, c_ref=0.6,
+        )
+        drag = shift_moments_to_cg(
+            -0.35, -0.05, -0.20, 0.02, -0.10, 0.07,
+            dx=0.10, dy=0.25, dz=-0.05, s_ref=0.5, b_ref=3.0, c_ref=0.6,
+        )
+        self.assertAlmostEqual(thrust[4] - drag[4], -2 * (-0.05) * 0.05 / 0.6, delta=1e-12)
+        self.assertAlmostEqual(thrust[5] - drag[5], 2 * 0.25 * 0.05 / 3.0, delta=1e-12)
+        self.assertEqual(thrust[3], drag[3])
+
+    def test_force_coefficients_come_back_unchanged(self) -> None:
+        shifted = shift_moments_to_cg(
+            -0.35, -0.05, -0.20, 0.02, -0.10, 0.07,
+            dx=0.10, dy=0.25, dz=-0.05, s_ref=0.5, b_ref=3.0, c_ref=0.6,
+        )
+        self.assertEqual(shifted[:3], (-0.35, -0.05, -0.20))
+
+    def test_measured_tornado_pitch_moment(self) -> None:
+        # Measured on the C172: Tornado reports about ref_point = [0, 0, 0] while
+        # the CG is at [2.94, 0, 0] ft.  That source frame has x AFT positive --
+        # ../USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc lists the
+        # wing at XW = 2.2, the CG at XCG = 2.94 and the tail at XH = 8.75 ft from
+        # the nose -- so the reference sits 2.94 ft = 0.895512 m AHEAD of the CG.
+        # In the forward-positive body frame that is dx = -0.895512 m, and the lift
+        # is cz = -CL = -4.363.  Both signs flip relative to quoting the raw source
+        # numbers, and they cancel, so the shifted Cm is the plan's value:
+        #     dx*cz/c = (-0.895512)(-4.363)/0.6096 = +6.409315708661418
+        # Lift up ahead of the CG pitches the nose up, which is what turns Tornado's
+        # unphysical -7.720/rad (177 % MAC) into -1.3107/rad (30 % MAC).
+        shifted = shift_moments_to_cg(
+            -4.363, 0.0, 0.0, 0.0, -7.720, 0.0,
+            dx=-0.895512, dy=0.0, dz=0.0, s_ref=1.0, b_ref=1.0, c_ref=0.6096,
         )
         self.assertAlmostEqual(shifted[4], -7.720 + 0.895512 * 4.363 / 0.6096, delta=1e-6)
         self.assertAlmostEqual(shifted[4], -1.3106842913385819, delta=1e-6)
@@ -150,18 +254,38 @@ class TestNormaliseSign(unittest.TestCase):
         self.assertEqual(normalise_sign("cz_alpha", 0.0), (0.0, False))
         self.assertEqual(normalise_sign("cd0", 0.0), (0.0, False))
 
+    def test_zero_is_never_flipped_even_for_a_positive_pinned_key(self) -> None:
+        # Without the zero guard, a +1-pinned key would see (0.0 > 0.0) == False,
+        # disagree with the invariant, and return (-0.0, True): a negative zero
+        # written into a coefficient file, and a flip that never happened.
+        for name in ("cd_q", "cy_r", "cy_dr", "cl_r", "cn_beta"):
+            value, flipped = normalise_sign(name, 0.0)
+            self.assertEqual(value, 0.0, name)
+            self.assertEqual(math.copysign(1.0, value), 1.0, f"{name} returned negative zero")
+            self.assertFalse(flipped, name)
+
     def test_a_slot_with_no_invariant_is_left_alone(self) -> None:
         # cm0 (Cm0) is deliberately absent from the invariant table: the two in-tree
         # reference files disagree on its sign and it is tail rigging, not a convention.
+        self.assertEqual(NO_INVARIANT, frozenset({"cm0"}))
         self.assertEqual(normalise_sign("cm0", -0.05), (-0.05, False))
         self.assertEqual(normalise_sign("cm0", 0.05), (0.05, False))
+        self.assertEqual(normalise_sign("cm0", 0.0), (0.0, False))
 
-    def test_an_unknown_slot_name_is_left_alone(self) -> None:
-        # No invariant means no normalisation, never an exception: a caller may pass
-        # any field name and a typo must not fail a conversion.
-        self.assertEqual(normalise_sign("cz", 0.0), (0.0, False))
-        self.assertEqual(normalise_sign("cz", 1.25), (1.25, False))
-        self.assertEqual(normalise_sign("cz_nonesuch", -1.0), (-1.0, False))
+    def test_an_unknown_slot_name_is_rejected(self) -> None:
+        # Tasks 3 and 4 call normalise_sign directly to log flips into provenance, so
+        # a misspelled slot must fail loudly rather than silently pass a sign through.
+        for name in ("cz_alfa", "cz", "cm_alphaa", "cl_"):
+            with self.assertRaises(KeyError) as caught:
+                normalise_sign(name, -4.0)
+            message = str(caught.exception)
+            self.assertIn(name, message)
+            self.assertIn("cm0", message)
+            self.assertIn("cl_alpha", message)
+
+    def test_a_zero_value_does_not_excuse_an_unknown_name(self) -> None:
+        with self.assertRaises(KeyError):
+            normalise_sign("cz_alfa", 0.0)
 
     def test_the_four_signposted_rows(self) -> None:
         self.assertEqual(SIGN_INVARIANTS["cl0"], -1)
