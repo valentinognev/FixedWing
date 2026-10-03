@@ -1,0 +1,444 @@
+// ==========================================================================
+// data/planes/cessna172/geometry.jsonc for the Cessna 172 source analysis, generated -- do not hand-edit.
+//
+// 1. SOLVER, MESH, FLIGHT CONDITION
+//    Solver: Tornado, via the sibling package aid.tornado (imported from /home/valentin/Projects/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Python/src).
+//    Mesh: 10 chordwise x 5 spanwise (the AID batch default).  NP[0],
+//    the AR 33.3, S 3 ft^2 panel, is KEPT in the lattice and carries
+//    9.6% of the aircraft's CL at the trim alpha.
+//    Flight condition from the source AERO: Mach 0.03, altitude 0.0 ft, betha 0.0 rad,
+//    evaluated at alpha = 4 deg (the middle of AERO.ALSCHD), V = 10.2073 m/s, rho = 1.225056 kg/m^3.
+//
+// 2. THE SOURCE PLANFORM IS A CESSNA 172 AT ROUGHLY 1/3 LINEAR SCALE
+//    span 12 ft against a real 36.1 ft, chord 2 ft against 4.89 ft, area 24 ft^2
+//    against 174 ft^2.  Wing loading is therefore 6.70 lbf/ft^2 where a real C172 is
+//    13.2.  Nothing in this file may be compared with a full-scale figure.
+//
+// 3. MASS
+//    mass_kg = 72.574 is the source file's own AERO.WT = 5 slugs (5 x 32 ft/s^2 = 160.0 lbf,
+//    160.0 / 2.2046226 = 72.574 kg).  This is NOT a geometrically similar 1/3 scale C172,
+//    which would weigh about 53.5 kg, so no scaling of a published full-scale number is self-
+//    consistent and none was attempted.  ixx, iyy, izz come from radius-of-gyration rules on THIS
+//    mass and THIS span (see below); ixz = 0 and he = 0.
+//
+// 4. UNIT CONVERSIONS APPLIED, AND THE ONES NOT TRUSTED
+//    length: ft x 0.3048 = 0.3048 m; angle: degrees x 57.29577951308232 (= DEG_TO_RAD) per radian.
+//    aid.handbook_pass._per_rad / _per_deg were NOT used: they are heuristic
+//    (`if a > 1: convert else pass`), _per_rad is a no-op below 1.0, and on this
+//    aircraft that silently makes a DATCOM rate derivative 57x too small.  Every
+//    per-degree number here is multiplied by 57.29577951308232 explicitly.
+//    Every array in this file is per radian and every length is SI.
+//    cx[0] -- Cd0 in Tornado's own build-up -- = -0.017219.
+//    Source of it: source WG.CD0 (the VLM has no profile drag: CD(0) - K*CL(0)^2 = -0.001673).
+//    CD(0) = 0.000603563 and K*CL(0)^2 = 0.00227614 with K = 0.0803732,
+//    so CD(0) - K*CL(0)^2 is negative: a linear vortex-lattice run has no profile
+//    drag at all.  The source file's own WG.CD0 = 0.017219 is used instead.
+//
+// 5. THE MOMENT REFERENCE SHIFT
+//    Tornado reports about geo['ref_point'] = [0, 0, 0] while geo['CG'] = [2.94, 0, 0] ft, so the
+//    reference point is 2.94 ft AHEAD of the CG.  Tornado's x axis is AFT-positive, so the offset
+//    handed to shift_moments_to_cg is dx = -ft(2.94) = -0.896112 m (NOT +), with dy = dz = 0.
+//    Tornado's lift is up-positive while plane/dynamics.py's cz is the body +z force with z DOWN,
+//    so every vertical-force argument is cz = -CL.  Slopes shift with slopes (Cm_a with -CL_a,
+//    Cm_Q with -CL_Q, Cm_de with -CL_de) and the Cm0 intercept shifts with the -CL(0) intercept;
+//    the yaw slopes shift with the side force (Cn_beta with CY_b, Cn_p with CY_P, Cn_r with CY_R).
+//
+// 6. SIGN CONVENTION
+//    Tornado's axes are x aft, y right, z up; plane/dynamics.py's are x forward, y right, z down.
+//    So cz = -CL, cl = -Cl, cm = +Cm, cn = -Cn.  The rate derivatives need NO extra flip: the
+//    code perturbs the relative wind with r x omega, which is the correct omega x r once the
+//    velocity is negated.  Signs are then normalised mechanically against aero_convert.units.SIGN_INVARIANTS
+//    (data/planes/linear/morelli.json is the convention authority) and every flip is logged in
+//    provenance.flipped.  cm0 carries no invariant and is recorded as not-normalised.
+//    data/planes/linear/morelli.json's cz[1] sign is treated as that file's defect: the load-bearing
+//    identity is cz = -CL, so a stable aircraft has cz[1] < 0 and cm[1] < 0.
+//
+// 7. PER-SLOT PROVENANCE (all 19 arrays; real solver output vs zeroed)
+//   cz[1]     cl_alpha   normalised     tornado CL_a = -5.14801 -> -5.14801
+//   cz[0]     cl0        normalised     tornado CL(alpha=0) = -0.168285 -> -0.168285
+//   czq[0]    cl_q       normalised     tornado CL_Q = -9.59113 -> -9.59113
+//   cy[0]     cy_beta    normalised     tornado CY_b = -0.40827 -> -0.40827
+//   cyp[0]    cy_p       flipped        tornado CY_P = 0.159618 -> -0.159618
+//   cyr[0]    cy_r       flipped        tornado CY_R = -0.386951 -> 0.386951
+//   cl[0]     cl_beta    normalised     tornado Cl_b = -0.0537212 -> -0.0537212
+//   clp[0]    cl_p       flipped        tornado Cl_P = 0.486095 -> -0.486095
+//   clr[0]    cl_r       flipped        tornado Cl_R = -0.044525 -> 0.044525
+//   cm[1]     cm_alpha   normalised     tornado Cm_a = -1.21856 -> -1.21856
+//   cm[0]     cm0        not-normalised tornado Cm(alpha=0) = 0.0154461 -> 0.0154461
+//   cmq[0]    cm_q       normalised     tornado Cm_Q = -19.2498 -> -19.2498
+//   cn[0]     cn_beta    normalised     tornado Cn_b = 0.146473 -> 0.146473
+//   cnp[0]    cn_p       normalised     tornado Cn_P = -0.0295649 -> -0.0295649
+//   cnr[0]    cn_r       flipped        tornado Cn_R = 0.1916 -> -0.1916
+//   cxq[0]    cd_q       normalised     tornado CX_Q = 0.00707928 -> 0.00707928
+//   cx[0]     cd0        normalised     tornado CD at alpha = 0 = -0.017219 -> -0.017219
+//   clda[0]   cl_da      normalised     tornado tornado_controls[aileron].Cl = -0.245288 -> -0.245288
+//   cy[1]     cy_da      flipped        tornado tornado_controls[aileron].CY (= CC) = -0.0501724 -> 0.0501724
+//   cnda[0]   cn_da      flipped        tornado tornado_controls[aileron].Cn = 0.017841 -> -0.017841
+//   cldr[0]   cl_dr      flipped        tornado tornado_controls[rudder].Cl = -0.0214546 -> 0.0214546
+//   cy[2]     cy_dr      flipped        tornado tornado_controls[rudder].CY (= CC) = -0.229426 -> 0.229426
+//   cndr[0]   cn_dr      flipped        tornado tornado_controls[rudder].Cn = 0.183276 -> -0.183276
+//   cz[5]     cl_de      normalised     tornado tornado_controls[elevator].CL = -0.371259 -> -0.371259
+//   cm[2]     cm_de      normalised     tornado tornado_controls[elevator].Cm = -1.16212 -> -1.16212
+//   every slot in plane.groups.nonlinear_index is exactly 0.0; CD_alpha is not
+//   representable in this schema (cx has no CD*alpha term) and is zeroed and declared
+//
+// 8. HOW TO REGENERATE THIS FILE
+//    cd python && python3 scripts/build_cessna172_aero.py
+//    Nothing else writes these files; the sibling analysis and the sibling aid tree
+//    are read-only inputs and all solver scratch goes to a temporary directory.
+// ==========================================================================
+{
+  "model": "geometry",
+  "source": "/home/valentin/Projects/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
+  "units": {
+    "length": "m",
+    "mass": "kg",
+    "inertia": "kg*m^2",
+    "speed": "m/s",
+    "angle": "rad",
+    "moment_coefficient": "per radian",
+    "per_degree_to_per_radian": 57.29577951308232,
+    "feet_to_metres": 0.3048
+  },
+  "reference_geometry": {
+    "s_ref_m2": 7.315200000000001,
+    "b_ref_m": 3.6576000000000004,
+    "c_ref_m": 0.6096,
+    "x_cg_m": -0.896112,
+    "x_cg_ft": 2.94,
+    "x_ref_ft": 0.0,
+    "x_wing_ft": 2.2,
+    "x_tail_ft": 8.75,
+    "cg_offset_for_shift_m": [
+      -0.896112,
+      0.0,
+      0.0
+    ]
+  },
+  "planform": {
+    "wing": {
+      "chord_root_ft": 2.0,
+      "chord_break_ft": 2.5,
+      "chord_tip_ft": 2.0,
+      "span_ft": 6.0,
+      "area_ft2": 24.0,
+      "aspect_ratio": 5.991777208527443,
+      "panel_count": 1,
+      "dihedral_deg": 3.0,
+      "root_quarter_chord_sweep_deg": 0.0,
+      "x_station_ft": 2.2,
+      "airfoil": [
+        "2412",
+        "2412"
+      ]
+    },
+    "horizontal_tail": {
+      "chord_root_ft": 1.3,
+      "chord_break_ft": 1.3,
+      "chord_tip_ft": 0.8,
+      "span_ft": 2.5,
+      "area_ft2": 5.25,
+      "aspect_ratio": 4.761904761904762,
+      "panel_count": 1,
+      "dihedral_deg": 0.0,
+      "root_quarter_chord_sweep_deg": 11.309932474020213,
+      "x_station_ft": 8.75,
+      "airfoil": "0012"
+    },
+    "vertical_tail": {
+      "chord_root_ft": 5.0,
+      "chord_break_ft": 2.0,
+      "chord_tip_ft": 1.0,
+      "span_ft": 2.0,
+      "area_ft2": 8.8,
+      "aspect_ratio": 0.39999999999999997,
+      "panel_count": 3,
+      "dihedral_deg": 0.0,
+      "root_quarter_chord_sweep_deg": 77.614257524752,
+      "x_station_ft": 5.0,
+      "airfoil": "0012"
+    },
+    "extra_panel": {
+      "name": "NP[0]",
+      "chord_root_ft": 0.3,
+      "chord_tip_ft": 0.3,
+      "span_ft": 5.0,
+      "area_ft2": 3.0,
+      "aspect_ratio": 33.333333333333336,
+      "dihedral_deg": 17.0,
+      "x_station_ft": 2.5,
+      "airfoil": "2412",
+      "in_lattice": true,
+      "cl_share_at_trim": 0.0962341787469301,
+      "kept_because": "the user ruled it in: excluding it is explicitly out of scope"
+    }
+  },
+  "flight_condition": {
+    "mach": 0.03,
+    "alt_ft": 0.0,
+    "betha_rad": 0.0,
+    "alpha_deg": 4.0,
+    "as_mps": 10.207345160909794,
+    "rho_kg_m3": 1.2250558830000002
+  },
+  "mesh": [
+    "10",
+    "5"
+  ],
+  "mass_and_inertia": {
+    "mass": {
+      "source": "AERO.WT = 5 slugs",
+      "mass_kg": 72.574,
+      "weight_lbf_at_32_ft_s2": 160.0,
+      "note": "G_FT_S2 = 32.174 would give 72.969 kg; the plan fixes 72.574"
+    },
+    "radii": {
+      "k_xx": {
+        "rule": "roll: k_xx = 0.35 b",
+        "factor": 0.35,
+        "k_m": 1.28016,
+        "inertia_kg_m2": 118.9349697682944
+      },
+      "k_yy": {
+        "rule": "pitch: k_yy = 0.25 b",
+        "factor": 0.25,
+        "k_m": 0.9144000000000001,
+        "inertia_kg_m2": 60.68110702464001
+      },
+      "k_zz": {
+        "rule": "yaw: k_zz = 0.30 b",
+        "factor": 0.3,
+        "k_m": 1.09728,
+        "inertia_kg_m2": 87.38079411548159
+      }
+    },
+    "ixz": 0.0,
+    "he": 0.0
+  },
+  "trim": {
+    "target_cruise_cl": 0.3,
+    "cl0": 0.16828451691889965,
+    "cl_alpha": 5.148012847936423,
+    "alpha_trim_rad": 0.02664180802183137,
+    "theta_trim_rad": 0.02664180802183137,
+    "elevator_rad": -0.014644471692926372,
+    "cruise_mps": 23.114564451619735,
+    "qbar_pa": 324.1495901873702,
+    "rho_kg_m3": 1.2134001482844625,
+    "alt_m": 100.0,
+    "weight_n": 711.7078170999999,
+    "cd0": -0.017218979436844056,
+    "cm_at_trim": 2.7589509843384263e-10,
+    "power": 0.1727264748902058,
+    "v_ref_mps": 28.89320556452467,
+    "thrust_scale": 0.20000000000000007,
+    "t_max_n": 1730.670617824495,
+    "thrust_at_trim_n": 59.78652700257594,
+    "cl_at_trim": 0.30000000000000004,
+    "residual_max_abs": 1.6529259259460552e-16,
+    "fallback": false
+  },
+  "raw_tornado": {
+    "CL_a": 5.148012847936423,
+    "CL_at_alpha0": 0.16828451691889965,
+    "CL_Q": 9.591130752128368,
+    "CL_P": 1.7506715021444903e-08,
+    "CL_R": -1.6042889977789666e-05,
+    "Cm_a": -8.786140193125513,
+    "Cm_at_alpha0": -0.2319321356612714,
+    "Cm_Q": -33.348776733878786,
+    "Cl_b": 0.05372122799922786,
+    "Cl_P": -0.4860949250681449,
+    "Cl_R": 0.04452499744596445,
+    "Cn_b": -0.24649956466084472,
+    "Cn_P": 0.06867139682171726,
+    "Cn_R": -0.28640308738561865,
+    "CY_b": -0.40826987000816295,
+    "CC_b": -0.40826987000816295,
+    "CY_P": 0.15961835084860332,
+    "CY_R": -0.3869509772286344,
+    "CX_Q": 0.0070792752703040486,
+    "CD_at_alpha0": 0.0006035629331626441,
+    "CD_at_alpha": 0.0156762956808216,
+    "CL_at_alpha": 0.5022740423558434,
+    "CD_a": 0.43162175087214927,
+    "CZ_a": 5.165580958710336,
+    "K_wing": 0.08037324626140716,
+    "CD0_source": 0.017218979436844056,
+    "CL_wing": [
+      0.42378043404013094,
+      0.03015767834369693,
+      -1.643474547611176e-34,
+      0.04833592997201538
+    ],
+    "wing_names": [
+      "Wing",
+      "HT",
+      "VT",
+      "Wing 2"
+    ],
+    "extra_panel_cl_share": 0.0962341787469301,
+    "planform": {
+      "wing": {
+        "chord_root_ft": 2.0,
+        "chord_break_ft": 2.5,
+        "chord_tip_ft": 2.0,
+        "span_ft": 6.0,
+        "area_ft2": 24.0,
+        "aspect_ratio": 5.991777208527443,
+        "panel_count": 1,
+        "dihedral_deg": 3.0,
+        "root_quarter_chord_sweep_deg": 0.0,
+        "x_station_ft": 2.2,
+        "airfoil": [
+          "2412",
+          "2412"
+        ]
+      },
+      "horizontal_tail": {
+        "chord_root_ft": 1.3,
+        "chord_break_ft": 1.3,
+        "chord_tip_ft": 0.8,
+        "span_ft": 2.5,
+        "area_ft2": 5.25,
+        "aspect_ratio": 4.761904761904762,
+        "panel_count": 1,
+        "dihedral_deg": 0.0,
+        "root_quarter_chord_sweep_deg": 11.309932474020213,
+        "x_station_ft": 8.75,
+        "airfoil": "0012"
+      },
+      "vertical_tail": {
+        "chord_root_ft": 5.0,
+        "chord_break_ft": 2.0,
+        "chord_tip_ft": 1.0,
+        "span_ft": 2.0,
+        "area_ft2": 8.8,
+        "aspect_ratio": 0.39999999999999997,
+        "panel_count": 3,
+        "dihedral_deg": 0.0,
+        "root_quarter_chord_sweep_deg": 77.614257524752,
+        "x_station_ft": 5.0,
+        "airfoil": "0012"
+      },
+      "extra_panel": {
+        "name": "NP[0]",
+        "chord_root_ft": 0.3,
+        "chord_tip_ft": 0.3,
+        "span_ft": 5.0,
+        "area_ft2": 3.0,
+        "aspect_ratio": 33.333333333333336,
+        "dihedral_deg": 17.0,
+        "x_station_ft": 2.5,
+        "airfoil": "2412",
+        "in_lattice": true,
+        "cl_share_at_trim": 0.0962341787469301,
+        "kept_because": "the user ruled it in: excluding it is explicitly out of scope"
+      }
+    }
+  },
+  "control_rows_per_degree": {
+    "flap": {
+      "delta_deg": 0.0,
+      "CL": 0.015504769664447221,
+      "CD": 0.0007602595769772222,
+      "Cm": -0.016334274776835245,
+      "CY": -1.034721800028644e-17,
+      "Cl": -1.7396373520621686e-18,
+      "Cn": -7.552019442415716e-18
+    },
+    "aileron": {
+      "delta_deg": 0.0,
+      "CL": -5.551115123125783e-17,
+      "CD": 0.0,
+      "Cm": -5.551115123125783e-17,
+      "CY": -0.0008756730696224345,
+      "Cl": 0.0042810881218524385,
+      "Cn": -0.00031138405881381954
+    },
+    "elevator": {
+      "delta_deg": 0.0,
+      "CL": 0.006479685958287962,
+      "CD": 0.00032511773089293795,
+      "Cm": -0.029807885982899185,
+      "CY": -4.2131842120255646e-18,
+      "Cl": -2.295354839526477e-19,
+      "Cn": -3.412830221927518e-18
+    },
+    "rudder": {
+      "delta_deg": 0.0,
+      "CL": 5.551115123125783e-17,
+      "CD": 5.204170427930421e-18,
+      "Cm": 1.6653345369377348e-16,
+      "CY": -0.004004240094412684,
+      "Cl": 0.00037445384558744865,
+      "Cn": -0.003198765945580602
+    }
+  },
+  "provenance": {
+    "solver": "tornado",
+    "mesh": [
+      "10",
+      "5"
+    ],
+    "source": "/home/valentin/Projects/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
+    "moment_reference": {
+      "reference_point": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "cg": [
+        2.94,
+        0.0,
+        0.0
+      ],
+      "cg_station_aft_ft": 2.94,
+      "dx_m": -0.896112,
+      "dy_m": 0.0,
+      "dz_m": 0.0,
+      "note": "Tornado reports about ref_point with x aft-positive; the CG offset passed to shift_moments_to_cg is dx = -ft(2.94) in the dynamics frame (x forward)"
+    },
+    "sign_convention": {
+      "tornado_axes": "x aft, y right, z up (right-handed)",
+      "dynamics_axes": "x forward, y right, z down (plane/dynamics.py)",
+      "cz": "cz = -CL (body z down); cl = -Cl; cm = +Cm; cn = -Cn",
+      "rate_derivatives": "no extra flip: the code perturbs the relative wind with r x omega, which is the correct omega x r for a negated velocity",
+      "normalisation": "aero_convert.units.normalise_sign against SIGN_INVARIANTS"
+    },
+    "cl_alpha_cross_check": {
+      "coeff_create": 5.148012847936423,
+      "frozen_lattice_secant": 5.132344080083497,
+      "relative_difference": 0.003043653603002708,
+      "tolerance": 0.01,
+      "half_width_deg": 0.05,
+      "coarse_secant_0_to_2deg": 4.359093942279727,
+      "coarse_relative_difference": 0.1532472682100888,
+      "coarse_note": "a full re-run re-tilts the wake with alpha, so the coarse secant is not a fixed-wake derivative; it is recorded, not gated at 1 %"
+    },
+    "cd0": {
+      "source": "source WG.CD0 (the VLM has no profile drag: CD(0) - K*CL(0)^2 = -0.001673)",
+      "CD_at_alpha0": 0.0006035629331626441,
+      "K_wing": 0.08037324626140716,
+      "induced_part": 0.0022761445049448207,
+      "source_WG_CD0": 0.017218979436844056,
+      "value": -0.017218979436844056
+    },
+    "flipped": [
+      "cl_dr",
+      "cl_p",
+      "cl_r",
+      "cn_da",
+      "cn_dr",
+      "cn_r",
+      "cy_da",
+      "cy_dr",
+      "cy_p",
+      "cy_r"
+    ],
+    "not_normalised": [
+      "cm0"
+    ],
+    "missing": []
+  }
+}
