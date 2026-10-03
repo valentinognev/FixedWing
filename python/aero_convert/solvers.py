@@ -30,36 +30,60 @@ right-handed, and the freestream vector ``wind1 = AS (cos a cos b, -cos a sin b,
 sin a)`` points aft and up at positive alpha -- i.e. it is the *relative wind*,
 which is why the code's ``r x omega`` rotational perturbation is the correct
 ``omega x r`` for a velocity vector: ``wind`` is minus the body's velocity, so
-negating it twice leaves the rigid-body term right.  **No extra sign flip
-belongs on the rate derivatives.**  Measured on this aircraft, and all four of
-these follow from the axis mapping alone:
+negating it twice leaves the rigid-body term right.
 
-=========================  ===================  ================================
-Tornado reports            mapped to dynamics     required by the invariant table
-=========================  ===================  ================================
-``CL_a = +5.148013``       ``cz = -CL_a``        ``cl_alpha`` < 0
-``CL_Q = +9.591131``       ``cz = -CL_Q``        ``cl_q`` < 0
-``Cl_b = +0.053721``       ``cl = -Cl_b``        ``cl_beta`` < 0
-``Cn_b = -0.246500``       ``cn = -Cn_b``        ``cn_beta`` > 0
-``Cn_P = +0.068671``       ``cn = -Cn_P``        ``cn_p`` < 0
-``Cl_P = -0.486095``       ``cl = -Cl_P``        ``cl_p`` < 0
-``Cm_a = -8.786140``       ``cm = +Cm_a``        ``cm_alpha`` < 0
-``Cm_Q = -33.348777``      ``cm = +Cm_Q``        ``cm_q`` < 0
-=========================  ===================  ================================
+The axis mapping resolves the **alpha, beta and Q** inversions on its own.  It
+does **not** resolve the **P and R** ones: those are a separate, narrower defect
+-- ``rot_rates = np.array([state["P"], state["Q"], state["R"]])`` drops the
+standard-aero rates straight into the Tornado (aft, right, up) component slots
+without converting their sense, so roll-right is ``omega_x_aft = -P`` and
+nose-right is ``omega_z_up = -R``, and the P and R columns come back inverted
+whatever the axis mapping does.  Measured on this aircraft: ``CY_P = +0.160``
+where physics needs ``CY_p < 0`` and ``CY_R = -0.387`` where it needs
+``CY_r > 0``, while ``Cm_Q`` is right.  The P and R slots are therefore left to
+``aero_convert.units.normalise_sign``, which flips them and logs the flip.
 
-Two of the three moment axes flip because a right-handed frame that reverses two
-of its three axes reverses exactly those two moment senses; the pitch axis
-(right in both) does not flip, which is what keeps ``Cm`` the one quantity whose
-sign must survive untouched for the aircraft to be statically stable.  Every
-slot is still handed to ``aero_convert.units.normalise_sign`` rather than being
-signed here, so a disagreement is logged in ``provenance.flipped`` instead of
-being applied by hand -- ten of the twenty-five slots are flipped by the table.
+=========================  ===================  ==========================  ==========
+Tornado reports            mapped to dynamics   invariant table wants      resolved by
+=========================  ===================  ==========================  ==========
+``CL_a = +5.148013``       ``cz = -CL_a``        ``cl_alpha`` < 0            mapping
+``CL_Q = +9.591131``       ``cz = -CL_Q``        ``cl_q`` < 0                mapping
+``Cl_b = +0.053721``       ``cl = -Cl_b``        ``cl_beta`` < 0             mapping
+``Cn_b = -0.246500``       ``cn = -Cn_b``        ``cn_beta`` > 0             mapping
+``Cm_a = -8.786140``       ``cm = +Cm_a``        ``cm_alpha`` < 0            mapping
+``Cm_Q = -33.348777``      ``cm = +Cm_Q``        ``cm_q`` < 0                mapping
+``Cn_P = +0.068671``       ``cn = -Cn_P = -0.0687``  ``cn_p`` < 0            the table
+``Cl_P = -0.486095``       ``cl = -Cl_P = +0.4861``  ``cl_p`` < 0            the table
+``CY_P = +0.159618``       ``cy = +CY_P``        ``cy_p`` < 0                the table
+``CY_R = -0.386951``       ``cy = +CY_R``        ``cy_r`` > 0                the table
+``Cl_R = +0.044525``       ``cl = -Cl_R``        ``cl_r`` > 0                the table
+``Cn_R = -0.286403``       ``cn = -Cn_R = +0.2864``  ``cn_r`` < 0            the table
+=========================  ===================  ==========================  ==========
 
-``cz = -CL`` and ``cl = -Cl`` are also the arguments ``shift_moments_to_cg``
-needs, because that function takes the ``plane/dynamics.py`` body frame
-(x forward, y right, z down) and ``cz`` is its body-z coefficient.  Tornado's
-y axis is already the dynamics y axis, so the side force passes through as
-``cy = +CY``.
+Note the last column honestly: the mapping hands ``Cl_P``, ``Cn_P``, ``Cn_R``,
+``CY_P`` and ``CY_R`` to the table **still on the wrong side**, and it is the
+table, not the mapping, that puts them right.  Two of the three moment axes flip
+because a right-handed frame that reverses two of its three axes reverses
+exactly those two moment senses; the pitch axis (right in both) does not flip,
+which is what keeps ``Cm`` the one quantity whose sign survives untouched.  Every
+slot is handed to ``normalise_sign`` rather than being signed here, so a
+disagreement is logged in ``provenance.flipped`` instead of applied by hand --
+ten of the twenty-five slots are flipped by the table, and ``provenance.mapping``
+records the solver's value and the mapped value for each.
+
+**None of this changes a written coefficient.**  The rate-derivative question was
+recomputed under both readings and the twenty-five written values are identical,
+because ``normalise_sign`` is the final authority and a component-sense flip
+reverses the moment and its shift's force coefficient together, so the shift term
+flips with the moment and the table undoes the lot.
+
+``shift_moments_to_cg`` needs the same mapping, but its ``cz`` is the **body-z
+force** coefficient, not the wind-axis lift: the pitch line is
+``dx * F_z / c_ref``, so the argument is ``coeff_create``'s ``CZ`` (``-CZ_a``,
+``-CZ_Q``, ``-CZ_de``), not ``-CL``.  ``cl = -Cl`` is not a shift argument at all:
+with ``dy = dz = 0`` no force reaches the roll axis.  Tornado's y axis is already
+the dynamics y axis, so the side force passes through as ``cy = +CY`` and does
+reach the yaw line.
 
 Slopes shift, intercepts shift differently
 ------------------------------------------
@@ -200,13 +224,15 @@ def source_mass_kg(aero: dict) -> float:
 
     Derived, not typed, so a change to ``AERO.WT`` in the source file moves this
     number.  The quotient is truncated rather than rounded: the exact value is
-    72.5747792 kg and the plan's stated 72.574 is that cut to three decimals,
+    72.57477991924786 kg and the plan's stated 72.574 is that cut to three
+    decimals,
     which is the literal plan test 6 pins in this file's header.  See the
     module-level note for why the plan's figure ships in preference to the slug
     conversion's 72.96951.
     """
     weight_lbf = float(_first(aero["WT"])) * PLAN_STANDARD_GRAVITY_FT_S2
     return math.floor(weight_lbf / LBF_PER_KG * 1000.0) / 1000.0
+
 
 # Radius-of-gyration rules of thumb, per the plan's "Mass, inertia, thrust, and
 # the initial state": derived on THIS mass and THIS span, never scaled from a
@@ -538,14 +564,13 @@ def _shift(
     body-axis side force, which is what ``coeff_create``'s ``CY_*`` is and what
     the model reads), both expressed **per the same independent variable as the
     coefficient being shifted** -- a slope for a slope, the intercept for an
-    intercept.  ``cx`` is passed as zero and audited as such: the pitch line uses
-    ``cx`` only through ``dz`` and the yaw line only through ``dy``, both of which
-    are zero for this aircraft, so no drag coefficient can enter the shift at all
-    and ``cd0`` is never a shift argument.  ``cx``, ``cl_m`` are zero here because ``dy = dz = 0`` for this
-    aircraft, so no force can reach the roll axis and the pitch/yaw lines see
-    ``cx`` only through the ``dz`` and ``dy`` arms, which are zero; the returned
-    ``Cl`` and ``Cn`` shifts are therefore identically zero, and the side force
-    still has to be passed because the yaw line shifts on ``dx * cy`` alone.
+    intercept.  ``cx`` and ``cl_m`` are passed as zero, and that is not an
+    oversight: with ``dy = dz = 0`` the drag reaches the pitch line only through
+    ``dz`` and the yaw line only through ``dy``, so no drag coefficient can enter
+    a shift for this aircraft and ``cd0`` is never a shift argument; and no force
+    at all reaches the roll axis, so the returned ``Cl`` shift is identically
+    zero.  The side force must still be passed, because the yaw line shifts on
+    ``dx * cy`` alone -- zeroing it would discard a real yaw moment.
     """
     cz_out, cx_out, cy_out, cl_out, cm_out, cn_out = shift_moments_to_cg(
         cz,
@@ -1397,8 +1422,9 @@ def header_comment(run: TornadoRun, kind: str) -> str:
         "//    aircraft that silently makes a DATCOM rate derivative 57x too small.  Every",
         "//    per-degree number here is multiplied by 57.29577951308232 explicitly.",
         "//    Every array in this file is per radian and every length is SI.",
-        f"//    cx[0] -- Cd0 in Tornado's own build-up -- = {run.provenance['cd0']['value']:.6g}.",
-        f"//    Source of it: {run.provenance['cd0']['source']}.",
+        f"//    cx[0] -- the parasite drag slot, Cd0 in a drag build-up -- ="
+        f" {run.provenance['cd0']['value']:.6g}.",
+        f"//    It is NOT a Tornado output.  Source: {run.provenance['cd0']['source']}.",
         f"//    CD(0) = {run.provenance['cd0']['CD_at_alpha0']:.6g} and K*CL(0)^2 ="
         f" {run.provenance['cd0']['induced_part']:.6g} with K = {run.provenance['cd0']['K_wing']:.6g},",
         "//    so CD(0) - K*CL(0)^2 is negative: a linear vortex-lattice run has no profile",
@@ -1452,15 +1478,51 @@ def header_comment(run: TornadoRun, kind: str) -> str:
         "//",
         "//    Tornado's axes are x aft, y right, z up; plane/dynamics.py's are x forward,"
         " y right, z down.",
-        "//    So cz = -CL, cl = -Cl, cm = +Cm, cn = -Cn, and that mapping ALONE accounts"
-        " for every observed",
-        "//    inversion (CL_Q = +9.59 against a required CL_q < 0; Cl_b = +0.054; Cn_b ="
-        " -0.247; Cn_P = +0.069).",
-        "//    No blanket flip is applied on top of it.  Signs are then normalised"
-        " mechanically against",
-        "//    aero_convert.units.SIGN_INVARIANTS and every flip is logged in"
-        " provenance.flipped; cm0 carries",
-        "//    no invariant and is recorded as not-normalised.",
+        "//    So cz = -CL, cl = -Cl, cm = +Cm, cn = -Cn.  That mapping resolves the alpha,"
+        " beta and Q",
+        "//    inversions on its own (CL_Q = +9.59 against a required CL_q < 0; Cl_b ="
+        " +0.054; Cn_b = -0.247),",
+        "//    but NOT the P and R ones.  Those are a separate and narrower defect in the"
+        " sibling:",
+        "//    rot_rates = np.array([state[\"P\"], state[\"Q\"], state[\"R\"]]) drops the"
+        " standard-aero rates into the",
+        "//    Tornado (aft, right, up) component slots without converting their sense, so"
+        " roll-right is",
+        "//    omega_x_aft = -P and nose-right is omega_z_up = -R and the P and R columns come"
+        " back",
+        "//    inverted whatever the mapping does -- measured CY_P = +0.160 where physics"
+        " needs CY_p < 0",
+        "//    and CY_R = -0.387 where it needs CY_r > 0, while Cm_Q is right.  Those slots"
+        " are left to",
+        "//    the invariant table, which flips Cl_P, Cl_R, Cn_P, Cn_R, CY_P and CY_R"
+        " and logs each",
+        "//    flip in provenance.flipped.  No blanket flip is applied on top of the"
+        " mapping, and it makes",
+        "//    no difference to any written coefficient: recomputed under both readings,"
+        " all twenty-five",
+        "//    values are identical, because the table is the final authority and a"
+        " component-sense",
+        "//    flip reverses the moment and its shift's force coefficient together.",
+        "//    Signs are normalised mechanically against aero_convert.units.SIGN_INVARIANTS"
+        " and every flip is",
+        "//    logged in provenance.flipped; cm0 carries no invariant and is recorded as"
+        " not-normalised.",
+        "//",
+        "//    A CAVEAT on the rate derivatives -- cy[1], cy[2], cyp, cyr, czq, clp, clr, cnp,",
+        "//    cnr -- inherited from the flight condition and NOT corrected here.",
+        "//    coeff_create quotes them per p-hat = p*b_ref/(2*AS) using the SOURCE speed",
+        "//    state[\"AS\"] = 10.2073 ft/s = 3.1112 m/s (Mach 0.03, sea level), while",
+        "//    f16/aero_morelli.py forms phat = p*b_m/(2*V) with V the model's own speed,",
+        "//    23.1146 m/s at the trim.  Both scalings are internally consistent -- Tornado",
+        "//    works in feet and ft/s throughout, and atm[\"a\"] = 1116.29 is ft/s -- so this",
+        "//    is NOT a unit error inside Tornado; it is a flight-condition mismatch, and",
+        "//    its effect is that dp-hat/dP is 1.70122 in Tornado against 12.63921 in the",
+        "//    model, a factor of 7.42948.  The written rate derivatives are therefore",
+        "//    7.43x smaller than the derivative with respect to the model's own phat, i.e.",
+        "//    the model's rate-damping terms are 7.43x weaker than the solver's numbers",
+        "//    imply at the trimmed speed, and CL_Q = 9.591 is not a textbook per-q-hat",
+        "//    value.  NOT rescaled here: the plan fixes the flight condition from the",
+        "//    source AERO, and rescaling it is a physics decision for a later task.",
         "//",
         "//    Two slots are stored in the STANDARD-AERO convention rather than the body-axis"
         " one: czq[0]",

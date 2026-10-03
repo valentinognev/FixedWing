@@ -276,6 +276,71 @@ class TornadoAdapterTest(unittest.TestCase):
             self.solver_run.trim["cm_at_trim"], 0.0, places=9,
         )
 
+    def test_14_pr_column_flip_changes_no_written_coefficient(self) -> None:
+        """The P/R component-sense defect is immaterial, and that is pinned here.
+
+        The amended plan records that Tornado's P and R columns come back
+        component-sense inverted independently of the axis mapping.  Negating
+        those six solver values -- and, with them, the force coefficients their
+        yaw shift consumes -- must leave every written coefficient untouched,
+        because normalise_sign is the final authority.  If a future change ever
+        relies on the P/R signs, this fails.
+        """
+        from aero_convert.units import shift_moments_to_cg
+
+        raw = self.solver_run.raw
+        geometry = self.solver_run.geometry
+        shipped = self.coefficients()
+
+        def shift(cz: float, cy: float, cm: float, cn: float) -> tuple[float, float]:
+            out = shift_moments_to_cg(
+                cz, 0.0, cy, 0.0, cm, cn,
+                dx=geometry.dx_m, dy=geometry.dy_m, dz=geometry.dz_m,
+                s_ref=geometry.s_ref_m2, b_ref=geometry.b_ref_m, c_ref=geometry.c_ref_m,
+            )
+            return out[4], out[5]
+
+        # (a) as shipped, (b) with the P and R columns negated end to end.
+        variants = {}
+        for label, flip in (("shipped", 1.0), ("pr_flipped", -1.0)):
+            cy_p = flip * raw["CY_P"]
+            cy_r = flip * raw["CY_R"]
+            cm_alpha, _ = shift(-raw["CZ_a"], 0.0, raw["Cm_a"], 0.0)
+            cm_q, _ = shift(-raw["CZ_Q"], 0.0, raw["Cm_Q"], 0.0)
+            _, cn_beta = shift(0.0, raw["CY_b"], 0.0, -raw["Cn_b"])
+            _, cn_p = shift(0.0, cy_p, 0.0, -flip * raw["Cn_P"])
+            _, cn_r = shift(0.0, cy_r, 0.0, -flip * raw["Cn_R"])
+            variants[label] = {
+                "cl[0]": -flip * raw["Cl_b"],
+                "cy[0]": raw["CY_b"],
+                "clp[0]": -flip * raw["Cl_P"],
+                "clr[0]": -flip * raw["Cl_R"],
+                "cyp[0]": cy_p,
+                "cyr[0]": cy_r,
+                "cnp[0]": cn_p,
+                "cnr[0]": cn_r,
+                "cn[0]": cn_beta,
+                "cm[1]": cm_alpha,
+                "cmq[0]": cm_q,
+            }
+        from aero_convert.units import normalise_sign
+
+        fields = {
+            "cl[0]": "cl_beta", "cy[0]": "cy_beta", "clp[0]": "cl_p", "clr[0]": "cl_r",
+            "cyp[0]": "cy_p", "cyr[0]": "cy_r", "cnp[0]": "cn_p", "cnr[0]": "cn_r",
+            "cn[0]": "cn_beta", "cm[1]": "cm_alpha", "cmq[0]": "cm_q",
+        }
+        for slot, mapped in variants["pr_flipped"].items():
+            with self.subTest(slot=slot):
+                array, index = slot.split("[")
+                index = int(index.rstrip("]"))
+                expected = normalise_sign(fields[slot], mapped)[0]
+                self.assertAlmostEqual(expected, shipped[array][index], places=12)
+                self.assertAlmostEqual(
+                    normalise_sign(fields[slot], variants["shipped"][slot])[0],
+                    shipped[array][index], places=12,
+                )
+
     def test_9_trimmed_aircraft_is_positive_where_it_must_be(self) -> None:
         """plane/aircraft.py's _POSITIVE_KEYS: nothing may be zero or negative."""
         aircraft = self.solver_run.aircraft

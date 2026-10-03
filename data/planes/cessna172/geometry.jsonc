@@ -32,8 +32,8 @@
 //    aircraft that silently makes a DATCOM rate derivative 57x too small.  Every
 //    per-degree number here is multiplied by 57.29577951308232 explicitly.
 //    Every array in this file is per radian and every length is SI.
-//    cx[0] -- Cd0 in Tornado's own build-up -- = -0.017219.
-//    Source of it: source WG.CD0 (the plan's formula, Tornado CD(0) - K_wing*CL(0)^2 = -0.001673, is negative: a linear VLM has no profile drag).
+//    cx[0] -- the parasite drag slot, Cd0 in a drag build-up -- = -0.017219.
+//    It is NOT a Tornado output.  Source: source WG.CD0 (the plan's formula, Tornado CD(0) - K_wing*CL(0)^2 = -0.001673, is negative: a linear VLM has no profile drag).
 //    CD(0) = 0.000603563 and K*CL(0)^2 = 0.00227614 with K = 0.0803732,
 //    so CD(0) - K*CL(0)^2 is negative: a linear vortex-lattice run has no profile
 //    drag at all.  The source file's own WG.CD0 = 0.017219 is used instead.
@@ -65,11 +65,37 @@
 //    the F-16 set on cm[1] and cnp[0].
 //
 //    Tornado's axes are x aft, y right, z up; plane/dynamics.py's are x forward, y right, z down.
-//    So cz = -CL, cl = -Cl, cm = +Cm, cn = -Cn, and that mapping ALONE accounts for every observed
-//    inversion (CL_Q = +9.59 against a required CL_q < 0; Cl_b = +0.054; Cn_b = -0.247; Cn_P = +0.069).
-//    No blanket flip is applied on top of it.  Signs are then normalised mechanically against
-//    aero_convert.units.SIGN_INVARIANTS and every flip is logged in provenance.flipped; cm0 carries
-//    no invariant and is recorded as not-normalised.
+//    So cz = -CL, cl = -Cl, cm = +Cm, cn = -Cn.  That mapping resolves the alpha, beta and Q
+//    inversions on its own (CL_Q = +9.59 against a required CL_q < 0; Cl_b = +0.054; Cn_b = -0.247),
+//    but NOT the P and R ones.  Those are a separate and narrower defect in the sibling:
+//    rot_rates = np.array([state["P"], state["Q"], state["R"]]) drops the standard-aero rates into the
+//    Tornado (aft, right, up) component slots without converting their sense, so roll-right is
+//    omega_x_aft = -P and nose-right is omega_z_up = -R and the P and R columns come back
+//    inverted whatever the mapping does -- measured CY_P = +0.160 where physics needs CY_p < 0
+//    and CY_R = -0.387 where it needs CY_r > 0, while Cm_Q is right.  Those slots are left to
+//    the invariant table, which flips Cl_P, Cl_R, Cn_P, Cn_R, CY_P and CY_R and logs each
+//    flip in provenance.flipped.  No blanket flip is applied on top of the mapping, and it makes
+//    no difference to any written coefficient: recomputed under both readings, all twenty-five
+//    values are identical, because the table is the final authority and a component-sense
+//    flip reverses the moment and its shift's force coefficient together.
+//    Signs are normalised mechanically against aero_convert.units.SIGN_INVARIANTS and every flip is
+//    logged in provenance.flipped; cm0 carries no invariant and is recorded as not-normalised.
+//
+//    A CAVEAT on the rate derivatives -- cy[1], cy[2], cyp, cyr, czq, clp, clr, cnp,
+//    cnr -- inherited from the flight condition and NOT corrected here.
+//    coeff_create quotes them per p-hat = p*b_ref/(2*AS) using the SOURCE speed
+//    state["AS"] = 10.2073 ft/s = 3.1112 m/s (Mach 0.03, sea level), while
+//    f16/aero_morelli.py forms phat = p*b_m/(2*V) with V the model's own speed,
+//    23.1146 m/s at the trim.  Both scalings are internally consistent -- Tornado
+//    works in feet and ft/s throughout, and atm["a"] = 1116.29 is ft/s -- so this
+//    is NOT a unit error inside Tornado; it is a flight-condition mismatch, and
+//    its effect is that dp-hat/dP is 1.70122 in Tornado against 12.63921 in the
+//    model, a factor of 7.42948.  The written rate derivatives are therefore
+//    7.43x smaller than the derivative with respect to the model's own phat, i.e.
+//    the model's rate-damping terms are 7.43x weaker than the solver's numbers
+//    imply at the trimmed speed, and CL_Q = 9.591 is not a textbook per-q-hat
+//    value.  NOT rescaled here: the plan fixes the flight condition from the
+//    source AERO, and rescaling it is a physics decision for a later task.
 //
 //    Two slots are stored in the STANDARD-AERO convention rather than the body-axis one: czq[0]
 //    holds CL_q (so it is -CL_Q) and cxq[0] holds CD_q (so it is +CX_Q), which is what both
