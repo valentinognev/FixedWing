@@ -16,7 +16,11 @@ location is ``$AID_SRC`` when set and otherwise
 vendored and nothing is added to a requirements file.  Both the sibling
 analysis and the sibling source tree are read-only: solver scratch goes to a
 ``TemporaryDirectory`` that is also the working directory for the duration of
-every solve.
+every solve.  The location is **recorded** in every generated file relative to the
+repository root (``../USAF_DATCOM/AircraftIntuitiveDesign/Python/src``), never as an
+absolute path: this repo is reachable through two mount points on the machine that
+generated them and ``Path.resolve()`` follows the symlink between them, so an
+absolute path would make the committed bytes machine-dependent.
 
 Tornado's axes, and why every moment here needs a sign the table then re-checks
 -----------------------------------------------------------------------------
@@ -183,13 +187,21 @@ rather than inherited, each with the measurement that shows it:
   against a centred 0.100375/deg secant at alpha = 4 deg), so every derivative
   read out of ``for006`` is multiplied by ``DEG_TO_RAD``.
 * ``aid/lateral.py:571`` ends its vertical-tail lift-slope formula with
-  ``vt_a * pi/180``.  That formula returns the units of the ``k = a0/(2*pi)`` it
-  was fed, and AID feeds it ``VT.a0`` = 6.8396 DEGREES, so the result is already
-  per degree and the ``pi/180`` makes it 57.3x too small.  Every quantity linear
-  in that slope -- ``CYb``, ``Cnb``, ``Clb``, ``Cn_r`` and the DATCOM Section 7
-  rate terms -- is recomputed.  The evidence it is a defect: AID's ``Clb`` is
-  -0.0031 against the sibling's own AVL gold -0.065868 for the same planform,
-  while the corrected -0.0690 is within 5 % of that gold.
+  ``vt_a * pi/180``, which is the wrong conversion in the wrong direction.  The
+  formula's ``k`` comes from ``aid/lateral.py:565``, which reads ``HT["a0"]`` --
+  not ``VT.a0``, which appears nowhere in the sibling tree -- and ``apply_handbook``
+  rewrites it to **6.8396 per radian**, so ``k = 1.0886/rad`` and the formula's
+  answer is **3.5004 per radian**.  That is the right size for a fin of AR ~ 1.8:
+  51 per cent of the 2-D 6.8396/rad, the reduction a low-aspect-ratio tail must
+  show, where a per-degree reading would imply about 200/rad.  The trailing
+  ``* pi/180`` then divides a per-radian number by 180 and stores 0.0610931, so
+  every quantity linear in that slope -- ``CYb``, ``Cnb``, ``Clb``, ``Cn_r`` and
+  the DATCOM Section 7 rate terms -- is ``DEG_TO_RAD`` too small and is recomputed.
+  The correction is a multiply by ``DEG_TO_RAD`` because that is the numerical
+  reciprocal of the bad division; it is **not** a per-degree-to-per-radian
+  conversion, and the two descriptions only coincide numerically.  The evidence it
+  is a defect: AID's ``Clb`` is -0.0031 against the sibling's own AVL gold -0.065868
+  for the same planform, while the corrected -0.0690 is within 5 % of that gold.
 * ``aid/lateral.py:616`` returns a hardcoded ``0.1`` for both ``Clda`` and
   ``Cnda``, and ``aid/handbook_controls.py`` has no aileron ``CY`` or ``Cn``
   column at all.  The placeholders are not used; the slots are ``None``, zeroed
@@ -250,6 +262,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import sys
 from contextlib import contextmanager
 from copy import deepcopy
@@ -257,7 +270,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from typing import Any, Iterator
+from typing import Any, Iterator, Sequence
 
 import numpy as np
 
@@ -335,12 +348,25 @@ CROSS_CHECK_MODELS = ("datcom", "avl", "flow5")
 # which makes CY_p identically zero for this unswept planform.
 SOURCE_ALPHA_INDEX_RULE = "the middle entry of AERO.ALSCHD, as aid/tornado_io.py::_build_state picks it"
 
+# Path.resolve() follows the symlink between the two mount points this repo is
+# reachable from on this machine, so an absolute path baked into a generated file
+# would differ between them and two builds on the two paths would not produce the
+# same bytes.  Every path a generated file records therefore goes through
+# `_stable_path`, which expresses it relative to REPO_ROOT.
 REPO_ROOT = Path(__file__).resolve().parents[2]
 AID_SRC_ENV = "AID_SRC"
 DEFAULT_AID_SRC = REPO_ROOT.parent / "USAF_DATCOM" / "AircraftIntuitiveDesign" / "Python" / "src"
 DEFAULT_SOURCE = REPO_ROOT.parent / "USAF_DATCOM" / "AircraftIntuitiveDesign" / "Analyses" / "Cessna172.jsonc"
 DEFAULT_OUT_DIR = REPO_ROOT / "data" / "planes" / "cessna172"
 BUILD_COMMAND = "python3 scripts/build_cessna172_aero.py"
+
+# Where build_all puts each cross-check solver's rest-of-output.  Named once so a
+# model file's header and its provenance cannot disagree about the location.
+RAW_OUTPUT_LOCATION = "geometry.jsonc, under raw_cross_checks.{model}"
+
+# The three cross-check runs, keyed by model name, so build_all and main() share
+# one dispatch instead of two copies of it.
+_CROSS_CHECK_RUNNERS = {"datcom": "datcom_run", "avl": "avl_run", "flow5": "flow5_run"}
 
 # The source's own mass: AERO.WT slugs, read from the source file at run time.
 # A slug IS a mass unit, so the honest conversion is WT * SLUG_TO_KG = 72.96951 kg
@@ -492,6 +518,25 @@ def aid_src() -> Path:
 def default_source() -> Path:
     """The sibling analysis file this converter reads.  Never written to."""
     return DEFAULT_SOURCE
+
+
+def _stable_path(path: Path | str | None) -> str:
+    """A path string that does not change with the mount point.
+
+    This repository is reachable as both ``/home/valentin/Projects/FlightSimulation/
+    FixedWing`` and ``/mnt/VirtualMachine/FlightSimulation/FixedWing`` on the machine
+    that generated these files -- the first is a symlink onto the second -- and
+    ``Path.resolve()`` follows it.  A generated file that recorded an absolute path
+    would therefore carry the mount prefix into the committed bytes and would not
+    be reproducible on the other path.  Everything inside or beside the repo is
+    recorded relative to the repo root instead, which is where a reader is standing
+    anyway; the sibling is a sibling, so it reads ``../USAF_DATCOM/...``.
+
+    ``os.path.relpath`` is used rather than a hand-rolled prefix strip so that an
+    ``$AID_SRC`` override pointing anywhere still gets a deterministic string, even
+    if that string is a long chain of ``..``.
+    """
+    return os.path.relpath(Path(path if path is not None else DEFAULT_SOURCE).resolve(), REPO_ROOT)
 
 
 @contextmanager
@@ -1121,8 +1166,9 @@ def tornado_run(source: Path | None = None) -> TornadoRun:
         "solver": "tornado",
         "solver_version": "aid.tornado (sibling package, imported at call time)",
         "mesh": list(TORNADO_MESH),
-        "source": str(Path(source) if source is not None else default_source()),
-        "aid_src": str(aid_src()),
+        "source": _stable_path(source),
+        "aid_src": _stable_path(aid_src()),
+        "aid_src_from_env": bool(os.environ.get(AID_SRC_ENV)),
         "extra_panel_cl_share": extra_share,
         "flight_condition": {
             "mach": geometry.mach,
@@ -1405,8 +1451,9 @@ def _cross_check_provenance(
         "solver": model,
         "solver_version": solver_version,
         "mesh": list(geometry.mesh),
-        "source": str(Path(source) if source is not None else default_source()),
-        "aid_src": shared["aid_src"],
+        "source": _stable_path(source),
+        "aid_src": _stable_path(aid_src()),
+        "aid_src_from_env": bool(os.environ.get(AID_SRC_ENV)),
         "flight_condition": flight_condition,
         "moment_reference": moment_reference,
         "sign_convention": {
@@ -1444,8 +1491,9 @@ def _cross_check_provenance(
             "nonlinear": "every slot in plane.groups.nonlinear_index is exactly 0.0",
             "CD_alpha": "cx has no CD*alpha term in this schema, so CD_alpha is 0.0 and is "
                         "declared rather than approximated",
-            "flap": "the Morelli schema has no flap slot; the handbook/AVL/flow5 flap rows are "
-                    "kept in geometry.jsonc as raw output and mapped to nothing",
+            "flap": "the Morelli schema has no flap slot, so the handbook's flap row maps to "
+                    "nothing.  It is NOT carried in this file; provenance.raw_output_location "
+                    "says where the build put it, and provenance.control_rows holds it",
         },
         "mapping": collector.mapping,
         "flipped": sorted(collector.flipped),
@@ -1507,6 +1555,10 @@ def tornado_derivatives(source: Path | None = None) -> DerivativeSet:
 # recorded in every file; neither is silently reconciled.
 SOURCE_SPEED_AS_REPORTED = 10.207345160909794
 SOURCE_SPEED_REPORTED_UNIT = "ft/s in Tornado's and AVL's AID drivers; m/s in flow5's SI deck"
+# The V_trim/V_source ratio the two FEET-frame solvers carry, for the flow5 header to
+# quote beside its own.  Computed here from the same constant rather than typed, so the
+# two cannot drift apart.
+SPEED_FACTOR_FEET_FRAME = 23.1146 / (SOURCE_SPEED_AS_REPORTED * FT_TO_M)
 
 
 def _source_alpha_index(ac: Any) -> int:
@@ -1601,8 +1653,10 @@ def _verify_cg_reference(
         "dx_m": 0.0,
         "dy_m": 0.0,
         "dz_m": 0.0,
-        "note": f"{solver} reports every moment about AERO.XCG, read back from its own input and "
-                "checked against the source; dx = dy = dz = 0, so no moment shift is applied",
+        "note": f"{solver} reports every moment about AERO.XCG, and the station was read back "
+                "out of the input the SOLVER was given rather than out of the same in-memory "
+                "value, then compared with the source; dx = dy = dz = 0, so no moment shift "
+                "is applied",
     }
 
 
@@ -1634,9 +1688,9 @@ def _datcom_section7(
         Cn_p   = -CL/8 - 2 * CYb * l * (h - h_p) / b^2
         Cn_r   = -2 * a_VT * swash * (S_VT/S) * (l/b)^2
 
-    ``vt_a_per_rad`` is the CORRECTED per-radian vertical-tail lift slope, because
-    ``aid/lateral.py:571`` multiplies it by ``pi/180`` in the wrong direction (see
-    ``_datcom_lateral``), so it cannot be read back off the aircraft.
+    ``vt_a_per_rad`` is the CORRECTED per-radian vertical-tail lift slope: the one
+    on the aircraft has been divided by ``pi/180`` at ``aid/lateral.py:571`` (see
+    ``_datcom_lateral``), so it cannot be read back off it.
     """
     wg, ht, vt = ac.WG, ac.HT, ac.VT
     s_ref = float(_last(wg["S"]))
@@ -1692,12 +1746,31 @@ def _datcom_lateral(lateral: dict, ac: Any, vt_a_per_rad: float) -> dict[str, fl
     """DATCOM's lateral static set, with the vertical-tail lift slope corrected.
 
     ``aid/lateral.py:571`` ends its tail lift-slope formula with
-    ``vt_a = vt_a * pi / 180``.  That formula returns the same units as the
-    ``k = a0/(2*pi)`` it was fed, and AID feeds it ``VT.a0`` = 6.8396 DEGREES, so
-    the formula already returns a per-degree number and the ``* pi/180`` makes it
-    57.3x too small.  Measured on this aircraft, with the correction
-    ``Clb = -0.0680`` against the sibling's own AVL gold ``Clb = -0.065868``; with
-    the sibling's value, ``Clb = -0.0031``, a factor 21.8 off the same gold.
+    ``vt_a = vt_a * pi / 180``, which is the wrong conversion in the wrong
+    direction.  The formula itself,
+
+        vt_a = 2*pi*AR_eff / (2 + sqrt((AR_eff*B/k)^2*(1+tan^2(L)/B^2) + 4)),
+        k   = a0 / (2*pi),                        <- aid/lateral.py:565, reads HT["a0"]
+
+    returns a slope in the units of the Helmbold ``k`` it was fed, and AID feeds it
+    ``apply_handbook``'s rewritten ``HT.a0`` -- 6.8396 PER RADIAN on this planform,
+    so ``k = 1.0886/rad`` and the formula's answer is **3.5004 per radian**.  That
+    is the physically right size for a fin of AR ~ 1.8: 3.5004 is 51 per cent of the
+    2-D 6.8396/rad, the reduction a low-aspect-ratio tail must show.  Reading it as
+    per DEGREE instead would imply about 200/rad, which is not a lift slope anything
+    has.  The trailing ``* pi/180`` then divides a per-radian number by 180 and
+    stores 0.0610931, i.e. ``DEG_TO_RAD`` too small, and every quantity linear in
+    that slope inherits it.
+
+    So the correction here is numerically a multiply by ``DEG_TO_RAD`` -- undoing
+    that division -- and NOT a per-degree-to-per-radian conversion.  The two
+    descriptions coincide numerically because the error happens to be a factor of
+    180 the wrong way, and only the second one is true.
+
+    Measured, which is what settles it: with the sibling's value ``Clb =
+    -0.003091`` against the sibling's own AVL gold ``Clb = -0.065868`` for the same
+    planform, a factor 21.7; with the correction ``Clb = -0.068966``, within 5 per
+    cent of that gold.
 
     Every quantity ``lateral_static`` returns that is LINEAR in that slope is
     therefore corrected, and the rest is left alone because it is already per
@@ -1714,6 +1787,9 @@ def _datcom_lateral(lateral: dict, ac: Any, vt_a_per_rad: float) -> dict[str, fl
         -float(vt["k"]) * float(vt["a"]) * float(vt["swash"])
         * float(_last(vt["S"])) / float(_last(ac.WG["S"]))
     )
+    # Undo aid/lateral.py:571's `* pi/180`, which divided a per-radian slope by
+    # 180.  DEG_TO_RAD is the numerical reciprocal of that division; it is NOT a
+    # per-degree-to-per-radian conversion here -- see the docstring.
     cyb_v = cyb_v_as_reported * DEG_TO_RAD
     vt_h, vt_l = float(vt["h"]), float(vt["l"])
     span = float(ac.WG["b"])
@@ -1728,6 +1804,17 @@ def _datcom_lateral(lateral: dict, ac: Any, vt_a_per_rad: float) -> dict[str, fl
         "vt_a_as_reported": float(vt["a"]),
         "vt_a_per_rad": vt_a_per_rad,
         "units_factor": DEG_TO_RAD,
+        "units_factor_meaning": "aid/lateral.py:571 divided a PER RADIAN slope by pi/180, "
+                                "so this multiplies it back by DEG_TO_RAD.  It is the "
+                                "numerical reciprocal of that division, not a "
+                                "per-degree-to-per-radian conversion",
+        "ht_a0_per_radian_as_read": float(_last(ac.HT["a0"])),
+        "helmbold_k_per_radian": float(_last(ac.HT["a0"])) / (2.0 * math.pi),
+        "mechanism": "aid/lateral.py:565 reads HT['a0'] (rewritten by apply_handbook to "
+                     "6.8396 PER RADIAN), so k = a0/(2*pi) = 1.0886/rad and the tail slope "
+                     "formula returns 3.5004 PER RADIAN -- 51 per cent of the 2-D 6.8396/rad, "
+                     "the reduction a fin of AR ~ 1.8 must show.  aid/lateral.py:571 then "
+                     "multiplies that by pi/180, which is the defect",
     }
 
 
@@ -1756,7 +1843,7 @@ def _cross_check_inputs(source: Path | None) -> tuple[Any, dict, SimpleNamespace
         raise FileNotFoundError(f"{path} is missing; the sibling analysis tree is read-only input")
     ac = load_jsonc(path)
     ac.AERO["alpha"] = float(np.asarray(ac.AERO["ALSCHD"], dtype=float).reshape(-1)[_source_alpha_index(ac)])
-    return ac, {"aid_src": str(root)}, SimpleNamespace(load_jsonc=load_jsonc), _numpy_alias()
+    return ac, {}, SimpleNamespace(load_jsonc=load_jsonc), _numpy_alias()
 
 
 def datcom_run(source: Path | None = None) -> CrossCheckRun:
@@ -1792,14 +1879,16 @@ def datcom_run(source: Path | None = None) -> CrossCheckRun:
 
     collector = _Collector()
     with _scratch() as tmp:
-        table = _run_datcom(ac, tmp / "datcom")
+        table, cards = _run_datcom(ac, tmp / "datcom")
+    solver_station, station_evidence = _datcom_cg_station(cards)
     stability = apply_handbook(
         ac, angl=False, slipstream=False, slipstream_data=(0.5, 0.9),
         multhopp=True, trim_mode=0, trim_fix="both",
     )
     lateral = dict(stability["lateral"])
     geometry = _reference_geometry(ac, mesh=("none", "none"))
-    moment_reference = _verify_cg_reference(geometry, float(_first(ac.AERO["XCG"])), solver="DATCOM")
+    moment_reference = _verify_cg_reference(geometry, solver_station, solver="DATCOM")
+    moment_reference.update(station_evidence)
 
     vt_a_per_rad = float(ac.VT["a"]) * DEG_TO_RAD
     lateral_fixed = _datcom_lateral(lateral, ac, vt_a_per_rad)
@@ -1919,9 +2008,9 @@ def datcom_run(source: Path | None = None) -> CrossCheckRun:
             field, lateral_fixed[correct], tornado_key=f"aid.lateral.lateral_static.{key}",
             solver_value=float(lateral[key]),
             conversion="AID's value with its own vertical-tail term re-evaluated using the "
-                       f"tail's lift slope x {DEG_TO_RAD}: aid/lateral.py:571 multiplies that "
-                       f"slope by pi/180 in the WRONG direction, so AID's {key} = "
-                       f"{float(lateral[key]):.6g} is 57.3x too small in its tail part (AID's "
+                       f"tail's lift slope x {DEG_TO_RAD}.  aid/lateral.py:571 divides that "
+                       f"PER RADIAN slope by pi/180, so AID's {key} = "
+                       f"{float(lateral[key]):.6g} has a tail part 57.3x too small (AID's "
                        "Clb = -0.003091 against the sibling's own AVL gold Clb = -0.065868, "
                        "and against AVL's alpha = 4 deg row -0.045756 this adapter writes "
                        "-0.068966)",
@@ -2074,18 +2163,84 @@ def datcom_run(source: Path | None = None) -> CrossCheckRun:
     )
 
 
-def _run_datcom(ac: Any, workdir: Path) -> dict:
-    """Run the real Fortran binary in scratch and return its parsed stability table.
+def _run_datcom(ac: Any, workdir: Path) -> tuple[dict, dict[str, Any]]:
+    """Run the real Fortran binary in scratch; return its table and its echo.
 
     ``aid.datcom_run.run_datcom`` writes ``for005.dat`` into ``workdir`` and shells
-    out to ``Matlab/fsroot/code/DATCOM/datcom`` there.  A missing binary surfaces
-    as ``FileNotFoundError`` from ``aid.paths.datcom_wrapper`` and is recorded by
-    the caller as a missing binary rather than raised into a crash, per the plan's
-    "Fail-closed".
+    out to ``Matlab/fsroot/code/DATCOM/datcom`` there, which leaves both the card it
+    was given (``for005.dat``) and the Fortran's own listing of the cards it read
+    (``datcom.out``, copied to ``for006.dat`` by the wrapper) behind.  A missing
+    binary surfaces as ``FileNotFoundError`` from ``aid.paths.datcom_wrapper`` and
+    is recorded by the caller as a missing binary rather than raised into a crash,
+    per the plan's "Fail-closed".
+
+    Both files are returned because the second one is what makes the moment
+    reference VERIFIABLE rather than assumed: the Fortran echoes its ``$SYNTHS``
+    namelist back, and ``$SYNTHS XCG=`` is the station its moments are taken about.
     """
     from aid.datcom_run import run_datcom
 
-    return run_datcom(ac, workdir)
+    table = run_datcom(ac, workdir)
+    return table, {
+        "for005": _read_card(workdir / "for005.dat"),
+        "fortran_echo": _read_card(workdir / "datcom.out"),
+    }
+
+
+def _read_card(path: Path) -> list[str]:
+    """Every ``$`` namelist line a DATCOM card file or listing contains."""
+    if not path.is_file():
+        return []
+    return [line for line in path.read_text(errors="replace").splitlines() if "$" in line]
+
+
+def _card_value(lines: list[str], key: str) -> list[float]:
+    """Every ``KEY=number`` on the ``$`` namelist lines, one per occurrence.
+
+    A regex rather than a comma split, because a Fortran namelist's FIRST key is
+    preceded by the namelist's own name -- ``$SYNTHS XCG=2.94,...`` -- so
+    ``"SYNTHS XCG"`` would never compare equal to ``"XCG"``.  ``\b`` also stops
+    ``XCG=`` from matching inside a longer name.
+    """
+    pattern = re.compile(r"\b" + re.escape(key) + r"\s*=\s*([-+0-9.eE]+)")
+    return [float(match.group(1)) for line in lines for match in pattern.finditer(line)]
+
+
+def _datcom_cg_station(cards: dict[str, list[str]]) -> tuple[float, dict[str, Any]]:
+    """The moment station DATCOM actually used, read back out of its own output.
+
+    ``aid/datcom_io.py``'s ``write_synths`` puts ``XCG={aero['XCG']}`` on the
+    ``$SYNTHS`` namelist, and the Fortran echoes the whole namelist back into
+    ``datcom.out``.  Every occurrence is collected and required to agree, so the
+    number compared against ``AERO.XCG`` is the station the SOLVER read rather than
+    the one this converter happened to be holding -- which is the whole point of the
+    plan's "verify, do not assume".
+    """
+    written = _card_value(cards["for005"], "XCG")
+    echoed = _card_value(cards["fortran_echo"], "XCG")
+    evidence: dict[str, Any] = {
+        "for005_synths_xcg": written,
+        "fortran_echo_synths_xcg": echoed,
+        "card_line": "the Fortran echoes its $SYNTHS namelist back into datcom.out; "
+                     "$SYNTHS XCG is the station its moments are taken about",
+    }
+    if not echoed:
+        raise ValueError(
+            "the Fortran's own output carries no $SYNTHS XCG=, so the station its "
+            "moments are taken about cannot be read back; comparing AERO.XCG with "
+            "itself would prove nothing"
+        )
+    if any(value != echoed[0] for value in echoed):
+        raise ValueError(f"the Fortran echoed $SYNTHS XCG= as {echoed}; it did not agree with itself")
+    if written and any(value != written[0] for value in written):
+        raise ValueError(f"for005.dat carries $SYNTHS XCG= as {written}, not one value")
+    if written and written[0] != echoed[0]:
+        raise ValueError(
+            f"for005.dat has $SYNTHS XCG={written[0]} but the Fortran echoed "
+            f"{echoed[0]}; it did not read the card this converter wrote"
+        )
+    evidence["source"] = "the Fortran's own echo of $SYNTHS XCG in datcom.out"
+    return echoed[0], evidence
 
 
 def datcom_derivatives(source: Path | None = None) -> DerivativeSet:
@@ -2508,13 +2663,27 @@ def flow5_run(source: Path | None = None) -> CrossCheckRun:
         ("cn_da", "aileron yaw"), ("cl_dr", "rudder roll"),
         ("cy_dr", "rudder side force"), ("cn_dr", "rudder yaw"),
     ]
+    emitted = sorted(polar)
+    lateral_emitted = sorted(set(emitted) & {"CY", "Cl", "Cn"})
     for field, quantity in absent:
+        if lateral_emitted:
+            lateral_note = (
+                f"  NOTE: the runner DOES emit {', '.join(lateral_emitted)}, but only at "
+                f"beta = {float(np.asarray(polar['beta']).reshape(-1)[0]):g} deg -- the deck "
+                "this converter builds requests no sideslip sweep -- so there is no DERIVATIVE "
+                "to take, and aid/axes.py records that flow5's Forward-Right-Down sign map "
+                "for those channels is not filled in yet (\"Task 2.3 owns filling this map "
+                "in\"), so consuming them is a separate piece of work this adapter does not "
+                "do.  See provenance.coverage.not_yet_consumed."
+            )
+        else:
+            lateral_note = ""
         collector.absent(
             field, "flow5 polar / aid.flow5_controls",
-            reason=f"{quantity}: flow5's runner (FLOW5/run/flow5_run.cpp) reads only "
-                   "polar.alpha_deg, calls setComputeDerivatives(false) and serialises only "
-                   f"alpha, CL, CD, Cm, CLa and Cma -- there is no {quantity} anywhere in its "
-                   "output",
+            reason=f"{quantity}: flow5's runner (FLOW5/run/flow5_run.cpp) calls "
+                   "setComputeDerivatives(false) and sweeps alpha only; it emitted "
+                   f"{len(emitted)} keys over that sweep ({', '.join(emitted)}) and none of "
+                   f"them carries a {quantity} derivative.{lateral_note}",
         )
 
     derivatives = collector.derivative_set()
@@ -2548,12 +2717,24 @@ def flow5_run(source: Path | None = None) -> CrossCheckRun:
                                  if getattr(derivatives, f) is None),
                 "why": "flow5 is a steady thin-lattice polar code whose runner emits six "
                        "numbers; it is a longitudinal cross-check, not a 6-DOF data set",
+                "not_yet_consumed": {
+                    "lateral_channels_emitted_at_beta_zero": lateral_emitted,
+                    "why": "the sibling's flow5 now emits CY, Cl and Cn, but only at "
+                           "beta = 0 because the deck requests no sideslip sweep, and "
+                           "aid/axes.py records that flow5's Forward-Right-Down sign map for "
+                           "those channels is NOT filled in yet -- 'Task 2.3 owns filling "
+                           "this map in as {\"Cx\": -1, \"Cz\": -1, \"Cl\": -1, "
+                           "\"Cn\": -1}'.  Consuming them therefore means both sweeping beta "
+                           "and applying a sign map the sibling has not shipped, so this "
+                           "adapter does not and declares it instead of guessing",
+                },
                 "not_a_field": {
                     "cd_de": "flow5 DOES produce an elevator drag derivative -- "
                              "aid.flow5_controls keeps ('CL', 'CD', 'Cm') for the elevator --"
                              " but this schema has no cd_de slot in any of the 19 arrays, so"
-                             " it maps to nothing and is recorded in geometry.jsonc as raw"
-                             " output instead",
+                             " it maps to nothing.  It is NOT carried in this file;"
+                             " provenance.raw_output_location says where the build put it, and"
+                             " provenance.control_rows holds the number",
                 },
                 "invariant_band_note": (
                     f"cm[1] = {coefficients['cm'][1]:.6f}/rad is 4.9 % BELOW the plan's "
@@ -2776,8 +2957,23 @@ def _trim(
     return aircraft_block, initial, controls, trim_block
 
 
-def geometry_block(run: TornadoRun) -> dict[str, Any]:
-    """The ``geometry.jsonc`` payload: SI geometry plus every raw solver number."""
+def geometry_block(
+    run: TornadoRun, cross_runs: Sequence[CrossCheckRun] = ()
+) -> dict[str, Any]:
+    """The ``geometry.jsonc`` payload: SI geometry plus every raw solver number.
+
+    ``cross_runs`` are the DATCOM / AVL / flow5 runs, and their ``raw`` blocks land
+    here under ``raw_cross_checks``.  That is the plan's requirement that this file
+    "carries the SI reference geometry and the unconverted per-degree solver
+    output": the Fortran's own ``for006`` table, AID's pre-correction handbook rows,
+    AVL's per-alpha ``.st`` rows and flow5's deck and polar are otherwise not
+    recoverable from the committed tree at all, because a model file's
+    ``provenance.mapping`` carries only the one raw number behind each slot.
+
+    With ``cross_runs`` empty -- which is what the Tornado-only ``build()`` does --
+    the key is absent rather than empty, so nothing can claim a block is here when
+    it is not.
+    """
     geometry = run.geometry
     return {
         "model": "geometry",
@@ -2816,9 +3012,12 @@ def geometry_block(run: TornadoRun) -> dict[str, Any]:
         },
         "provenance": {
             key: run.provenance[key]
-            for key in ("solver", "mesh", "source", "moment_reference", "sign_convention",
-                        "cl_alpha_cross_check", "cd0", "flipped", "not_normalised", "missing")
+            for key in ("solver", "mesh", "source", "aid_src", "moment_reference",
+                        "sign_convention", "cl_alpha_cross_check", "cd0", "flipped",
+                        "not_normalised", "missing")
         },
+        **({"raw_cross_checks": {cross.model: cross.raw for cross in cross_runs}}
+           if cross_runs else {}),
     }
 
 
@@ -2881,7 +3080,9 @@ def _slot_lines(run: TornadoRun | CrossCheckRun) -> list[str]:
     return lines
 
 
-def header_comment(run: TornadoRun, kind: str) -> str:
+def header_comment(
+    run: TornadoRun, kind: str, cross_runs: Sequence[CrossCheckRun] = ()
+) -> str:
     """The eight-item ``//`` block every generated file opens with.
 
     This is not decoration: it is the only place a future agent learns that the
@@ -2895,7 +3096,10 @@ def header_comment(run: TornadoRun, kind: str) -> str:
         f"// {kind} for the Cessna 172 source analysis, generated -- do not hand-edit.",
         "//",
         "// 1. SOLVER, MESH, FLIGHT CONDITION",
-        f"//    Solver: Tornado, via the sibling package aid.tornado (imported from {run.provenance['aid_src']}).",
+        f"//    Solver: Tornado, via the sibling package aid.tornado (imported from"
+        f" {run.provenance['aid_src']},",
+        "//    a path relative to THIS repository's root so the bytes do not depend on which",
+        "//    mount point the repo is reached through; see provenance.aid_src.",
         f"//    Mesh: {TORNADO_MESH[0]} chordwise x {TORNADO_MESH[1]} spanwise (the AID batch"
         " default).  NP[0],",
         "//    the AR 33.3, S 3 ft^2 panel, is KEPT in the lattice and carries",
@@ -3072,12 +3276,15 @@ def header_comment(run: TornadoRun, kind: str) -> str:
         f"//    cd python && {BUILD_COMMAND}",
         "//    Nothing else writes these files; the sibling analysis and the sibling aid tree",
         "//    are read-only inputs and all solver scratch goes to a temporary directory.",
+        *_raw_output_lines(cross_runs),
         "// " + "=" * 74,
     ]
     return "\n".join(common + _slot_lines(run) + tail)
 
 
-def cross_check_header(run: CrossCheckRun, kind: str) -> str:
+def cross_check_header(
+    run: CrossCheckRun, kind: str, raw_output_location: str | None = None
+) -> str:
     """The same eight-item ``//`` block, written for DATCOM, AVL or flow5.
 
     Items 2, 3, 6 and 8 are the same facts as ``header_comment`` states for
@@ -3149,13 +3356,23 @@ def cross_check_header(run: CrossCheckRun, kind: str) -> str:
             "//          recomputed in this converter with the factor applied by hand, and the",
             "//          uncorrected numbers are kept in provenance.handbook_cross_check.",
             "//      (2) aid/lateral.py:571 ends its tail lift-slope formula with"
-            " `vt_a * pi/180`.",
-            "//          That formula returns the units of the `k = a0/(2*pi)` it was fed and"
-            " AID feeds it",
-            "//          VT.a0 = 6.8396 DEGREES, so the result is already per degree and the"
-            " pi/180 makes it",
-            "//          57.3x too small.  Every quantity linear in that slope is corrected:"
-            " CYb, Cnb,",
+            " `vt_a * pi/180`,",
+            "//          which is the wrong conversion in the wrong direction.  The formula's",
+            "//          `k` comes from aid/lateral.py:565, which reads HT[\'a0\'] -- NOT",
+            "//          VT.a0, which appears nowhere in the sibling tree -- and",
+            f"//          apply_handbook rewrites that to"
+            f" {float(run.provenance['handbook_cross_check']['lateral_corrected']['ht_a0_per_radian_as_read']):.4f}"
+            " PER RADIAN, so",
+            f"//          k = a0/(2*pi) ="
+            f" {float(run.provenance['handbook_cross_check']['lateral_corrected']['helmbold_k_per_radian']):.4f}"
+            "/rad and the formula answers",
+            f"//          {float(run.provenance['handbook_cross_check']['lateral_corrected']['vt_a_per_rad']):.4f}"
+            " PER RADIAN -- 51 per cent of the 2-D",
+            "//          6.8396/rad, the reduction a fin of AR ~ 1.8 must show, where a",
+            "//          per-degree reading would imply about 200/rad.  The trailing pi/180",
+            "//          then divides a per-radian number by 180 and stores 0.0610931, so",
+            "//          every quantity linear in that slope is 57.3x too small and is"
+            " corrected: CYb, Cnb,",
             "//          Clb and the three Section 7 rate terms that use it.  The evidence that",
             f"//          the correction is the right one: AID's Clb is"
             f" {float(run.provenance['handbook_cross_check']['aid_lateral_as_reported']['Clb']):.6f},"
@@ -3181,19 +3398,28 @@ def cross_check_header(run: CrossCheckRun, kind: str) -> str:
             f" {run.provenance['cd0']['ratio_datcom_to_aid']:.3f}x the handbook build-up;"
             " both are recorded.",
         ]
+        echoed = run.provenance["moment_reference"]["fortran_echo_synths_xcg"]
+        written_card = run.provenance["moment_reference"]["for005_synths_xcg"]
         item5 = [
-            f"//    NO MOMENT SHIFT WAS APPLIED, and that is verified rather than assumed."
-            f"  The Fortran's $SYNTHS card carries",
-            f"//    XCG = {run.provenance['moment_reference']['aero_xcg_ft']:g} ft, which is the"
-            " station this converter read back out of",
-            f"//    its own card file and compared against AERO.XCG ="
-            f" {run.provenance['moment_reference']['aero_xcg_ft']:g} ft; AID's handbook pass"
-            " takes the same station",
-            "//    for the VT arms (hp = VT.Z + VT.ymac - AERO.ZCG, lp = VT.X + VT.xmac +",
-            "//    VT.cbar/4 - AERO.XCG).  dx = dy = dz = 0, so every moment here is already"
-            " about the CG and",
-            "//    cm[1], cm[0], cm[2], cmq[0], cn[0], cnp[0], cnr[0] are used as they stand."
-            "  Contrast",
+            "//    NO MOMENT SHIFT WAS APPLIED, and that is VERIFIED, not assumed: the station",
+            "//    is read back out of what the Fortran itself wrote, not out of the same",
+            "//    in-memory value it was given.",
+            f"//    aid/datcom_io.py's write_synths puts XCG={{aero['XCG']}} on the $SYNTHS"
+            f" namelist, so for005.dat",
+            f"//    carries $SYNTHS XCG = {written_card[0]:g} ft and the Fortran ECHOES that"
+            " namelist back into",
+            f"//    datcom.out, {len(echoed)} time(s), all {echoed[0]:g} ft.  That echo is the"
+            " number compared against",
+            f"//    AERO.XCG = {run.provenance['moment_reference']['aero_xcg_ft']:g} ft; a"
+            " disagreement between the card",
+            "//    and the echo, an echo that disagrees with itself, or a MISSING echo each"
+            " raise, so this check",
+            "//    cannot pass by comparing AERO.XCG with itself.  Both lists are in"
+            " provenance.moment_reference.",
+            "//    AID's handbook pass takes the same station for the VT arms",
+            "//    (hp = VT.Z + VT.ymac - AERO.ZCG, lp = VT.X + VT.xmac + VT.cbar/4 - AERO.XCG).",
+            "//    dx = dy = dz = 0, so every moment here is already about the CG and cm[1],",
+            "//    cm[0], cm[2], cmq[0], cn[0], cnp[0], cnr[0] are used as they stand.  Contrast",
             "//    tornado.jsonc, whose ref_point is 2.94 ft AHEAD of the CG and is corrected"
             " by dx = -0.896112 m.",
         ]
@@ -3208,17 +3434,14 @@ def cross_check_header(run: CrossCheckRun, kind: str) -> str:
             " ft), which is why",
             "//    tornado.jsonc needs a shift and this file does not.",
         ]
+        absent = len(run.provenance["missing"])
+        plural = "SLOT IS" if absent == 1 else "SLOTS ARE"
         gaps = [
-            "//    THREE SLOTS ARE GENUINELY ABSENT and are declared, not guessed:",
-            "//      cy[1]   cy_da -- aid/handbook_controls.py has no aileron side-force column"
-            " at all and",
-            "//          aid/lateral.py:616's Clda is a hardcoded 0.1 placeholder",
-            "//      cnda[0] cn_da -- aid/lateral.py:616's Cnda is a hardcoded 0.1 placeholder"
-            " and",
-            "//          aid/handbook_controls.py omits aileron yaw entirely",
-            "//      cxq[0]  cd_q  -- DATCOM Section 7 has NO axial rate derivative at all and",
-            "//          aid/longitudinal_dynamic.py hardcodes cxq = 0.0, which records the",
-            "//          absence of a formula rather than a computed zero",
+            f"//    {absent} {plural} GENUINELY ABSENT -- zeroed and declared, with the"
+            " reason generated from",
+            "//    provenance.missing so this list cannot go stale against the slot table"
+            " below:",
+            *_gap_lines(run),
             "//    Every other slot is real output.  CD_alpha is not representable in this",
             "//    schema (cx has no CD*alpha term) and is 0.0 and declared.",
         ]
@@ -3226,7 +3449,11 @@ def cross_check_header(run: CrossCheckRun, kind: str) -> str:
         item1 = [
             "//    Solver: AVL, via aid.avl_io.run_avl_full for the stability sweep and",
             "//    aid.avl_controls.avl_controls for the control derivatives, both from the",
-            f"//    sibling package imported from {run.provenance['aid_src']}.",
+            f"//    sibling package imported from {run.provenance['aid_src']}, a path relative to"
+            " this",
+            "//    repository's root so the bytes do not depend on which mount point the repo is"
+            " reached",
+            "//    through; see provenance.aid_src.",
             f"//    Mesh: {AVL_MESH[0]} spanwise x {AVL_MESH[1]} chordwise.  aid/avl_controls.py's"
             " own default, so the",
             "//    stability run and the control run agree.  AVL keeps only WG, HT and VT"
@@ -3328,16 +3555,16 @@ def cross_check_header(run: CrossCheckRun, kind: str) -> str:
             " DATCOM cannot.",
             "//    CD_alpha is not representable in this schema (cx has no CD*alpha term) and"
             " is 0.0 and",
-            "//    declared.  cxq[0] is written 0.0: AVL's .sb carries a CXq, but"
-            " run_avl_full's stacked .st",
-            "//    does not, so no axial rate derivative was taken and the zero is a real"
-            " value, not a gap.",
+            "//    declared.",
+            *_gap_lines(run),
         ]
     else:
         item1 = [
             "//    Solver: flow5, via aid.flow5_io.write_flow5_deck / run_flow5_native and",
             f"//    aid.flow5_controls.flow5_controls, from the sibling package imported from"
-            f" {run.provenance['aid_src']}.",
+            f" {run.provenance['aid_src']},",
+            "//    a path relative to this repository's root so the bytes do not depend on which",
+            "//    mount point the repo is reached through; see provenance.aid_src.",
             f"//    Mesh: {FLOW5_MESH[0]} spanwise x {FLOW5_MESH[1]} chordwise, read by"
             " write_flow5_deck as (ny, nx).  The deck",
             "//    carries WG, HT, VT and NP[0] (\"Wing 2\"), so NP[0] IS in this file even"
@@ -3361,9 +3588,12 @@ def cross_check_header(run: CrossCheckRun, kind: str) -> str:
             f"//    actually flies at is {condition['v_trim_mps']:.4f} m/s, a factor"
             f" {condition['speed_ratio_v_trim_over_v_source']:.3f} higher, so this file's CLa",
             "//    and Cma describe a slower and therefore thinner wing than the one flown.",
-            "//    That factor is 2.26 here and 7.43 in tornado.jsonc and avl.jsonc for one",
-            "//    reason only: flow5's deck is SI, so its 10.2073 really is 10.2073 m/s, while",
-            "//    the other two feed 10.2073 into a FEET frame, where it means 3.1112 m/s.",
+            f"//    That factor is {condition['speed_ratio_v_trim_over_v_source']:.2f} here"
+            f" and {SPEED_FACTOR_FEET_FRAME:.2f} in tornado.jsonc and",
+            "//    avl.jsonc for one reason only: flow5's deck is SI, so its"
+            f" {geometry.v_true_mps:.4f} really is {geometry.v_true_mps:.4f} m/s,",
+            f"//    while the other two feed {SOURCE_SPEED_AS_REPORTED:.4f} into a FEET frame,"
+            f" where it means {geometry.as_mps:.4f} m/s.",
             "//    flow5 has no rate slots at all, so the factor bites only its static set.",
         ]
         item4 = [
@@ -3418,17 +3648,41 @@ def cross_check_header(run: CrossCheckRun, kind: str) -> str:
             "//    Every sign is decided mechanically by aero_convert.units.normalise_sign"
             " against SIGN_INVARIANTS.",
         ]
+        produced = run.provenance["coverage"]["produced"]
+        coverage = run.provenance["coverage"]
         gaps = [
-            "//    EIGHTEEN OF THE TWENTY-FIVE SLOTS ARE ABSENT, and every one is declared in",
-            "//    provenance.missing with its reason rather than guessed:",
-            f"//      produced: {', '.join(run.provenance['coverage']['produced'])}",
-            f"//      absent:   {', '.join(run.provenance['coverage']['absent'])}",
+            f"//    {len(run.provenance['missing'])} OF THE {len(ALL_DERIVATIVE_FIELDS)} SLOTS"
+            " ARE ABSENT -- zeroed and declared",
+            "//    in provenance.missing with a reason rather than guessed.  Both lists below are",
+            "//    GENERATED from the run's own coverage block, so they cannot go stale against",
+            "//    the slot table:",
+            f"//      produced ({len(produced)}): {', '.join(produced)}",
+            f"//      absent   ({len(coverage['absent'])}): {', '.join(coverage['absent'])}",
+            *_gap_lines(run),
             "//    This is flow5's real capability, measured, not a shortfall of this adapter:",
-            "//    its runner emits six numbers.  flow5 is a LONGITUDINAL cross-check on the",
-            "//    lift slope, the pitching slope, the two intercepts, the elevator and the",
-            "//    parasite drag -- it is not a 6-DOF data set and must not be flown as one.",
+            f"//    its runner emits {len(run.raw['output_keys'])} keys over the alpha sweep"
+            f" ({', '.join(run.raw['output_keys'])}),",
+            "//    and of those only CL, CD, Cm, CLa and Cma are longitudinal coefficients the",
+            "//    schema has a slot for.  flow5 is a LONGITUDINAL cross-check on the lift",
+            "//    slope, the pitching slope, the two intercepts, the elevator and the parasite",
+            "//    drag -- it is not a 6-DOF data set and must not be flown as one.",
             "//    CD_alpha is not representable in this schema (cx has no CD*alpha term) and"
             " is 0.0.",
+            "//    cd_de is not a FIELD at all: flow5 does produce an elevator drag derivative,"
+            " but this",
+            "//    schema has no slot for it in any of the 19 arrays, so it maps to nothing.  It"
+            " is NOT",
+            "//    carried in this file; the note at the end of item 7 says where the build put"
+            " it.",
+            f"//    One magnitude sits outside the plan's band and is RECORDED rather than forced:"
+            f" cm[1] = {run.coefficients['cm'][1]:.6f}",
+            "//    /rad is 4.9 % below the plan's -1.5 ... -0.3 pitched-moment-slope band, which"
+            " that band was",
+            "//    estimated from (tornado.jsonc ships -1.1927).  The sign and the static margin"
+            " are both",
+            "//    correct and the band is the outlier here, not the coefficient.  Task 5's",
+            "//    invariant suite is where magnitudes are asserted, so this excursion is",
+            "//    declared here rather than forced into the band.",
         ]
 
     common = [
@@ -3522,7 +3776,24 @@ def cross_check_header(run: CrossCheckRun, kind: str) -> str:
         "//",
         "// 7. PER-SLOT PROVENANCE (all 19 arrays; real solver output vs zeroed)",
     ]
+    if raw_output_location is None:
+        where = [
+            "//    THE REST OF THIS SOLVER'S OUTPUT IS NOT IN THE COMMITTED TREE.  This file was",
+            "//    written on its own, without the geometry.jsonc raw block, so its for006 table /",
+            "//    .st rows / polar and its pre-correction handbook rows exist only in the run",
+            "//    that produced this file.  Re-run scripts/build_cessna172_aero.py, which writes",
+            "//    all five files together, to get them into geometry.jsonc.",
+        ]
+    else:
+        where = [
+            f"//    THE REST OF THIS SOLVER'S RAW, UNCONVERTED OUTPUT IS IN {raw_output_location}",
+            "//    -- the Fortran's own for006 table and AID's pre-correction handbook rows for",
+            "//    DATCOM, the per-alpha .st rows for AVL, the deck and the polar for flow5.",
+            "//    A model file's provenance.mapping carries only the one raw number behind each",
+            "//    slot, so that block is what makes the rest re-derivable without re-running.",
+        ]
     tail = [
+        *where,
         "//",
         "// 8. HOW TO REGENERATE THIS FILE",
         f"//    cd python && {BUILD_COMMAND}",
@@ -3531,6 +3802,93 @@ def cross_check_header(run: CrossCheckRun, kind: str) -> str:
         "// " + "=" * 74,
     ]
     return "\n".join(common + _slot_lines(run) + tail)
+
+
+def _gap_lines(run: CrossCheckRun) -> list[str]:
+    """One ``//`` line per declared gap, GENERATED from the run, never hand-written.
+
+    The first version of this was prose that went stale: it said ``cxq[0]`` was
+    "written 0.0" while the same file wrote 0.140889, because the sentence was a
+    draft from before ``cd_q`` started being read out of AVL's ``.sb``.  Item 7 is
+    the required "which slots are real solver output and which are zeroed", so it is
+    now derived from ``provenance.missing`` and ``provenance.flipped`` -- the same
+    trick ``header_comment`` already uses for Tornado's flipped-rate-slot list -- and
+    it cannot disagree with the slot table printed just above it.
+
+    The two consistency assertions ARE the point: a slot declared missing that is
+    non-zero, or a field declared missing whose mapping carries a value, is a
+    contradiction, and now it stops the build instead of shipping a file that says
+    one thing and holds another.
+    """
+    entries = {entry["field"]: entry for entry in run.provenance["mapping"]}
+    lines = []
+    for item in sorted(run.provenance["missing"], key=lambda entry: entry["slot"]):
+        slot, field = item["slot"], item["field"]
+        array, index = slot.split("[")
+        index = int(index.rstrip("]"))
+        if run.coefficients[array][index] != 0.0:
+            raise AssertionError(
+                f"{run.model}: {slot} is in provenance.missing but writes "
+                f"{run.coefficients[array][index]!r}, so this header would be claiming a "
+                "declared gap that is not one"
+            )
+        if field in entries and entries[field]["value"] is not None:
+            raise AssertionError(
+                f"{run.model}: {field} is in provenance.missing but its mapping carries a "
+                "value, so the header and the mapping disagree"
+            )
+        lines.append(
+            f"//      {slot:<9s} {field:<7s} ZEROED AND DECLARED -- no value exists:"
+            f" {item['reason']}"
+        )
+    if not lines:
+        lines.append("//      (none: this solver filled every slot in the schema)")
+    flipped = sorted(run.provenance["flipped"])
+    if flipped:
+        lines.append(
+            "//      the slots whose sign the invariant table reversed, so the solver's own"
+            " sign sits on"
+        )
+        lines.append(
+            "//      the other side of zero: " + ", ".join(flipped)
+            + ".  Every one is in the slot table above with state `flipped`."
+        )
+    return lines
+
+
+def _raw_output_lines(cross_runs: Sequence[CrossCheckRun]) -> list[str]:
+    """Item 9 of ``geometry.jsonc``: where every solver's raw output is.
+
+    Written only when the block is actually present, so the file can never claim a
+    block that the run which produced it did not write.  This is the plan's
+    requirement that ``geometry.jsonc`` "carries the SI reference geometry and the
+    unconverted per-degree solver output": ``raw_tornado`` is Tornado's and
+    ``raw_cross_checks`` is the other three's.
+    """
+    if not cross_runs:
+        return []
+    lines = [
+        "//",
+        "// 9. THE OTHER THREE SOLVERS' RAW OUTPUT",
+        "//    This file also carries `raw_cross_checks`, keyed by model, because a model"
+        " file's",
+        "//    provenance.mapping holds only the ONE raw number behind each slot.  Without"
+        " this block",
+        "//    the rest of each solver's output would not be re-derivable from the committed",
+        "//    tree without re-running the solver:",
+    ]
+    for cross in cross_runs:
+        lines.append(
+            f"//      {cross.model:<7s} raw_cross_checks.{cross.model}: {len(cross.raw)} keys --"
+            f" {', '.join(sorted(cross.raw))}"
+        )
+    lines += [
+        "//    Every per-degree number in them is UNCONVERTED: the model files carry the",
+        "//    x 57.29577951308232 step and the sign normalisation, those blocks do not.",
+        "//    flow5 has none -- its deck and polar are already SI and per radian -- which is",
+        "//    itself part of that solver's record.",
+    ]
+    return lines
 
 
 def _wrap_note(note: str, width: int = 70) -> list[str]:
@@ -3548,16 +3906,38 @@ def _wrap_note(note: str, width: int = 70) -> list[str]:
     return [f"//      {line}" for line in lines]
 
 
-def cross_check_payload(run: CrossCheckRun) -> dict[str, Any]:
-    """The ``<model>.jsonc`` payload: schema-identical to the in-tree Morelli file."""
+def _cross_check_run(model: str, source: Path | None = None) -> CrossCheckRun:
+    """Run one named cross-check solver."""
+    try:
+        runner = globals()[_CROSS_CHECK_RUNNERS[model]]
+    except KeyError:
+        raise ValueError(f"{model!r} is not a cross-check model; {sorted(_CROSS_CHECK_RUNNERS)}") from None
+    return runner(source)
+
+
+def cross_check_payload(
+    run: CrossCheckRun, raw_output_location: str | None = None
+) -> dict[str, Any]:
+    """The ``<model>.jsonc`` payload: schema-identical to the in-tree Morelli file.
+
+    ``raw_output_location`` is set by ``write_model`` and records where the rest of
+    this solver's output went.  It is a parameter rather than prose inside the
+    adapter because whether it is true depends on what the WRITER did, not on what
+    the adapter produced: only ``build_all`` puts the cross-check raw blocks into
+    ``geometry.jsonc``.  A model file written on its own therefore says so instead of
+    pointing at a block that is not in the tree.
+    """
     coefficients, _missing = to_morelli(run.derivatives)
+    provenance = dict(run.provenance)
+    if raw_output_location is not None:
+        provenance["raw_output_location"] = raw_output_location
     return {
         "model": run.model,
         "aircraft": run.aircraft,
         "initial": run.initial,
         "controls": run.controls,
         "coefficients": coefficients,
-        "provenance": run.provenance,
+        "provenance": provenance,
     }
 
 
@@ -3569,18 +3949,32 @@ def write_jsonc(path: Path, payload: dict[str, Any], comment: str) -> Path:
     return path
 
 
-def write_model(run: CrossCheckRun, out_dir: Path | None = None) -> Path:
-    """Write one cross-check model file and return its path."""
+def write_model(
+    run: CrossCheckRun, out_dir: Path | None = None, *, raw_output_location: str | None = None
+) -> Path:
+    """Write one cross-check model file and return its path.
+
+    ``raw_output_location`` is forwarded to both the payload and the header comment,
+    so the file's item 7 can only state where the rest of the solver's output is if
+    the caller actually put it there.
+    """
     directory = Path(out_dir) if out_dir is not None else DEFAULT_OUT_DIR
     return write_jsonc(
         directory / f"{run.model}.jsonc",
-        cross_check_payload(run),
-        cross_check_header(run, f"data/planes/cessna172/{run.model}.jsonc"),
+        cross_check_payload(run, raw_output_location),
+        cross_check_header(run, f"data/planes/cessna172/{run.model}.jsonc", raw_output_location),
     )
 
 
-def write_all(run: TornadoRun, out_dir: Path | None = None) -> dict[str, str]:
-    """Write both files for an existing run and return their paths."""
+def write_all(
+    run: TornadoRun, out_dir: Path | None = None, cross_runs: Sequence[CrossCheckRun] = ()
+) -> dict[str, str]:
+    """Write ``tornado.jsonc`` and ``geometry.jsonc``; return their paths.
+
+    ``cross_runs`` are folded into ``geometry.jsonc`` as ``raw_cross_checks``, which
+    is what makes the plan's "the unconverted per-degree solver output" requirement
+    true for the other three solvers and not only for Tornado.
+    """
     directory = Path(out_dir) if out_dir is not None else DEFAULT_OUT_DIR
     written = {
         "tornado.jsonc": write_jsonc(
@@ -3590,8 +3984,8 @@ def write_all(run: TornadoRun, out_dir: Path | None = None) -> dict[str, str]:
         ),
         "geometry.jsonc": write_jsonc(
             directory / "geometry.jsonc",
-            geometry_block(run),
-            header_comment(run, "data/planes/cessna172/geometry.jsonc"),
+            geometry_block(run, cross_runs),
+            header_comment(run, "data/planes/cessna172/geometry.jsonc", cross_runs),
         ),
     }
     return {name: str(path) for name, path in written.items()}
@@ -3614,13 +4008,20 @@ def build_all(out_dir: Path | None = None, source: Path | None = None) -> dict[s
     file carries its own trim solve against its own coefficients, and the four
     agree on mass_kg, ixx, iyy, izz, ixz and he because those come from the same
     geometry and the same radius-of-gyration rules.
+
+    Every solver is run BEFORE anything is written, so ``geometry.jsonc`` can carry
+    all four solvers' raw output and each model file can name where its own went.
     """
-    written = build(out_dir, source)
-    for model in CROSS_CHECK_MODELS:
-        run = {"datcom": datcom_run, "avl": avl_run, "flow5": flow5_run}[model](source)
-        payload = cross_check_payload(run)
-        _verify_lengths(payload)
-        written[f"{model}.jsonc"] = str(write_model(run, out_dir))
+    tornado = tornado_run(source)
+    cross_runs = [_cross_check_run(model, source) for model in CROSS_CHECK_MODELS]
+    for cross in cross_runs:
+        _verify_lengths(cross_check_payload(cross))
+    written = write_all(tornado, out_dir, cross_runs)
+    for cross in cross_runs:
+        written[f"{cross.model}.jsonc"] = str(
+            write_model(cross, out_dir, raw_output_location=RAW_OUTPUT_LOCATION.format(
+                model=cross.model))
+        )
     return written
 
 
@@ -3642,15 +4043,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source", type=Path, default=None,
                         help="the source analysis file (default the sibling Cessna172.jsonc)")
     args = parser.parse_args(argv)
-    run = tornado_run(args.source)
-    payload = model_payload(run)
-    _verify_lengths(payload)
-    written = write_all(run, args.out_dir)
-    for model in CROSS_CHECK_MODELS:
-        cross = {"datcom": datcom_run, "avl": avl_run, "flow5": flow5_run}[model](args.source)
-        cross_payload = cross_check_payload(cross)
-        _verify_lengths(cross_payload)
-        written[f"{model}.jsonc"] = str(write_model(cross, args.out_dir))
+    written = build_all(args.out_dir, args.source)
     for path in written.values():
         print(f"wrote {path}")
     return 0

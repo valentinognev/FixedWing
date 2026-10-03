@@ -13,10 +13,13 @@ learns the eight facts needed to re-derive the file.
 The three cross-check adapters have DIFFERENT coverage, and that is measured
 rather than assumed, so each test states the solver's real capability:
 
-* DATCOM runs the Fortran plus the AID handbook, and produces 23 of the 25
-  ``DerivativeSet`` fields.  ``cn_da`` and ``cy_da`` are ``None``: AID's
-  ``lateral.py:616`` hardcodes ``0.1`` for both and
-  ``handbook_controls`` omits aileron yaw and aileron side force entirely.
+* DATCOM runs the Fortran plus the AID handbook, and produces 22 of the 25
+  ``DerivativeSet`` fields.  ``cn_da`` and ``cy_da`` are ``None`` because AID's
+  ``lateral.py:616`` hardcodes ``0.1`` for both and ``handbook_controls`` omits
+  aileron yaw and aileron side force entirely; ``cd_q`` is ``None`` because
+  DATCOM Section 7 has no axial-rate formula at all and
+  ``longitudinal_dynamic.py`` hardcodes ``cxq = 0.0``, which records the absence
+  of a formula rather than a computed zero.
 * AVL produces all 25, because its ``.sb`` carries aileron and rudder
   deflection columns.
 * flow5's runner emits only ``CL``, ``CD`` and ``Cm`` against alpha
@@ -536,7 +539,26 @@ class CrossCheckAdapterTest(unittest.TestCase):
                 self.assertIn(field, declared, f"{field} must be declared in provenance.missing")
 
     def test_2_every_filled_slot_satisfies_its_invariant(self) -> None:
-        """Plan Task 4 RED 2, over every field the adapter actually produced."""
+        """Plan Task 4 RED 2, narrowed to the SIGN column, over every field produced.
+
+        **DECLARED NARROWING.**  The plan's "Physics invariants" table has two
+        columns per row: a required sign and a plausible magnitude.  This test
+        asserts the SIGN column only.  The magnitude column is asserted in
+        Task 5's suite, ``python/tests/test_plane_cessna172_json.py``, which the
+        plan makes its home ("every row of the Physics invariants table holds,
+        magnitudes included").  Asserting both here would give one requirement two
+        homes and two places to keep in sync, so this file says so out loud rather
+        than quietly covering half of it.
+
+        Why the narrowing matters here: ``flow5``'s ``cm[1] = -1.573326`` sits
+        4.9 % outside the plan's ``-1.5 ... -0.3`` pitched-moment-slope band, which
+        a magnitude assertion would surface as a failure.  It is RECORDED rather
+        than forced into the band -- in ``provenance.coverage.invariant_band_note``
+        and in item 6 of the file's own header -- because the sign is correct, the
+        static margin (0.304334 cbar) is correct, and the band was evidently
+        estimated from ``tornado.jsonc``'s -1.1927.  The controller has accepted
+        that: recording it beats forcing it.
+        """
         for model in MODEL_NAMES:
             derivatives = self.runs[model].derivatives
             for field in ALL_FIELDS:
@@ -720,38 +742,111 @@ class CrossCheckAdapterTest(unittest.TestCase):
                     coefficients["cm"][1] / coefficients["cz"][1] > 0.05, True
                 )
 
-    def test_12_rate_derivatives_are_not_rescaled_and_the_factor_is_recorded(self) -> None:
-        """The nine per-p-hat slots keep the solver's value, and the 7.43x is written down.
+    # Which raw per-solver number each rate slot is derived from, so the assertion
+    # below can compare against the SOLVER's value instead of against the value the
+    # adapter computed from it.  DATCOM's Section 7 rates live in the run's own raw
+    # block; AVL's are the alpha = 4 deg row of its .st sweep.
+    RATE_SOURCES = {
+        "datcom": ("section7", None),
+        "avl": ("st_alpha_rows", "Clp"),
+    }
+    RATE_FIELDS = ("cl_q", "cm_q", "cl_p", "cl_r", "cy_p", "cy_r", "cn_p", "cn_r")
 
-        ``coeff_create``, AVL's ``.st`` and DATCOM Section 7 all quote rate
-        derivatives per ``p*b/(2*V)`` at the SOURCE Mach-0.03 speed, while
-        ``f16/aero_morelli.py`` forms ``phat`` at the trimmed cruise speed.  The
-        plan fixes the flight condition to the source's and records the factor;
-        rescaling it is a physics decision for a later task.  This pins that the
-        files record the factor and do not apply it.
+    def test_12_rate_derivatives_are_not_rescaled_and_the_factor_is_recorded(self) -> None:
+        """The nine per-p-hat slots keep the SOLVER's value, and the ratio is written down.
+
+        Three separate claims, each with an assertion that can fail:
+
+        1. the recorded ratio is self-consistent -- ``speed_ratio_v_trim_over_v_source``
+           really is ``v_trim_mps / v_source_mps``, and it is the ratio to the right
+           direction (the plan's own ``AS_source / V_trim`` is the inverse and would
+           make the damping weaker still, not restore it);
+        2. every shipped rate coefficient equals ``normalise_sign`` of the SOLVER's
+           own per-``p-hat`` number, taken out of ``run.raw`` -- an independent path
+           through the data, not the value the adapter computed from it;
+        3. that shipped value is NOT the solver's number multiplied by the ratio.
+           Claim 3 is the one that fails if the rescale is ever applied, and it is
+           why the previous version of this test -- which compared a number with a
+           strictly larger bound built from itself -- could never fail at all.
         """
-        rate_fields = ("cy_p", "cy_r", "cl_q", "cm_q", "cl_p", "cl_r", "cn_p",
-                       "cn_r", "cd_q")
         for model in MODEL_NAMES:
-            provenance = self.runs[model].provenance
-            with self.subTest(model=model):
-                condition = provenance["flight_condition"]
-                self.assertIn("rate_derivative_note", condition)
+            run = self.runs[model]
+            provenance = run.provenance
+            condition = provenance["flight_condition"]
+            with self.subTest(model=model, claim="the ratio is self-consistent"):
                 self.assertIn("v_source_mps", condition)
                 self.assertIn("v_trim_mps", condition)
+                self.assertIn("speed_ratio_v_trim_over_v_source", condition)
+                self.assertIn("rate_derivative_note", condition)
                 factor = condition["v_trim_mps"] / condition["v_source_mps"]
                 self.assertGreater(factor, 1.0)
-                entries = {e["field"]: e for e in provenance["mapping"]}
-                for field in rate_fields:
-                    if field not in entries:
+                self.assertAlmostEqual(
+                    condition["speed_ratio_v_trim_over_v_source"], factor, places=12,
+                )
+                # the note must quote the number that is actually recorded
+                self.assertIn(f"{factor:.5f}", condition["rate_derivative_note"])
+                self.assertIn("V_trim/V_source", condition["rate_derivative_note"])
+
+            entries = {e["field"]: e for e in provenance["mapping"]}
+            solver_rates = self._solver_rate_values(model, run)
+            with self.subTest(model=model, claim="no rescale was applied"):
+                checked = 0
+                for field in self.RATE_FIELDS:
+                    entry = entries.get(field)
+                    if entry is None or entry["state"] == "missing":
                         continue
-                    entry = entries[field]
-                    if entry["state"] == "missing":
+                    raw_value = solver_rates.get(field)
+                    if raw_value is None:
                         continue
-                    mapped = abs(float(entry["mapped_value"]))
-                    self.assertGreater(mapped, 0.0)
-                    # not multiplied by the flight-condition ratio
-                    self.assertLess(mapped, abs(mapped * factor) + mapped)
+                    checked += 1
+                    shipped = float(entry["value"])
+                    self.assertAlmostEqual(
+                        shipped, normalise_sign(field, raw_value)[0], places=12,
+                        msg=f"{model} {field} must be the solver's own per-p-hat number",
+                    )
+                    rescaled = normalise_sign(field, raw_value * factor)[0]
+                    self.assertNotAlmostEqual(
+                        shipped, rescaled, places=6,
+                        msg=f"{model} {field} was multiplied by the flight-condition ratio "
+                            f"{factor:.5f}; the plan fixes the source condition and records "
+                            "the ratio instead",
+                    )
+                # DATCOM and AVL have eight rate slots each; flow5 has no rate rows
+                # at all, which test_3 already pins, so zero is its CORRECT answer and
+                # anything else would mean flow5 had started inventing them.
+                self.assertEqual(
+                    checked, 0 if model == "flow5" else len(self.RATE_FIELDS),
+                    f"{model}: expected {0 if model == 'flow5' else len(self.RATE_FIELDS)} "
+                    "rate slots to be checked against the solver's own numbers",
+                )
+
+    @classmethod
+    def _solver_rate_values(cls, model: str, run) -> dict[str, float]:
+        """Each rate slot's value straight out of the solver's own raw output.
+
+        DATCOM's Section 7 rates are not printed by anything, so they are read from
+        the run's ``raw["section7"]`` block, which is the converter's transcription
+        of the formula -- the same source ``provenance.mapping`` names, reached by a
+        different route.  AVL's are the alpha = 4 deg row of its own ``.st`` sweep.
+        flow5 has no rate rows and yields nothing, which is why it is excluded above.
+        """
+        if model == "datcom":
+            section7 = run.raw["section7"]
+            return {
+                "cl_q": -section7["cl_q"], "cm_q": section7["cm_q"],
+                "cl_p": section7["cl_p"], "cl_r": section7["cl_r"],
+                "cy_p": section7["cy_p"], "cy_r": section7["cy_r"],
+                "cn_p": section7["cn_p"], "cn_r": section7["cn_r"],
+            }
+        if model == "avl":
+            rows, index = run.raw["st_alpha_rows"], run.raw["alpha_index"]
+            return {
+                "cl_q": -rows["CLq"][index], "cm_q": rows["Cmq"][index],
+                "cl_p": rows["Clp"][index], "cl_r": rows["Clr"][index],
+                "cy_p": rows["CYp"][index], "cy_r": rows["CYr"][index],
+                "cn_p": rows["Cnp"][index], "cn_r": rows["Cnr"][index],
+            }
+        return {}
 
     def test_13_control_slots_are_per_radian_of_deflection(self) -> None:
         """No per-degree control number may reach a Morelli array.
