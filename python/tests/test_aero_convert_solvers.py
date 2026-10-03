@@ -17,7 +17,7 @@ from tempfile import TemporaryDirectory
 
 from aero_convert.morelli import to_morelli
 from aero_convert.solvers import build, tornado_run
-from aero_convert.units import SIGN_INVARIANTS
+from aero_convert.units import DEG_TO_RAD, SIGN_INVARIANTS
 from plane.groups import MORELLI_LENGTHS, nonlinear_index
 
 # The 19 slots the plan's Task 3 RED list names, in the plan's order.
@@ -104,13 +104,21 @@ class TornadoAdapterTest(unittest.TestCase):
         self.assertGreater(margin, low, f"static margin {margin} cbar is below {low}")
         self.assertLess(margin, high, f"static margin {margin} cbar is above {high}")
 
-    def test_6_written_file_carries_the_eight_header_facts(self) -> None:
-        """Test 6: the build writes a ``//`` comment block naming the eight facts."""
+    def test_6_written_files_carry_the_eight_header_facts(self) -> None:
+        """Test 6: the build writes a ``//`` comment block naming the eight facts.
+
+        Checked on BOTH files: the plan requires every generated file to carry
+        them, and a header that only the model file has is half a record.
+        """
         with TemporaryDirectory() as tmp:
             written = build(Path(tmp))
             self.assertIn("tornado.jsonc", written)
             self.assertIn("geometry.jsonc", written)
-            text = Path(written["tornado.jsonc"]).read_text()
+            for name in ("tornado.jsonc", "geometry.jsonc"):
+                with self.subTest(file=name):
+                    self.assert_header(Path(written[name]).read_text())
+
+    def assert_header(self, text: str) -> None:
         lines = text.splitlines()
         self.assertTrue(lines[0].lstrip().startswith("//"), "the file must open with a // comment")
         brace = next(i for i, line in enumerate(lines) if line.strip().startswith("{"))
@@ -120,16 +128,14 @@ class TornadoAdapterTest(unittest.TestCase):
             with self.subTest(needle=needle):
                 self.assertIn(needle, header, f"the header comment must mention {needle!r}")
 
-    def test_7_committed_file_carries_the_eight_header_facts(self) -> None:
-        """The committed deliverable keeps the header, so it is checked without a build."""
-        path = Path(__file__).resolve().parents[2] / "data" / "planes" / "cessna172" / "tornado.jsonc"
-        self.assertTrue(path.exists(), f"{path} is missing; run scripts/build_cessna172_aero.py")
-        text = path.read_text()
-        brace = next(i for i, line in enumerate(text.splitlines()) if line.strip().startswith("{"))
-        header = "\n".join(text.splitlines()[:brace])
-        for needle in HEADER_SUBSTRINGS:
-            with self.subTest(needle=needle):
-                self.assertIn(needle, header)
+    def test_7_committed_files_carry_the_eight_header_facts(self) -> None:
+        """The committed deliverables keep their headers, checked without a build."""
+        directory = Path(__file__).resolve().parents[2] / "data" / "planes" / "cessna172"
+        for name in ("tornado.jsonc", "geometry.jsonc"):
+            with self.subTest(file=name):
+                path = directory / name
+                self.assertTrue(path.exists(), f"{path} is missing; run scripts/build_cessna172_aero.py")
+                self.assert_header(path.read_text())
 
     def test_8_provenance_records_three_states(self) -> None:
         """missing / flipped / not-normalised are three distinct, separately recorded states."""
@@ -144,6 +150,131 @@ class TornadoAdapterTest(unittest.TestCase):
                 required = SIGN_INVARIANTS[field]
                 self.assertEqual((value > 0.0), (required > 0))
         self.assertTrue(provenance["flipped"], "Tornado's raw signs are inverted; flips must be logged")
+
+    def test_10_control_magnitudes_pin_the_per_degree_factor(self) -> None:
+        """A doubled DEG_TO_RAD, or a slot mix-up inside a control group, must fail.
+
+        Signs alone cannot catch either, so every control-derivative magnitude is
+        checked against the solver's own per-degree number multiplied by
+        ``DEG_TO_RAD`` exactly.  ``raw_tornado`` is the untouched ground truth.
+        """
+        raw = self.solver_run.raw
+        rows = {
+            row["surface"]: row for row in self.solver_run.control_rows
+        }
+        coefficients = self.coefficients()
+        cases = (
+            ("clda", 0, "aileron", "Cl", -1.0),
+            ("cy", 1, "aileron", "CY", 1.0),
+            ("cnda", 0, "aileron", "Cn", -1.0),
+            ("cldr", 0, "rudder", "Cl", -1.0),
+            ("cy", 2, "rudder", "CY", 1.0),
+            ("cndr", 0, "rudder", "Cn", -1.0),
+            ("cz", 5, "elevator", "CL", -1.0),
+        )
+        for array, index, surface, key, sign in cases:
+            with self.subTest(array=array, surface=surface, key=key):
+                per_degree = float(rows[surface][key])
+                self.assertGreater(abs(per_degree), 0.0, "the solver row must be non-zero")
+                # Magnitude only: normalise_sign may flip the sign afterwards, and
+                # test 2 already pins that.  What must not change is the size.
+                expected = abs(per_degree) * DEG_TO_RAD
+                self.assertAlmostEqual(
+                    abs(coefficients[array][index]), expected, places=12,
+                    msg=f"{array}[{index}] magnitude must be |{per_degree}| x {DEG_TO_RAD}",
+                )
+                self.assertNotAlmostEqual(
+                    abs(coefficients[array][index]), 2.0 * expected, places=6,
+                    msg="a doubled DEG_TO_RAD would produce this",
+                )
+        # cm[2] is shifted, so it is pinned against its own shift, not raw.
+        self.assertNotAlmostEqual(
+            coefficients["cm"][2],
+            float(rows["elevator"]["Cm"]) * DEG_TO_RAD,
+            places=3,
+            msg="cm_de is the CG-shifted value and must differ from the about-ref_point one",
+        )
+        # A group mix-up (aileron numbers landing in the rudder slots) must fail.
+        self.assertNotAlmostEqual(
+            abs(coefficients["clda"][0]), abs(coefficients["cldr"][0]), places=6,
+        )
+        self.assertNotAlmostEqual(
+            abs(coefficients["cy"][1]), abs(coefficients["cy"][2]), places=6,
+        )
+        self.assertIn("CY_b", raw)
+        self.assertIn("CZ_Q", raw, "the shift argument's source must be re-derivable")
+
+    def test_11_shift_uses_the_body_z_force_slope(self) -> None:
+        """cm[1] must come from CZ_a, not from CL_a: they differ, and it shows."""
+        raw = self.solver_run.raw
+        geometry = self.solver_run.geometry
+        from aero_convert.units import shift_moments_to_cg
+
+        def shifted(cz: float) -> float:
+            return shift_moments_to_cg(
+                cz, 0.0, 0.0, 0.0, raw["Cm_a"], 0.0,
+                dx=geometry.dx_m, dy=geometry.dy_m, dz=geometry.dz_m,
+                s_ref=geometry.s_ref_m2, b_ref=geometry.b_ref_m, c_ref=geometry.c_ref_m,
+            )[4]
+
+        cm_from_cz = shifted(-raw["CZ_a"])
+        cm_from_cl = shifted(-raw["CL_a"])
+        self.assertNotAlmostEqual(cm_from_cz, cm_from_cl, places=3)
+        self.assertAlmostEqual(
+            self.coefficients()["cm"][1], cm_from_cz, places=12,
+            msg="cm[1] must be the shift of Cm_a with cz = -CZ_a",
+        )
+        # and the q slope likewise
+        self.assertAlmostEqual(
+            self.coefficients()["cmq"][0],
+            shift_moments_to_cg(
+                -raw["CZ_Q"], 0.0, 0.0, 0.0, raw["Cm_Q"], 0.0,
+                dx=geometry.dx_m, dy=geometry.dy_m, dz=geometry.dz_m,
+                s_ref=geometry.s_ref_m2, b_ref=geometry.b_ref_m, c_ref=geometry.c_ref_m,
+            )[4],
+            places=12,
+            msg="cmq[0] must be the shift of Cm_Q with cz = -CZ_Q",
+        )
+
+    def test_12_mapping_separates_the_solver_value_from_the_mapped_one(self) -> None:
+        """Provenance must show what the solver said AND what was done to it."""
+        entries = {entry["field"]: entry for entry in self.solver_run.provenance["mapping"]}
+        # (field, frame sign, per-degree?) -- the static fields are already per
+        # radian, so only the frame sign separates them from the solver's number;
+        # the control rows are per degree and must carry DEG_TO_RAD as well.
+        for field, frame_sign, per_degree in (
+            ("cl_alpha", -1.0, False), ("cl_q", -1.0, False), ("cl_beta", -1.0, False),
+            ("cy_p", 1.0, False), ("cy_beta", 1.0, False),
+            ("cl_da", -1.0, True), ("cn_da", -1.0, True), ("cy_da", 1.0, True),
+            ("cl_de", -1.0, True), ("cl_dr", -1.0, True),
+        ):
+            with self.subTest(field=field):
+                entry = entries[field]
+                self.assertIsNotNone(entry["solver_value"])
+                factor = DEG_TO_RAD if per_degree else 1.0
+                expected = frame_sign * entry["solver_value"] * factor
+                self.assertAlmostEqual(
+                    entry["mapped_value"], expected, places=12,
+                    msg=f"{field}: the mapped value must be the solver value with the "
+                        f"documented frame sign{' and DEG_TO_RAD' if per_degree else ''}",
+                )
+
+        # cd0 is the one slot whose number is not a solver output, and it says so.
+        self.assertIsNone(entries["cd0"]["solver_value"])
+        self.assertEqual(entries["cd0"]["solver_input"], "source file")
+        self.assertIn("WG.CD0", entries["cd0"]["tornado_key"])
+        for field, entry in entries.items():
+            with self.subTest(field=field):
+                self.assertNotIn("raw", entry, "the key 'raw' is the misleading name")
+
+    def test_13_trim_residual_is_zero(self) -> None:
+        """The initial state must be an equilibrium of plane/dynamics.py itself."""
+        self.assertLess(self.solver_run.trim["residual_max_abs"], 1e-9)
+        self.assertFalse(self.solver_run.trim["fallback"])
+        self.assertAlmostEqual(self.solver_run.trim["cl_at_trim"], 0.30, places=9)
+        self.assertAlmostEqual(
+            self.solver_run.trim["cm_at_trim"], 0.0, places=9,
+        )
 
     def test_9_trimmed_aircraft_is_positive_where_it_must_be(self) -> None:
         """plane/aircraft.py's _POSITIVE_KEYS: nothing may be zero or negative."""

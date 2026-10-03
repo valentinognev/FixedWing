@@ -15,8 +15,12 @@
 //    13.2.  Nothing in this file may be compared with a full-scale figure.
 //
 // 3. MASS
-//    mass_kg = 72.574 is the source file's own AERO.WT = 5 slugs (5 x 32 ft/s^2 = 160.0 lbf,
-//    160.0 / 2.2046226 = 72.574 kg).  This is NOT a geometrically similar 1/3 scale C172,
+//    mass_kg = 72.574 is derived from the source's own AERO.WT = 5 slugs:
+//    floor(AERO.WT * 32.0 ft/s^2 / 2.2046226 lbf/kg * 1000)/1000 = floor(5 * 32.0 / 2.2046226 * 1000)/1000 = 72.574 kg, truncated from 72.5747799 kg,
+//    i.e. 160 lbf.  A slug is a mass unit, so the source's WT converts instead as
+//    AERO.WT * SLUG_TO_KG = 72.96951 kg; the plan's figure assumes g = 32.0 ft/s^2, which
+//    appears nowhere in the source (its own G_FT_S2 is 32.174), so the plan is 0.54 % low and everything derived from the weight is too.
+//    This is NOT a geometrically similar 1/3 scale C172,
 //    which would weigh about 53.5 kg, so no scaling of a published full-scale number is self-
 //    consistent and none was attempted.  ixx, iyy, izz come from radius-of-gyration rules on THIS
 //    mass and THIS span (see below); ixz = 0 and he = 0.
@@ -29,7 +33,7 @@
 //    per-degree number here is multiplied by 57.29577951308232 explicitly.
 //    Every array in this file is per radian and every length is SI.
 //    cx[0] -- Cd0 in Tornado's own build-up -- = -0.017219.
-//    Source of it: source WG.CD0 (the VLM has no profile drag: CD(0) - K*CL(0)^2 = -0.001673).
+//    Source of it: source WG.CD0 (the plan's formula, Tornado CD(0) - K_wing*CL(0)^2 = -0.001673, is negative: a linear VLM has no profile drag).
 //    CD(0) = 0.000603563 and K*CL(0)^2 = 0.00227614 with K = 0.0803732,
 //    so CD(0) - K*CL(0)^2 is negative: a linear vortex-lattice run has no profile
 //    drag at all.  The source file's own WG.CD0 = 0.017219 is used instead.
@@ -39,46 +43,65 @@
 //    reference point is 2.94 ft AHEAD of the CG.  Tornado's x axis is AFT-positive, so the offset
 //    handed to shift_moments_to_cg is dx = -ft(2.94) = -0.896112 m (NOT +), with dy = dz = 0.
 //    Tornado's lift is up-positive while plane/dynamics.py's cz is the body +z force with z DOWN,
-//    so every vertical-force argument is cz = -CL.  Slopes shift with slopes (Cm_a with -CL_a,
-//    Cm_Q with -CL_Q, Cm_de with -CL_de) and the Cm0 intercept shifts with the -CL(0) intercept;
-//    the yaw slopes shift with the side force (Cn_beta with CY_b, Cn_p with CY_P, Cn_r with CY_R).
+//    so every vertical-force argument is negative.  It is specifically the BODY-Z force
+//    slope, coeff_create's CZ: slopes shift with slopes (Cm_a with -CZ_a, Cm_Q with -CZ_Q,
+//    Cm_de with -CZ_de, reconstructed exactly from the control row's CL and CD) and the
+//    Cm0 intercept shifts with the -CL(0) intercept, which is also the body-z intercept at
+//    alpha = 0.  CL_a and CZ_a differ by 0.34 % here because NP[0] is in the lattice.  The
+//    yaw slopes shift with the BODY-Y side force (Cn_beta with CY_b, Cn_p with CY_P, Cn_r with
+//    CY_R).  No drag coefficient enters any shift: cx reaches the pitch line only through dz
+//    and the yaw line only through dy, and both arms are zero for this aircraft.
 //
 // 6. SIGN CONVENTION
+//    cz is the body +z force coefficient with z DOWN, so cz = -CL and cz[1] is NEGATIVE for a
+//    stable aircraft (CL_alpha = -cz[1] > 0), and cm[1] is negative too.  That identity is
+//    load-bearing; it is what makes data/planes/linear/morelli.json's cz[1] = -4.5 CORRECT, not a
+//    defect of that file.
+//    data/planes/linear/morelli.json is the sign-convention authority wherever it disagrees with
+//    data/planes/f16/morelli.json.  It WINS on cm[1] (-0.8 against +0.0466) and on cnp[0] (-0.03
+//    against +0.0268), where a positive value would be statically unstable.  It LOSES on cnda[0]
+//    (+0.01 against -0.0335), where adverse yaw fixes the sign.  A reader must not assume the two
+//    sets share a convention: this file and linear/morelli.json agree on cz[1] and disagree with
+//    the F-16 set on cm[1] and cnp[0].
+//
 //    Tornado's axes are x aft, y right, z up; plane/dynamics.py's are x forward, y right, z down.
-//    So cz = -CL, cl = -Cl, cm = +Cm, cn = -Cn.  The rate derivatives need NO extra flip: the
-//    code perturbs the relative wind with r x omega, which is the correct omega x r once the
-//    velocity is negated.  Signs are then normalised mechanically against aero_convert.units.SIGN_INVARIANTS
-//    (data/planes/linear/morelli.json is the convention authority) and every flip is logged in
-//    provenance.flipped.  cm0 carries no invariant and is recorded as not-normalised.
-//    data/planes/linear/morelli.json's cz[1] sign is treated as that file's defect: the load-bearing
-//    identity is cz = -CL, so a stable aircraft has cz[1] < 0 and cm[1] < 0.
+//    So cz = -CL, cl = -Cl, cm = +Cm, cn = -Cn, and that mapping ALONE accounts for every observed
+//    inversion (CL_Q = +9.59 against a required CL_q < 0; Cl_b = +0.054; Cn_b = -0.247; Cn_P = +0.069).
+//    No blanket flip is applied on top of it.  Signs are then normalised mechanically against
+//    aero_convert.units.SIGN_INVARIANTS and every flip is logged in provenance.flipped; cm0 carries
+//    no invariant and is recorded as not-normalised.
+//
+//    Two slots are stored in the STANDARD-AERO convention rather than the body-axis one: czq[0]
+//    holds CL_q (so it is -CL_Q) and cxq[0] holds CD_q (so it is +CX_Q), which is what both
+//    in-tree files do.  The schema then adds them to the body-z Cz and body-x Cx, which is an
+//    inconsistency of the schema itself, inherited rather than introduced here.
 //
 // 7. PER-SLOT PROVENANCE (all 19 arrays; real solver output vs zeroed)
-//   cz[1]     cl_alpha   normalised     tornado CL_a = -5.14801 -> -5.14801
-//   cz[0]     cl0        normalised     tornado CL(alpha=0) = -0.168285 -> -0.168285
-//   czq[0]    cl_q       normalised     tornado CL_Q = -9.59113 -> -9.59113
-//   cy[0]     cy_beta    normalised     tornado CY_b = -0.40827 -> -0.40827
-//   cyp[0]    cy_p       flipped        tornado CY_P = 0.159618 -> -0.159618
-//   cyr[0]    cy_r       flipped        tornado CY_R = -0.386951 -> 0.386951
-//   cl[0]     cl_beta    normalised     tornado Cl_b = -0.0537212 -> -0.0537212
-//   clp[0]    cl_p       flipped        tornado Cl_P = 0.486095 -> -0.486095
-//   clr[0]    cl_r       flipped        tornado Cl_R = -0.044525 -> 0.044525
-//   cm[1]     cm_alpha   normalised     tornado Cm_a = -1.21856 -> -1.21856
-//   cm[0]     cm0        not-normalised tornado Cm(alpha=0) = 0.0154461 -> 0.0154461
-//   cmq[0]    cm_q       normalised     tornado Cm_Q = -19.2498 -> -19.2498
-//   cn[0]     cn_beta    normalised     tornado Cn_b = 0.146473 -> 0.146473
-//   cnp[0]    cn_p       normalised     tornado Cn_P = -0.0295649 -> -0.0295649
-//   cnr[0]    cn_r       flipped        tornado Cn_R = 0.1916 -> -0.1916
-//   cxq[0]    cd_q       normalised     tornado CX_Q = 0.00707928 -> 0.00707928
-//   cx[0]     cd0        normalised     tornado CD at alpha = 0 = -0.017219 -> -0.017219
-//   clda[0]   cl_da      normalised     tornado tornado_controls[aileron].Cl = -0.245288 -> -0.245288
-//   cy[1]     cy_da      flipped        tornado tornado_controls[aileron].CY (= CC) = -0.0501724 -> 0.0501724
-//   cnda[0]   cn_da      flipped        tornado tornado_controls[aileron].Cn = 0.017841 -> -0.017841
-//   cldr[0]   cl_dr      flipped        tornado tornado_controls[rudder].Cl = -0.0214546 -> 0.0214546
-//   cy[2]     cy_dr      flipped        tornado tornado_controls[rudder].CY (= CC) = -0.229426 -> 0.229426
-//   cndr[0]   cn_dr      flipped        tornado tornado_controls[rudder].Cn = 0.183276 -> -0.183276
-//   cz[5]     cl_de      normalised     tornado tornado_controls[elevator].CL = -0.371259 -> -0.371259
-//   cm[2]     cm_de      normalised     tornado tornado_controls[elevator].Cm = -1.16212 -> -1.16212
+//   cz[1]     cl_alpha   normalised     solver CL_a = 5.14801 -> mapped -5.14801 -> written -5.14801
+//   cz[0]     cl0        normalised     solver CL(alpha=0) = 0.168285 -> mapped -0.168285 -> written -0.168285
+//   czq[0]    cl_q       normalised     solver CL_Q = 9.59113 -> mapped -9.59113 -> written -9.59113
+//   cy[0]     cy_beta    normalised     solver CY_b = -0.40827 -> mapped -0.40827 -> written -0.40827
+//   cyp[0]    cy_p       flipped        solver CY_P = 0.159618 -> mapped 0.159618 -> written -0.159618
+//   cyr[0]    cy_r       flipped        solver CY_R = -0.386951 -> mapped -0.386951 -> written 0.386951
+//   cl[0]     cl_beta    normalised     solver Cl_b = 0.0537212 -> mapped -0.0537212 -> written -0.0537212
+//   clp[0]    cl_p       flipped        solver Cl_P = -0.486095 -> mapped 0.486095 -> written -0.486095
+//   clr[0]    cl_r       flipped        solver Cl_R = 0.044525 -> mapped -0.044525 -> written 0.044525
+//   cm[1]     cm_alpha   normalised     solver Cm_a = -8.78614 -> mapped -1.19274 -> written -1.19274
+//   cm[0]     cm0        not-normalised solver Cm(alpha=0) = -0.231932 -> mapped 0.0154461 -> written 0.0154461
+//   cmq[0]    cm_q       normalised     solver Cm_Q = -33.3488 -> mapped -19.2147 -> written -19.2147
+//   cn[0]     cn_beta    normalised     solver Cn_b = -0.2465 -> mapped 0.146473 -> written 0.146473
+//   cnp[0]    cn_p       normalised     solver Cn_P = 0.0686714 -> mapped -0.0295649 -> written -0.0295649
+//   cnr[0]    cn_r       flipped        solver Cn_R = -0.286403 -> mapped 0.1916 -> written -0.1916
+//   cxq[0]    cd_q       normalised     solver CX_Q = 0.00707928 -> mapped 0.00707928 -> written 0.00707928
+//   cx[0]     cd0        normalised     NOT solver output -- cd0 <- source WG.CD0 (the plan's formula, Tornado CD(0) - K_wing*CL(0)^2 = -0.001673, is negative: a linear VLM has no profile drag) -> mapped -0.017219 -> written -0.017219
+//   clda[0]   cl_da      normalised     solver tornado_controls[aileron].Cl = 0.00428109 -> mapped -0.245288 -> written -0.245288
+//   cy[1]     cy_da      flipped        solver tornado_controls[aileron].CY = -0.000875673 -> mapped -0.0501724 -> written 0.0501724
+//   cnda[0]   cn_da      flipped        solver tornado_controls[aileron].Cn = -0.000311384 -> mapped 0.017841 -> written -0.017841
+//   cldr[0]   cl_dr      flipped        solver tornado_controls[rudder].Cl = 0.000374454 -> mapped -0.0214546 -> written 0.0214546
+//   cy[2]     cy_dr      flipped        solver tornado_controls[rudder].CY = -0.00400424 -> mapped -0.229426 -> written 0.229426
+//   cndr[0]   cn_dr      flipped        solver tornado_controls[rudder].Cn = -0.00319877 -> mapped 0.183276 -> written -0.183276
+//   cz[5]     cl_de      normalised     solver tornado_controls[elevator].CL = 0.00647969 -> mapped -0.371259 -> written -0.371259
+//   cm[2]     cm_de      normalised     solver tornado_controls[elevator].Cm = -0.0298079 -> mapped -1.16154 -> written -1.16154
 //   every slot in plane.groups.nonlinear_index is exactly 0.0; CD_alpha is not
 //   representable in this schema (cx has no CD*alpha term) and is zeroed and declared
 //
@@ -101,16 +124,16 @@
     "izz": 87.38079411548159,
     "ixz": 0.0,
     "he": 0.0,
-    "t_max_n": 1730.670617824495,
+    "t_max_n": 1730.6695090690089,
     "tau_s": 1.0,
-    "v_ref_mps": 28.89320556452467
+    "v_ref_mps": 28.89322309067645
   },
   "initial": {
-    "vt_mps": 23.114564451619735,
-    "alpha_rad": 0.02664180802183137,
+    "vt_mps": 23.11457847254116,
+    "alpha_rad": 0.026596243840299925,
     "beta_rad": 0.0,
     "phi_rad": 0.0,
-    "theta_rad": 0.02664180802183137,
+    "theta_rad": 0.026596243840299925,
     "psi_rad": 0.0,
     "p_rad_s": 0.0,
     "q_rad_s": 0.0,
@@ -118,11 +141,11 @@
     "pn_m": 0.0,
     "pe_m": 0.0,
     "alt_m": 100.0,
-    "power": 0.1727264748902058
+    "power": 0.17263308623127407
   },
   "controls": {
-    "throttle": 0.1727264748902058,
-    "elevator_rad": -0.014644471692926372,
+    "throttle": 0.17263308623127407,
+    "elevator_rad": -0.014012661533384962,
     "aileron_rad": 0.0,
     "rudder_rad": 0.0
   },
@@ -218,8 +241,8 @@
     ],
     "cm": [
       0.015446104209511091,
-      -1.2185613066589713,
-      -1.1621158357965675,
+      -1.1927361838213182,
+      -1.161535116177455,
       0.0,
       0.0,
       0.0,
@@ -227,7 +250,7 @@
       0.0
     ],
     "cmq": [
-      -19.249814528250084,
+      -19.214658603695,
       0.0,
       0.0,
       0.0,
@@ -329,7 +352,7 @@
       "coarse_note": "a full re-run re-tilts the wake with alpha, so the coarse secant is not a fixed-wake derivative; it is recorded, not gated at 1 %"
     },
     "cd0": {
-      "source": "source WG.CD0 (the VLM has no profile drag: CD(0) - K*CL(0)^2 = -0.001673)",
+      "source": "source WG.CD0 (the plan's formula, Tornado CD(0) - K_wing*CL(0)^2 = -0.001673, is negative: a linear VLM has no profile drag)",
       "CD_at_alpha0": 0.0006035629331626441,
       "K_wing": 0.08037324626140716,
       "induced_part": 0.0022761445049448207,
@@ -339,8 +362,13 @@
     "mass": {
       "source": "AERO.WT = 5 slugs",
       "mass_kg": 72.574,
-      "weight_lbf_at_32_ft_s2": 160.0,
-      "note": "G_FT_S2 = 32.174 would give 72.969 kg; the plan fixes 72.574"
+      "derivation": "floor(AERO.WT * 32.0 ft/s^2 / 2.2046226 lbf/kg * 1000) / 1000 = floor(5 * 32.0 / 2.2046226 * 1000) / 1000 = 72.574",
+      "exact_kg_truncated_to_3dp": 72.57477991924786,
+      "weight_lbf": 160.0,
+      "slug_conversion_kg": 72.96951469999999,
+      "standard_gravity_used_ft_s2": 32.0,
+      "standard_gravity_in_source_ft_s2": 32.174,
+      "note": "A slug is a mass unit, so the source's own WT converts as AERO.WT * SLUG_TO_KG = 72.96951 kg. The plan instead states 72.574 kg, which is AERO.WT * 32.0 ft/s^2 = 160 lbf over 2.2046226 lbf/kg, i.e. it assumes a standard gravity of 32.0 ft/s^2.  That figure appears nowhere in the source (G_FT_S2 = 32.174 here), so the plan is 0.54 % low.  The plan's number ships because its approved design fixes it and plan test 6 pins it verbatim in this file's header; weight, trim qbar, V and t_max_n are therefore all that much low."
     },
     "inertia": {
       "k_xx": {
@@ -366,23 +394,23 @@
       "target_cruise_cl": 0.3,
       "cl0": 0.16828451691889965,
       "cl_alpha": 5.148012847936423,
-      "alpha_trim_rad": 0.02664180802183137,
-      "theta_trim_rad": 0.02664180802183137,
-      "elevator_rad": -0.014644471692926372,
-      "cruise_mps": 23.114564451619735,
-      "qbar_pa": 324.1495901873702,
+      "alpha_trim_rad": 0.026596243840299925,
+      "theta_trim_rad": 0.026596243840299925,
+      "elevator_rad": -0.014012661533384962,
+      "cruise_mps": 23.11457847254116,
+      "qbar_pa": 324.1499834353003,
       "rho_kg_m3": 1.2134001482844625,
       "alt_m": 100.0,
       "weight_n": 711.7078170999999,
       "cd0": -0.017218979436844056,
-      "cm_at_trim": 2.7589509843384263e-10,
-      "power": 0.1727264748902058,
-      "v_ref_mps": 28.89320556452467,
-      "thrust_scale": 0.20000000000000007,
-      "t_max_n": 1730.670617824495,
-      "thrust_at_trim_n": 59.78652700257594,
-      "cl_at_trim": 0.30000000000000004,
-      "residual_max_abs": 1.6529259259460552e-16,
+      "cm_at_trim": 2.695861762991303e-10,
+      "power": 0.17263308623127407,
+      "v_ref_mps": 28.89322309067645,
+      "thrust_scale": 0.19999999999999996,
+      "t_max_n": 1730.6695090690089,
+      "thrust_at_trim_n": 59.75416371938938,
+      "cl_at_trim": 0.29999999999999993,
+      "residual_max_abs": 1.5390123117506827e-16,
       "fallback": false
     },
     "unit_conversions": {
@@ -401,251 +429,301 @@
         "field": "cl_alpha",
         "slot": "cz[1]",
         "tornado_key": "CL_a",
-        "conversion": "cz = -CL_a (body z down); already per radian",
+        "solver_value": 5.148012847936423,
+        "mapped_value": -5.148012847936423,
+        "conversion": "slot: cz = -CL_a (the plan's mapping table, and both in-tree files store CL_alpha in cz[1]); already per radian",
         "role": "slope",
-        "raw": -5.148012847936423,
         "value": -5.148012847936423,
-        "state": "normalised"
+        "state": "normalised",
+        "solver_input": "solver"
       },
       {
         "field": "cl0",
         "slot": "cz[0]",
         "tornado_key": "CL(alpha=0)",
-        "conversion": "cz = -CL; second solve at alpha = 0 rad",
+        "solver_value": 0.16828451691889965,
+        "mapped_value": -0.16828451691889965,
+        "conversion": "cz = -CL; a second solve at alpha = 0 rad, no extrapolation",
         "role": "intercept",
-        "raw": -0.16828451691889965,
         "value": -0.16828451691889965,
-        "state": "normalised"
+        "state": "normalised",
+        "solver_input": "solver"
       },
       {
         "field": "cl_q",
         "slot": "czq[0]",
         "tornado_key": "CL_Q",
-        "conversion": "cz = -CL_Q; coeff_create already divided by fac = c_mac/(2V)",
+        "solver_value": 9.591130752128368,
+        "mapped_value": -9.591130752128368,
+        "conversion": "czq[0] holds the standard-aero CL_q (both in-tree files do), so it is -CL_Q; coeff_create already divided by fac = c_mac/(2V)",
         "role": "slope",
-        "raw": -9.591130752128368,
         "value": -9.591130752128368,
-        "state": "normalised"
+        "state": "normalised",
+        "solver_input": "solver"
       },
       {
         "field": "cy_beta",
         "slot": "cy[0]",
         "tornado_key": "CY_b",
-        "conversion": "cy = +CY_b (body y); CC_b is the wind-axis side force and equals CY_b exactly at betha = 0",
+        "solver_value": -0.40826987000816295,
+        "mapped_value": -0.40826987000816295,
+        "conversion": "cy = +CY_b, the body-y slope; CC_b is the wind-axis side force and equals CY_b exactly at betha = 0",
         "role": "slope",
-        "raw": -0.40826987000816295,
         "value": -0.40826987000816295,
-        "state": "normalised"
+        "state": "normalised",
+        "solver_input": "solver"
       },
       {
         "field": "cy_p",
         "slot": "cyp[0]",
         "tornado_key": "CY_P",
-        "conversion": "cy = +CY_P; already divided by fac",
+        "solver_value": 0.15961835084860332,
+        "mapped_value": 0.15961835084860332,
+        "conversion": "cy = +CY_P, the body-y slope; already divided by fac",
         "role": "slope",
-        "raw": 0.15961835084860332,
         "value": -0.15961835084860332,
-        "state": "flipped"
+        "state": "flipped",
+        "solver_input": "solver"
       },
       {
         "field": "cy_r",
         "slot": "cyr[0]",
         "tornado_key": "CY_R",
-        "conversion": "cy = +CY_R; already divided by fac",
+        "solver_value": -0.3869509772286344,
+        "mapped_value": -0.3869509772286344,
+        "conversion": "cy = +CY_R, the body-y slope; already divided by fac",
         "role": "slope",
-        "raw": -0.3869509772286344,
         "value": 0.3869509772286344,
-        "state": "flipped"
+        "state": "flipped",
+        "solver_input": "solver"
       },
       {
         "field": "cl_beta",
         "slot": "cl[0]",
         "tornado_key": "Cl_b",
-        "conversion": "cl = -Cl_b (Tornado x is aft-positive)",
+        "solver_value": 0.05372122799922786,
+        "mapped_value": -0.05372122799922786,
+        "conversion": "cl = -Cl_b (Tornado x is aft-positive, so the roll sense reverses); already divided by fac",
         "role": "slope",
-        "raw": -0.05372122799922786,
         "value": -0.05372122799922786,
-        "state": "normalised"
+        "state": "normalised",
+        "solver_input": "solver"
       },
       {
         "field": "cl_p",
         "slot": "clp[0]",
         "tornado_key": "Cl_P",
-        "conversion": "cl = -Cl_P; already divided by fac",
+        "solver_value": -0.4860949250681449,
+        "mapped_value": 0.4860949250681449,
+        "conversion": "cl = -Cl_P (Tornado x is aft-positive, so the roll sense reverses); already divided by fac",
         "role": "slope",
-        "raw": 0.4860949250681449,
         "value": -0.4860949250681449,
-        "state": "flipped"
+        "state": "flipped",
+        "solver_input": "solver"
       },
       {
         "field": "cl_r",
         "slot": "clr[0]",
         "tornado_key": "Cl_R",
-        "conversion": "cl = -Cl_R; already divided by fac",
+        "solver_value": 0.04452499744596445,
+        "mapped_value": -0.04452499744596445,
+        "conversion": "cl = -Cl_R (Tornado x is aft-positive, so the roll sense reverses); already divided by fac",
         "role": "slope",
-        "raw": -0.04452499744596445,
         "value": 0.04452499744596445,
-        "state": "flipped"
+        "state": "flipped",
+        "solver_input": "solver"
       },
       {
         "field": "cm_alpha",
         "slot": "cm[1]",
         "tornado_key": "Cm_a",
-        "conversion": "cm = +Cm_a, then shifted with cz = -CL_a (the matching slope)",
+        "solver_value": -8.786140193125513,
+        "mapped_value": -1.1927361838213182,
+        "conversion": "cm = +Cm_a, then shifted with cz = -CZ_a, the matching body-z force slope (not -CL_a: the shift's algebra contains F_z)",
         "role": "slope",
-        "raw": -1.2185613066589713,
-        "value": -1.2185613066589713,
-        "state": "normalised"
+        "value": -1.1927361838213182,
+        "state": "normalised",
+        "solver_input": "solver"
       },
       {
         "field": "cm0",
         "slot": "cm[0]",
         "tornado_key": "Cm(alpha=0)",
-        "conversion": "cm = +Cm, then shifted with cz = -CL(0) (the matching intercept); cm0 carries no sign invariant and is never normalised",
+        "solver_value": -0.2319321356612714,
+        "mapped_value": 0.015446104209511091,
+        "conversion": "cm = +Cm, then shifted with cz = -CL(0), the matching intercept (at alpha = 0 CL = CZ); cm0 carries no sign invariant and is never normalised",
         "role": "intercept",
-        "raw": 0.015446104209511091,
         "value": 0.015446104209511091,
-        "state": "not-normalised"
+        "state": "not-normalised",
+        "solver_input": "solver"
       },
       {
         "field": "cm_q",
         "slot": "cmq[0]",
         "tornado_key": "Cm_Q",
-        "conversion": "cm = +Cm_Q, then shifted with cz = -CL_Q (the matching slope)",
+        "solver_value": -33.348776733878786,
+        "mapped_value": -19.214658603695,
+        "conversion": "cm = +Cm_Q, then shifted with cz = -CZ_Q, the matching body-z force slope; already divided by fac",
         "role": "slope",
-        "raw": -19.249814528250084,
-        "value": -19.249814528250084,
-        "state": "normalised"
+        "value": -19.214658603695,
+        "state": "normalised",
+        "solver_input": "solver"
       },
       {
         "field": "cn_beta",
         "slot": "cn[0]",
         "tornado_key": "Cn_b",
-        "conversion": "cn = -Cn_b (Tornado z is up-positive), then shifted with cy = CY_b",
+        "solver_value": -0.24649956466084472,
+        "mapped_value": 0.1464734465088448,
+        "conversion": "cn = -Cn_b (Tornado z is up-positive, so the yaw sense reverses), then shifted with the body-y slope CY_b; already divided by fac",
         "role": "slope",
-        "raw": 0.1464734465088448,
         "value": 0.1464734465088448,
-        "state": "normalised"
+        "state": "normalised",
+        "solver_input": "solver"
       },
       {
         "field": "cn_p",
         "slot": "cnp[0]",
         "tornado_key": "Cn_P",
-        "conversion": "cn = -Cn_P, then shifted with cy = CY_P",
+        "solver_value": 0.06867139682171726,
+        "mapped_value": -0.029564900863809446,
+        "conversion": "cn = -Cn_P (Tornado z is up-positive, so the yaw sense reverses), then shifted with the body-y slope CY_P; already divided by fac",
         "role": "slope",
-        "raw": -0.029564900863809446,
         "value": -0.029564900863809446,
-        "state": "normalised"
+        "state": "normalised",
+        "solver_input": "solver"
       },
       {
         "field": "cn_r",
         "slot": "cnr[0]",
         "tornado_key": "Cn_R",
-        "conversion": "cn = -Cn_R, then shifted with cy = CY_R",
+        "solver_value": -0.28640308738561865,
+        "mapped_value": 0.19160009796460323,
+        "conversion": "cn = -Cn_R (Tornado z is up-positive, so the yaw sense reverses), then shifted with the body-y slope CY_R; already divided by fac",
         "role": "slope",
-        "raw": 0.19160009796460323,
         "value": -0.19160009796460323,
-        "state": "flipped"
+        "state": "flipped",
+        "solver_input": "solver"
       },
       {
         "field": "cd_q",
         "slot": "cxq[0]",
         "tornado_key": "CX_Q",
-        "conversion": "CX_Q read as CD_q (Tornado x aft => +CX is drag); already divided by fac",
+        "solver_value": 0.0070792752703040486,
+        "mapped_value": 0.0070792752703040486,
+        "conversion": "cxq[0] holds the standard-aero CD_q, which at trim is Tornado's axial rate CX_Q (Tornado x aft => +CX is drag-positive); already divided by fac",
         "role": "slope",
-        "raw": 0.0070792752703040486,
         "value": 0.0070792752703040486,
-        "state": "normalised"
+        "state": "normalised",
+        "solver_input": "solver"
       },
       {
         "field": "cd0",
         "slot": "cx[0]",
-        "tornado_key": "CD at alpha = 0",
-        "conversion": "parasite drag from source WG.CD0 (the VLM has no profile drag: CD(0) - K*CL(0)^2 = -0.001673), then cx = -(parasite)",
+        "tornado_key": "cd0 <- source WG.CD0 (the plan's formula, Tornado CD(0) - K_wing*CL(0)^2 = -0.001673, is negative: a linear VLM has no profile drag)",
+        "solver_value": null,
+        "mapped_value": -0.017218979436844056,
+        "conversion": "parasite drag as a positive magnitude, then cx = -(parasite); NOT a Tornado output when the source Cd0 is used",
         "role": "intercept",
-        "raw": -0.017218979436844056,
         "value": -0.017218979436844056,
-        "state": "normalised"
+        "state": "normalised",
+        "solver_input": "source file"
       },
       {
         "field": "cl_da",
         "slot": "clda[0]",
         "tornado_key": "tornado_controls[aileron].Cl",
-        "conversion": "per degree x 57.29577951308232, then cl = -Cl",
+        "solver_value": 0.0042810881218524385,
+        "mapped_value": -0.24528828110573303,
+        "conversion": "per degree x 57.29577951308232, then negated (Tornado axis sense)",
         "role": "slope",
-        "raw": -0.24528828110573303,
         "value": -0.24528828110573303,
-        "state": "normalised"
+        "state": "normalised",
+        "solver_input": "solver"
       },
       {
         "field": "cy_da",
         "slot": "cy[1]",
-        "tornado_key": "tornado_controls[aileron].CY (= CC)",
-        "conversion": "per degree x 57.29577951308232, then cy = +CY",
+        "tornado_key": "tornado_controls[aileron].CY",
+        "solver_value": -0.0008756730696224345,
+        "mapped_value": -0.050172371122630996,
+        "conversion": "per degree x 57.29577951308232, then as it stands",
         "role": "slope",
-        "raw": -0.050172371122630996,
         "value": 0.050172371122630996,
-        "state": "flipped"
+        "state": "flipped",
+        "solver_input": "solver"
       },
       {
         "field": "cn_da",
         "slot": "cnda[0]",
         "tornado_key": "tornado_controls[aileron].Cn",
-        "conversion": "per degree x 57.29577951308232, then cn = -Cn",
+        "solver_value": -0.00031138405881381954,
+        "mapped_value": 0.01784099237768526,
+        "conversion": "per degree x 57.29577951308232, then negated (Tornado axis sense)",
         "role": "slope",
-        "raw": 0.01784099237768526,
         "value": -0.01784099237768526,
-        "state": "flipped"
+        "state": "flipped",
+        "solver_input": "solver"
       },
       {
         "field": "cl_dr",
         "slot": "cldr[0]",
         "tornado_key": "tornado_controls[rudder].Cl",
-        "conversion": "per degree x 57.29577951308232, then cl = -Cl",
+        "solver_value": 0.00037445384558744865,
+        "mapped_value": -0.021454624974604233,
+        "conversion": "per degree x 57.29577951308232, then negated (Tornado axis sense)",
         "role": "slope",
-        "raw": -0.021454624974604233,
         "value": 0.021454624974604233,
-        "state": "flipped"
+        "state": "flipped",
+        "solver_input": "solver"
       },
       {
         "field": "cy_dr",
         "slot": "cy[2]",
-        "tornado_key": "tornado_controls[rudder].CY (= CC)",
-        "conversion": "per degree x 57.29577951308232, then cy = +CY",
+        "tornado_key": "tornado_controls[rudder].CY",
+        "solver_value": -0.004004240094412684,
+        "mapped_value": -0.22942605756691312,
+        "conversion": "per degree x 57.29577951308232, then as it stands",
         "role": "slope",
-        "raw": -0.22942605756691312,
         "value": 0.22942605756691312,
-        "state": "flipped"
+        "state": "flipped",
+        "solver_input": "solver"
       },
       {
         "field": "cn_dr",
         "slot": "cndr[0]",
         "tornado_key": "tornado_controls[rudder].Cn",
-        "conversion": "per degree x 57.29577951308232, then cn = -Cn",
+        "solver_value": -0.003198765945580602,
+        "mapped_value": 0.18327578833194247,
+        "conversion": "per degree x 57.29577951308232, then negated (Tornado axis sense)",
         "role": "slope",
-        "raw": 0.18327578833194247,
         "value": -0.18327578833194247,
-        "state": "flipped"
+        "state": "flipped",
+        "solver_input": "solver"
       },
       {
         "field": "cl_de",
         "slot": "cz[5]",
         "tornado_key": "tornado_controls[elevator].CL",
-        "conversion": "per degree x 57.29577951308232, then cz = -CL",
+        "solver_value": 0.006479685958287962,
+        "mapped_value": -0.3712586579800826,
+        "conversion": "per degree x 57.29577951308232, then cz = -CL_de; this is the standard-aero CL_de the table names, not the body-z slope that shifts cm_de",
         "role": "slope",
-        "raw": -0.3712586579800826,
         "value": -0.3712586579800826,
-        "state": "normalised"
+        "state": "normalised",
+        "solver_input": "solver"
       },
       {
         "field": "cm_de",
         "slot": "cm[2]",
         "tornado_key": "tornado_controls[elevator].Cm",
-        "conversion": "per degree x 57.29577951308232, cm = +Cm, then shifted with the matching vertical-force slope cz = -CL_de",
+        "solver_value": -0.029807885982899185,
+        "mapped_value": -1.161535116177455,
+        "conversion": "per degree x 57.29577951308232, cm = +Cm, then shifted with the matching body-z force slope cz = -CZ_de = -(cos a * CL_de + sin a * CD_de) x 57.29577951308232, reconstructed exactly from the row's CL and CD",
         "role": "slope",
-        "raw": -1.1621158357965675,
-        "value": -1.1621158357965675,
-        "state": "normalised"
+        "value": -1.161535116177455,
+        "state": "normalised",
+        "solver_input": "solver"
       }
     ],
     "flipped": [

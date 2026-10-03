@@ -66,16 +66,24 @@ Slopes shift, intercepts shift differently
 ``shift_moments_to_cg`` moves a *coefficient*, so what it needs beside it is
 the force coefficient that goes with the same independent variable:
 
-* a **slope** w.r.t. alpha (``Cm_a``) needs the lift **slope** ``cz = -CL_a``,
-  because ``d/dalpha`` of the shift ``dx * CZ / c_ref`` is ``dx * CZ_alpha /
-  c_ref``;
+* a **slope** w.r.t. alpha (``Cm_a``) needs the **body-z** lift slope
+  ``cz = -CZ_a``, because ``d/dalpha`` of the shift ``dx * CZ / c_ref`` is
+  ``dx * CZ_alpha / c_ref`` and the quantity in that expression is the body-z
+  force, not the wind-axis lift.  ``CZ_a`` and ``CL_a`` differ here by 0.34 %
+  (``5.165581`` against ``5.148013`` at alpha = 4 deg) because the aircraft
+  carries NP[0], and using the lift slope there leaves that much linearisation
+  error in ``cm[1]``;
 * an **intercept** (``Cm0``, from the alpha = 0 run) needs the lift
   **intercept** ``cz = -CL(0)``, because the constant force arm does not
-  differentiate away;
-* a **slope** w.r.t. a control deflection (``Cm_de``) needs the vertical-force
-  slope w.r.t. that same deflection, ``cz = -CL_de``, for exactly the first
-  reason;
-* a **slope** w.r.t. a rate (``Cm_Q``) needs ``cz = -CL_Q``, same reason;
+  differentiate away -- and at alpha = 0 the wind-axis and body-axis lifts
+  coincide exactly, so the same number is both;
+* a **slope** w.r.t. a control deflection (``Cm_de``) needs the body-z force
+  slope w.r.t. that same deflection for exactly the first reason.
+  ``tornado_controls`` reports only the wind-axis ``CL`` and ``CD``, so it is
+  reconstructed exactly: with ``s = sin(alpha)``, ``c = cos(alpha)`` the pair
+  ``[dCL; dCD] = [[-s, c], [c, s]] . [dCX; dCZ]`` and that matrix is its own
+  inverse, so ``dCZ = c*dCL + s*dCD``;
+* a **slope** w.r.t. a rate (``Cm_Q``) needs ``cz = -CZ_Q``, same reason;
 * a **slope** w.r.t. beta, p or r (``Cn_beta``, ``Cn_p``, ``Cn_r``) needs the
   side-force slope for the same variable (``CY_b``, ``CY_P``, ``CY_R``), which is
   why the side force is passed even though ``dy = 0`` here.
@@ -131,6 +139,7 @@ from aero_convert.units import (
     DEG_TO_RAD,
     FT_TO_M,
     G_FT_S2,
+    SLUG_TO_KG,
     ft,
     normalise_sign,
     per_degree_to_per_radian,
@@ -146,7 +155,7 @@ __all__ = [
     "BUILD_COMMAND",
     "DEFAULT_AID_SRC",
     "DEFAULT_SOURCE",
-    "SOURCE_MASS_KG",
+    "source_mass_kg",
     "TORNADO_MESH",
     "TornadoRun",
     "aid_src",
@@ -173,12 +182,31 @@ DEFAULT_SOURCE = REPO_ROOT.parent / "USAF_DATCOM" / "AircraftIntuitiveDesign" / 
 DEFAULT_OUT_DIR = REPO_ROOT / "data" / "planes" / "cessna172"
 BUILD_COMMAND = "python3 scripts/build_cessna172_aero.py"
 
-# The source's own mass: AERO.WT = 5 slugs.  5 slug * 32 ft/s^2 = 160.0 lbf, and
-# 160.0 / 2.2046226 = 72.574 kg.  Using G_FT_S2 = 32.174 ft/s^2 instead would give
-# 72.967 kg, 0.54 % higher; the plan's approved design fixes 72.574 and the head
-# -of-file comment has to carry that figure, so it is used verbatim and both are
-# recorded here.
-SOURCE_MASS_KG = 72.574
+# The source's own mass: AERO.WT slugs, read from the source file at run time.
+# A slug IS a mass unit, so the honest conversion is WT * SLUG_TO_KG = 72.96951 kg
+# for this aircraft.  The plan's approved design instead states 72.574 kg, which is
+# 5 slug * 32.0 ft/s^2 = 160.0 lbf divided by 2.2046226 lbf/kg -- i.e. it assumes a
+# standard gravity of 32.0 ft/s^2, and g = 32.0 appears nowhere in the source file
+# (its own G_FT_S2 is 32.174).  The plan is 0.54 % low, but 72.574 is the figure its
+# approved design fixes and plan test 6 pins verbatim in this file's header, so it
+# is what ships; the derivation, the discrepancy and the slug figure all go into
+# provenance.mass and into the header, so nothing here is a bare literal.
+LBF_PER_KG = 2.2046226
+PLAN_STANDARD_GRAVITY_FT_S2 = 32.0
+
+
+def source_mass_kg(aero: dict) -> float:
+    """``mass_kg`` from the source's ``AERO.WT``, on the plan's ``g = 32.0 ft/s^2``.
+
+    Derived, not typed, so a change to ``AERO.WT`` in the source file moves this
+    number.  The quotient is truncated rather than rounded: the exact value is
+    72.5747792 kg and the plan's stated 72.574 is that cut to three decimals,
+    which is the literal plan test 6 pins in this file's header.  See the
+    module-level note for why the plan's figure ships in preference to the slug
+    conversion's 72.96951.
+    """
+    weight_lbf = float(_first(aero["WT"])) * PLAN_STANDARD_GRAVITY_FT_S2
+    return math.floor(weight_lbf / LBF_PER_KG * 1000.0) / 1000.0
 
 # Radius-of-gyration rules of thumb, per the plan's "Mass, inertia, thrust, and
 # the initial state": derived on THIS mass and THIS span, never scaled from a
@@ -246,6 +274,8 @@ class Geometry:
     alpha_deg: float
     as_mps: float
     rho_kg_m3: float
+    mass_kg: float
+    weight_slug: float
     mesh: tuple[str, str]
 
 
@@ -370,6 +400,8 @@ def _geometry(ac: Any, geo: dict, state: dict) -> Geometry:
         alpha_deg=math.degrees(float(state["alpha"])),
         as_mps=float(state["AS"]),
         rho_kg_m3=float(state["rho"]),
+        mass_kg=source_mass_kg(aero),
+        weight_slug=float(_first(aero["WT"])),
         mesh=TORNADO_MESH,
     )
 
@@ -434,33 +466,46 @@ class _Collector:
     def put(
         self,
         field: str,
-        value: float,
+        mapped: float,
         *,
         tornado_key: str,
+        solver_value: float | None,
         conversion: str,
         role: str,
     ) -> float | None:
-        """Normalise one raw solver value, or record why it is absent.
+        """Record one slot: what the solver said, what was done to it, what ships.
+
+        ``solver_value`` is the number in the solver's own convention and units,
+        exactly as the solver reported it (or ``None`` when the number did not
+        come from a solver at all -- see ``cd0``).  ``mapped`` is that number
+        after the frame mapping, the moment shift and the per-degree conversion,
+        which is what the invariant table is asked about.  Both are recorded, so
+        a reader can see exactly what was done; calling either of them "the raw
+        value" without the other is how a false provenance line gets written.
 
         The finiteness guard lives here, at the solver boundary, because
         ``normalise_sign`` is not nan-safe (``nan > 0.0`` is False, so a nan
         would sail through the sign test and poison a coefficient array).
         """
         slot = FIELD_SLOT[field]
-        raw = float(value)
-        if not math.isfinite(raw):
+        reported = None if solver_value is None else float(solver_value)
+        mapped_value = float(mapped)
+        if not math.isfinite(mapped_value) or (
+            reported is not None and not math.isfinite(reported)
+        ):
             self.values[field] = None
             self.missing.append(
                 {"field": field, "slot": slot, "tornado_key": tornado_key,
-                 "reason": f"non-finite solver output {raw!r}"}
+                 "reason": f"non-finite solver output {reported!r} -> {mapped_value!r}"}
             )
             self.mapping.append(
                 {"field": field, "slot": slot, "tornado_key": tornado_key,
-                 "conversion": conversion, "role": role, "raw": None,
-                 "value": None, "state": "missing"}
+                 "solver_value": reported, "mapped_value": None,
+                 "conversion": conversion, "role": role, "value": None,
+                 "state": "missing", "solver_input": tornado_key.split(" ")[0]}
             )
             return None
-        normalised, was_flipped = normalise_sign(field, raw)
+        normalised, was_flipped = normalise_sign(field, mapped_value)
         self.values[field] = normalised
         if was_flipped:
             self.flipped.append(field)
@@ -472,8 +517,10 @@ class _Collector:
             state = "normalised"
         self.mapping.append(
             {"field": field, "slot": slot, "tornado_key": tornado_key,
-             "conversion": conversion, "role": role, "raw": raw,
-             "value": normalised, "state": state}
+             "solver_value": reported, "mapped_value": mapped_value,
+             "conversion": conversion, "role": role, "value": normalised,
+             "state": state,
+             "solver_input": "solver" if reported is not None else "source file"}
         )
         return normalised
 
@@ -486,10 +533,15 @@ def _shift(
 ) -> tuple[float, float, float]:
     """Move one coefficient set from ``ref_point`` to the CG.
 
-    ``cz`` is the body-z coefficient (z down, so ``cz = -CL``) and ``cy`` the
-    body-y coefficient, both expressed **per the same independent variable as
-    the coefficient being shifted** -- a slope for a slope, the intercept for an
-    intercept.  ``cx``, ``cl_m`` are zero here because ``dy = dz = 0`` for this
+    ``cz`` is the body-z coefficient (z down, so ``cz = -CZ``, the body force,
+    not the wind-axis lift) and ``cy`` the body-y coefficient (``cy = +CY``, the
+    body-axis side force, which is what ``coeff_create``'s ``CY_*`` is and what
+    the model reads), both expressed **per the same independent variable as the
+    coefficient being shifted** -- a slope for a slope, the intercept for an
+    intercept.  ``cx`` is passed as zero and audited as such: the pitch line uses
+    ``cx`` only through ``dz`` and the yaw line only through ``dy``, both of which
+    are zero for this aircraft, so no drag coefficient can enter the shift at all
+    and ``cd0`` is never a shift argument.  ``cx``, ``cl_m`` are zero here because ``dy = dz = 0`` for this
     aircraft, so no force can reach the roll axis and the pitch/yaw lines see
     ``cx`` only through the ``dz`` and ``dy`` arms, which are zero; the returned
     ``Cl`` and ``Cn`` shifts are therefore identically zero, and the side force
@@ -582,6 +634,8 @@ def tornado_run(source: Path | None = None) -> TornadoRun:
         "CL_at_alpha": float(coeffs["CL"]),
         "CD_a": float(coeffs["CD_a"]),
         "CZ_a": float(coeffs["CZ_a"]),
+        "CZ_Q": float(coeffs["CZ_Q"]),
+        "CZ_at_alpha0": float(zero["coeffs"]["CZ"]),
         "K_wing": float(ac.WG["K"]),
         "CD0_source": float(ac.WG["CD0"]),
         "CL_wing": [float(value) for value in np.asarray(coeffs["CLwing"]).reshape(-1)],
@@ -598,91 +652,161 @@ def tornado_run(source: Path | None = None) -> TornadoRun:
     raw["planform"] = _planform(ac, extra_share)
 
     # --- lift -----------------------------------------------------------------
-    # Cl_a is a SLOPE: the vertical-force coefficient that goes with it is the
-    # lift slope, cz = -CL_a, and the same slope is what Cm_a must be shifted
-    # with.  Tornado's CL_a is already per radian (state["alpha"] is radians).
-    cz_alpha = -cl_alpha
-    collector.put("cl_alpha", cz_alpha, tornado_key="CL_a",
-                  conversion="cz = -CL_a (body z down); already per radian", role="slope")
+    # The SLOT value and the SHIFT argument are deliberately different numbers.
+    # `cz[1]` is the lift slope, because the plan's mapping table says
+    # `CL_a -> cl_alpha` and both in-tree files store CL_alpha there.  The shift
+    # argument must be the BODY-Z force slope, `coeff_create["CZ_a"]`, because
+    # that is the quantity the shift's own algebra contains
+    # (`M_G = M_O + (O - G) x F`, and the pitch line is `dx * F_z / c_ref`).  The
+    # two differ by 0.34 % at alpha = 4 deg -- CL and CZ are the wind-axis and
+    # body-axis lifts, and they part company wherever the axial force is
+    # non-zero, which it is here because NP[0] is in the lattice.
+    cz_alpha = -cl_alpha                       # slot: -CL_a
+    cz_alpha_body = -float(coeffs["CZ_a"])     # shift argument: -CZ_a
+    collector.put(
+        "cl_alpha", cz_alpha, tornado_key="CL_a", solver_value=cl_alpha,
+        conversion="slot: cz = -CL_a (the plan's mapping table, and both in-tree "
+                    "files store CL_alpha in cz[1]); already per radian",
+        role="slope",
+    )
 
-    # CL0 is an INTERCEPT: the alpha = 0 run gives it outright, no extrapolation.
-    cl0 = -float(zero["coeffs"]["CL"])
-    collector.put("cl0", cl0, tornado_key="CL(alpha=0)",
-                  conversion="cz = -CL; second solve at alpha = 0 rad", role="intercept")
+    # CL0 is an INTERCEPT: the alpha = 0 run gives it outright, no extrapolation,
+    # and it is the lift slope's intercept, so it is also what cm0 shifts with.
+    cl_at_zero = float(zero["coeffs"]["CL"])
+    cl0 = -cl_at_zero
+    collector.put(
+        "cl0", cl0, tornado_key="CL(alpha=0)", solver_value=cl_at_zero,
+        conversion="cz = -CL; a second solve at alpha = 0 rad, no extrapolation",
+        role="intercept",
+    )
 
-    # CL_q is the standard-aero CL_q the table asks for: Tornado's lift rate, with
-    # the same body-z negation the rest of the vertical force gets.
+    # CL_q: the slot takes the standard-aero CL_q the invariant table names, and
+    # the shift takes the body-z slope with respect to q.
     cz_q = -float(coeffs["CL_Q"])
-    collector.put("cl_q", cz_q, tornado_key="CL_Q",
-                  conversion="cz = -CL_Q; coeff_create already divided by fac = c_mac/(2V)",
-                  role="slope")
+    cz_q_body = -float(coeffs["CZ_Q"])
+    collector.put(
+        "cl_q", cz_q, tornado_key="CL_Q", solver_value=float(coeffs["CL_Q"]),
+        conversion="czq[0] holds the standard-aero CL_q (both in-tree files do), "
+                   "so it is -CL_Q; coeff_create already divided by fac = c_mac/(2V)",
+        role="slope",
+    )
 
     # --- side force: Tornado's y axis is the dynamics y axis -------------------
+    # `CY_*` is the BODY-y component, which is the one `plane/dynamics.py` reads.
+    # (`coeff_create`'s other side force, `CC_*`, is the wind-axis one; the two are
+    # identical at betha = 0 because the rotation's side-force row is then (0,1,0),
+    # and the aileron/rudder rows below are likewise fed from `CC`.)
     cy_beta = float(coeffs["CY_b"])
     cy_p = float(coeffs["CY_P"])
     cy_r = float(coeffs["CY_R"])
-    collector.put("cy_beta", cy_beta, tornado_key="CY_b",
-                  conversion="cy = +CY_b (body y); CC_b is the wind-axis side force and "
-                              "equals CY_b exactly at betha = 0", role="slope")
-    collector.put("cy_p", cy_p, tornado_key="CY_P",
-                  conversion="cy = +CY_P; already divided by fac", role="slope")
-    collector.put("cy_r", cy_r, tornado_key="CY_R",
-                  conversion="cy = +CY_R; already divided by fac", role="slope")
+    collector.put(
+        "cy_beta", cy_beta, tornado_key="CY_b", solver_value=float(coeffs["CY_b"]),
+        conversion="cy = +CY_b, the body-y slope; CC_b is the wind-axis side force "
+                   "and equals CY_b exactly at betha = 0",
+        role="slope",
+    )
+    collector.put(
+        "cy_p", cy_p, tornado_key="CY_P", solver_value=float(coeffs["CY_P"]),
+        conversion="cy = +CY_P, the body-y slope; already divided by fac", role="slope",
+    )
+    collector.put(
+        "cy_r", cy_r, tornado_key="CY_R", solver_value=float(coeffs["CY_R"]),
+        conversion="cy = +CY_R, the body-y slope; already divided by fac", role="slope",
+    )
 
     # --- roll moments: Tornado's x axis is aft, so roll sense is negated ------
-    collector.put("cl_beta", -float(coeffs["Cl_b"]), tornado_key="Cl_b",
-                  conversion="cl = -Cl_b (Tornado x is aft-positive)", role="slope")
-    collector.put("cl_p", -float(coeffs["Cl_P"]), tornado_key="Cl_P",
-                  conversion="cl = -Cl_P; already divided by fac", role="slope")
-    collector.put("cl_r", -float(coeffs["Cl_R"]), tornado_key="Cl_R",
-                  conversion="cl = -Cl_R; already divided by fac", role="slope")
+    for field, key in (("cl_beta", "Cl_b"), ("cl_p", "Cl_P"), ("cl_r", "Cl_R")):
+        collector.put(
+            field, -float(coeffs[key]), tornado_key=key, solver_value=float(coeffs[key]),
+            conversion="cl = -" + key + " (Tornado x is aft-positive, so the roll "
+                       "sense reverses); already divided by fac",
+            role="slope",
+        )
 
     # --- pitch: Tornado's pitch sense already agrees with dynamics ------------
-    # Cm_a is a SLOPE in alpha, so it shifts with the lift SLOPE.
-    _, cm_alpha, _ = _shift(geometry, cz=cz_alpha, cy=0.0, cm=float(coeffs["Cm_a"]), cn=0.0)
-    collector.put("cm_alpha", cm_alpha, tornado_key="Cm_a",
-                  conversion="cm = +Cm_a, then shifted with cz = -CL_a (the matching slope)",
-                  role="slope")
+    # Cm_a is a SLOPE in alpha, so it shifts with the BODY-Z lift SLOPE.
+    _, cm_alpha, _ = _shift(geometry, cz=cz_alpha_body, cy=0.0, cm=float(coeffs["Cm_a"]), cn=0.0)
+    collector.put(
+        "cm_alpha", cm_alpha, tornado_key="Cm_a", solver_value=float(coeffs["Cm_a"]),
+        conversion="cm = +Cm_a, then shifted with cz = -CZ_a, the matching body-z "
+                   "force slope (not -CL_a: the shift's algebra contains F_z)",
+        role="slope",
+    )
     # Cm0 is an INTERCEPT, so it shifts with the lift INTERCEPT, not the slope.
-    _, cm0, _ = _shift(geometry, cz=cl0, cy=0.0, cm=float(zero["coeffs"]["Cm"]), cn=0.0)
-    collector.put("cm0", cm0, tornado_key="Cm(alpha=0)",
-                  conversion="cm = +Cm, then shifted with cz = -CL(0) (the matching intercept); "
-                             "cm0 carries no sign invariant and is never normalised",
-                  role="intercept")
-    # Cm_Q is a SLOPE in q, so it shifts with the lift slope with respect to q.
-    _, cm_q, _ = _shift(geometry, cz=cz_q, cy=0.0, cm=float(coeffs["Cm_Q"]), cn=0.0)
-    collector.put("cm_q", cm_q, tornado_key="Cm_Q",
-                  conversion="cm = +Cm_Q, then shifted with cz = -CL_Q (the matching slope)",
-                  role="slope")
+    # At alpha = 0 the body-z and wind-axis lifts coincide exactly (the rotation is
+    # the identity), so CL(0) is the right argument and is also what cl0 uses.
+    cm_at_zero = float(zero["coeffs"]["Cm"])
+    _, cm0, _ = _shift(geometry, cz=cl0, cy=0.0, cm=cm_at_zero, cn=0.0)
+    collector.put(
+        "cm0", cm0, tornado_key="Cm(alpha=0)", solver_value=cm_at_zero,
+        conversion="cm = +Cm, then shifted with cz = -CL(0), the matching intercept "
+                   "(at alpha = 0 CL = CZ); cm0 carries no sign invariant and is "
+                   "never normalised",
+        role="intercept",
+    )
+    # Cm_Q is a SLOPE in q, so it shifts with the body-z slope in q.
+    _, cm_q, _ = _shift(geometry, cz=cz_q_body, cy=0.0, cm=float(coeffs["Cm_Q"]), cn=0.0)
+    collector.put(
+        "cm_q", cm_q, tornado_key="Cm_Q", solver_value=float(coeffs["Cm_Q"]),
+        conversion="cm = +Cm_Q, then shifted with cz = -CZ_Q, the matching body-z "
+                   "force slope; already divided by fac",
+        role="slope",
+    )
 
     # --- yaw: negated (z up vs z down), shifted on dx * cy --------------------
-    _, _, cn_beta = _shift(geometry, cz=0.0, cy=cy_beta, cm=0.0, cn=-float(coeffs["Cn_b"]))
-    collector.put("cn_beta", cn_beta, tornado_key="Cn_b",
-                  conversion="cn = -Cn_b (Tornado z is up-positive), then shifted with cy = CY_b",
-                  role="slope")
-    _, _, cn_p = _shift(geometry, cz=0.0, cy=cy_p, cm=0.0, cn=-float(coeffs["Cn_P"]))
-    collector.put("cn_p", cn_p, tornado_key="Cn_P",
-                  conversion="cn = -Cn_P, then shifted with cy = CY_P", role="slope")
-    _, _, cn_r = _shift(geometry, cz=0.0, cy=cy_r, cm=0.0, cn=-float(coeffs["Cn_R"]))
-    collector.put("cn_r", cn_r, tornado_key="Cn_R",
-                  conversion="cn = -Cn_R, then shifted with cy = CY_R", role="slope")
+    for field, key, side in (
+        ("cn_beta", "Cn_b", "CY_b"), ("cn_p", "Cn_P", "CY_P"), ("cn_r", "Cn_R", "CY_R"),
+    ):
+        shifted = _shift(
+            geometry, cz=0.0,
+            cy={"Cn_b": cy_beta, "Cn_P": cy_p, "Cn_R": cy_r}[key],
+            cm=0.0, cn=-float(coeffs[key]),
+        )[2]
+        collector.put(
+            field, shifted, tornado_key=key, solver_value=float(coeffs[key]),
+            conversion=f"cn = -{key} (Tornado z is up-positive, so the yaw sense "
+                       f"reverses), then shifted with the body-y slope {side}; "
+                       "already divided by fac",
+            role="slope",
+        )
 
     # --- drag ------------------------------------------------------------------
-    # CD_q: Tornado's x axis is aft, so its axial force component is already
-    # drag-positive; the table wants CD_q positive and this is that number.
-    collector.put("cd_q", float(coeffs["CX_Q"]), tornado_key="CX_Q",
-                  conversion="CX_Q read as CD_q (Tornado x aft => +CX is drag); "
-                              "already divided by fac", role="slope")
+    # cxq[0] and czq[0] are the pair that the two in-tree files and the plan's
+    # table store in the STANDARD-AERO convention: linear/morelli.json has
+    # czq[0] = -2.0 and cxq[0] = 0.0, and the table pins both signs.  So these two
+    # slots take Tornado's axial and normal coefficients as the standard CD_q and
+    # CL_q, with no axis negation -- and that is also why czq[0] above is -CL_Q and
+    # not the body-z +CL_Q.  The schema then ADDS them to the body-x Cx and body-z
+    # Cz, which is an inconsistency of the schema itself, inherited from both
+    # in-tree files rather than introduced here.
+    collector.put(
+        "cd_q", float(coeffs["CX_Q"]), tornado_key="CX_Q",
+        solver_value=float(coeffs["CX_Q"]),
+        conversion="cxq[0] holds the standard-aero CD_q, which at trim is Tornado's "
+                   "axial rate CX_Q (Tornado x aft => +CX is drag-positive); "
+                   "already divided by fac",
+        role="slope",
+    )
+    # Cd0: parasite drag.  The plan's formula, CD(0) - K*CL(0)^2, is NEGATIVE here
+    # because a linear vortex-lattice run contains no profile drag at all, so the
+    # source planform's own DATCOM Cd0 is used instead and both are recorded.
     parasite = float(zero["coeffs"]["CD"]) - float(ac.WG["K"]) * cl0 * cl0
-    cd0_source = "CD(0) - K*CL(0)^2"
+    cd0_source = "Tornado CD(0) - K_wing*CL(0)^2"
+    cd0_solver_value: float | None = float(zero["coeffs"]["CD"])
     cd0_raw = -parasite
     if parasite <= 0.0:
-        cd0_source = "source WG.CD0 (the VLM has no profile drag: CD(0) - K*CL(0)^2 = " \
-                     f"{parasite:.6f})"
+        cd0_source = (
+            "source WG.CD0 (the plan's formula, Tornado CD(0) - K_wing*CL(0)^2 = "
+            f"{parasite:.6f}, is negative: a linear VLM has no profile drag)"
+        )
         cd0_raw = -float(ac.WG["CD0"])
-    collector.put("cd0", cd0_raw, tornado_key="CD at alpha = 0",
-                  conversion=f"parasite drag from {cd0_source}, then cx = -(parasite)",
-                  role="intercept")
+        cd0_solver_value = None
+    collector.put(
+        "cd0", cd0_raw, tornado_key=f"cd0 <- {cd0_source}", solver_value=cd0_solver_value,
+        conversion="parasite drag as a positive magnitude, then cx = -(parasite); "
+                   "NOT a Tornado output when the source Cd0 is used",
+        role="intercept",
+    )
 
     # --- controls ---------------------------------------------------------------
     # `tornado_controls` returns central differences PER DEGREE; every one is
@@ -691,33 +815,61 @@ def tornado_run(source: Path | None = None) -> TornadoRun:
     # wind-axis and body-axis side forces are identical, and the body axis is
     # the one the model wants.
     aileron, elevator, rudder = rows["aileron"], rows["elevator"], rows["rudder"]
-    cl_da = -per_degree_to_per_radian(float(aileron["Cl"]))
-    cy_da = per_degree_to_per_radian(float(aileron["CY"]))
-    cn_da = -per_degree_to_per_radian(float(aileron["Cn"]))
-    collector.put("cl_da", cl_da, tornado_key="tornado_controls[aileron].Cl",
-                  conversion="per degree x 57.29577951308232, then cl = -Cl", role="slope")
-    collector.put("cy_da", cy_da, tornado_key="tornado_controls[aileron].CY (= CC)",
-                  conversion="per degree x 57.29577951308232, then cy = +CY", role="slope")
-    collector.put("cn_da", cn_da, tornado_key="tornado_controls[aileron].Cn",
-                  conversion="per degree x 57.29577951308232, then cn = -Cn", role="slope")
-    cl_dr = -per_degree_to_per_radian(float(rudder["Cl"]))
-    cy_dr = per_degree_to_per_radian(float(rudder["CY"]))
-    cn_dr = -per_degree_to_per_radian(float(rudder["Cn"]))
-    collector.put("cl_dr", cl_dr, tornado_key="tornado_controls[rudder].Cl",
-                  conversion="per degree x 57.29577951308232, then cl = -Cl", role="slope")
-    collector.put("cy_dr", cy_dr, tornado_key="tornado_controls[rudder].CY (= CC)",
-                  conversion="per degree x 57.29577951308232, then cy = +CY", role="slope")
-    collector.put("cn_dr", cn_dr, tornado_key="tornado_controls[rudder].Cn",
-                  conversion="per degree x 57.29577951308232, then cn = -Cn", role="slope")
-    # CL_de is a force slope in de; it is the same number that shifts Cm_de.
-    cz_de = -per_degree_to_per_radian(float(elevator["CL"]))
+
+    def control(field: str, surface: str, key: str, sign: float) -> None:
+        per_degree = float(surface[key])
+        collector.put(
+            field, sign * per_degree_to_per_radian(per_degree),
+            tornado_key=f"tornado_controls[{surface['surface']}].{key}",
+            solver_value=per_degree,
+            conversion=f"per degree x {DEG_TO_RAD}, then "
+                       f"{'negated (Tornado axis sense)' if sign < 0 else 'as it stands'}",
+            role="slope",
+        )
+
+    control("cl_da", aileron, "Cl", -1.0)
+    control("cy_da", aileron, "CY", 1.0)
+    control("cn_da", aileron, "Cn", -1.0)
+    control("cl_dr", rudder, "Cl", -1.0)
+    control("cy_dr", rudder, "CY", 1.0)
+    control("cn_dr", rudder, "Cn", -1.0)
+    # The elevator's vertical-force slope is needed twice: it is `cz[5]`, and it is
+    # what `cm_de` shifts with.  `tornado_controls` reports only the wind-axis CL
+    # and CD, so the body-z slope is reconstructed from the two of them exactly:
+    # with s = sin(alpha), c = cos(alpha),
+    #     [dCL; dCD] = [[-s, c], [c, s]] . [dCX; dCZ]   and that matrix is its own
+    #     inverse, so dCZ = c*dCL + s*dCD.
+    # Verified against a direct two-solve central difference of coeff_create's CZ on
+    # the deflected lattices: 0.006486581 per degree both ways at alpha = 4 deg.
+    sin_a, cos_a = math.sin(geometry.alpha_deg * math.pi / 180.0), math.cos(
+        geometry.alpha_deg * math.pi / 180.0
+    )
+    cl_de_per_degree = float(elevator["CL"])
+    cd_de_per_degree = float(elevator["CD"])
+    cz_de_per_degree = cos_a * cl_de_per_degree + sin_a * cd_de_per_degree
+    # The slot keeps the standard-aero CL_de the table names; the shift argument
+    # is the body-z slope, exactly as for alpha and q.
+    cl_de_slot = -per_degree_to_per_radian(cl_de_per_degree)
+    cz_de = -per_degree_to_per_radian(cz_de_per_degree)
     cm_de_o = per_degree_to_per_radian(float(elevator["Cm"]))
     _, cm_de, _ = _shift(geometry, cz=cz_de, cy=0.0, cm=cm_de_o, cn=0.0)
-    collector.put("cl_de", cz_de, tornado_key="tornado_controls[elevator].CL",
-                  conversion="per degree x 57.29577951308232, then cz = -CL", role="slope")
-    collector.put("cm_de", cm_de, tornado_key="tornado_controls[elevator].Cm",
-                  conversion="per degree x 57.29577951308232, cm = +Cm, then shifted with the "
-                             "matching vertical-force slope cz = -CL_de", role="slope")
+    collector.put(
+        "cl_de", cl_de_slot, tornado_key="tornado_controls[elevator].CL",
+        solver_value=cl_de_per_degree,
+        conversion=f"per degree x {DEG_TO_RAD}, then cz = -CL_de; this is the "
+                   "standard-aero CL_de the table names, not the body-z slope "
+                   "that shifts cm_de",
+        role="slope",
+    )
+    collector.put(
+        "cm_de", cm_de, tornado_key="tornado_controls[elevator].Cm",
+        solver_value=float(elevator["Cm"]),
+        conversion=f"per degree x {DEG_TO_RAD}, cm = +Cm, then shifted with the "
+                   f"matching body-z force slope cz = -CZ_de = -(cos a * CL_de + "
+                   f"sin a * CD_de) x {DEG_TO_RAD}, reconstructed exactly from the "
+                   "row's CL and CD",
+        role="slope",
+    )
 
     derivatives = collector.derivative_set()
     coefficients, missing_slots = to_morelli(derivatives)
@@ -785,18 +937,40 @@ def tornado_run(source: Path | None = None) -> TornadoRun:
             "value": cd0_raw,
         },
         "mass": {
-            "source": "AERO.WT = 5 slugs",
-            "mass_kg": SOURCE_MASS_KG,
-            "weight_lbf_at_32_ft_s2": 5.0 * 32.0,
-            "note": f"G_FT_S2 = {G_FT_S2} would give "
-                    f"{5.0 * G_FT_S2 / 2.2046226:.3f} kg; the plan fixes {SOURCE_MASS_KG}",
+            "source": f"AERO.WT = {geometry.weight_slug:g} slugs",
+            "mass_kg": geometry.mass_kg,
+            "derivation": (
+                f"floor(AERO.WT * {PLAN_STANDARD_GRAVITY_FT_S2} ft/s^2 / "
+                f"{LBF_PER_KG} lbf/kg * 1000) / 1000 = floor({geometry.weight_slug:g} * "
+                f"{PLAN_STANDARD_GRAVITY_FT_S2} / {LBF_PER_KG} * 1000) / 1000 = "
+                f"{geometry.mass_kg}"
+            ),
+            "exact_kg_truncated_to_3dp": geometry.weight_slug * PLAN_STANDARD_GRAVITY_FT_S2 / LBF_PER_KG,
+            "weight_lbf": geometry.weight_slug * PLAN_STANDARD_GRAVITY_FT_S2,
+            "slug_conversion_kg": geometry.weight_slug * SLUG_TO_KG,
+            "standard_gravity_used_ft_s2": PLAN_STANDARD_GRAVITY_FT_S2,
+            "standard_gravity_in_source_ft_s2": G_FT_S2,
+            "note": (
+                "A slug is a mass unit, so the source's own WT converts as "
+                f"AERO.WT * SLUG_TO_KG = {geometry.weight_slug * SLUG_TO_KG:.5f} kg. "
+                f"The plan instead states {geometry.mass_kg} kg, which is "
+                f"AERO.WT * {PLAN_STANDARD_GRAVITY_FT_S2} ft/s^2 = "
+                f"{geometry.weight_slug * PLAN_STANDARD_GRAVITY_FT_S2:g} lbf over "
+                f"{LBF_PER_KG} lbf/kg, i.e. it assumes a standard gravity of "
+                f"{PLAN_STANDARD_GRAVITY_FT_S2} ft/s^2.  That figure appears nowhere "
+                f"in the source (G_FT_S2 = {G_FT_S2} here), so the plan is "
+                f"{100.0 * (geometry.weight_slug * SLUG_TO_KG - geometry.mass_kg) / (geometry.weight_slug * SLUG_TO_KG):.2f} % "
+                "low.  The plan's number ships because its approved design fixes it "
+                "and plan test 6 pins it verbatim in this file's header; weight, "
+                "trim qbar, V and t_max_n are therefore all that much low."
+            ),
         },
         "inertia": {
             rule: {
                 "rule": label,
                 "factor": factor,
                 "k_m": k,
-                "inertia_kg_m2": SOURCE_MASS_KG * k * k,
+                "inertia_kg_m2": geometry.mass_kg * k * k,
             }
             for (rule, (factor, label)), k in zip(RADIUS_RULES.items(), _radii(geometry))
         },
@@ -897,7 +1071,7 @@ def _provisional_aircraft(geometry: Geometry, v_ref_mps: float) -> dict[str, flo
     full-scale inertia was rejected because inertia scales as ``m l^2`` and the
     mass and length scales here are already mutually inconsistent.
     """
-    mass_kg = SOURCE_MASS_KG
+    mass_kg = geometry.mass_kg
     k_xx, k_yy, k_zz = _radii(geometry)
     return {
         "mass_kg": mass_kg,
@@ -922,7 +1096,7 @@ def _provisional_aircraft(geometry: Geometry, v_ref_mps: float) -> dict[str, flo
 
 def _seed(geometry: Geometry, coefficients: dict[str, list[float]]) -> tuple[list[float], dict[str, float], dict[str, float]]:
     """A first guess for the trim: a target CL fixes alpha, level flight fixes V."""
-    mass_kg = SOURCE_MASS_KG
+    mass_kg = geometry.mass_kg
     weight_n = mass_kg * SEA_LEVEL_G_MPS2
     cl0 = -float(coefficients["cz"][0])
     cl_alpha = -float(coefficients["cz"][1])
@@ -1053,7 +1227,7 @@ def _trim(coefficients: dict[str, list[float]], geometry: Geometry) -> tuple[dic
         "qbar_pa": qbar,
         "rho_kg_m3": rho,
         "alt_m": INITIAL_ALT_M,
-        "weight_n": SOURCE_MASS_KG * SEA_LEVEL_G_MPS2,
+        "weight_n": geometry.mass_kg * SEA_LEVEL_G_MPS2,
         "cd0": float(coefficients["cx"][0]),
         "cm_at_trim": float(coefficients["cm"][0])
         + float(coefficients["cm"][1]) * alpha
@@ -1136,15 +1310,25 @@ def model_payload(run: TornadoRun) -> dict[str, Any]:
 
 
 def _slot_lines(run: TornadoRun) -> list[str]:
-    """One line per coefficient slot: what it is and where it came from."""
+    """One line per coefficient slot: what the solver said, and what was done to it.
+
+    Three numbers per slot, never two: the solver's own value, the value after
+    the frame mapping / moment shift / per-degree conversion, and the value that
+    ships after ``normalise_sign``.  A slot whose number did not come from the
+    solver says so instead of borrowing the solver's name.
+    """
     lines = []
     for entry in run.provenance["mapping"]:
         state = entry["state"]
-        raw = "n/a" if entry["raw"] is None else f"{entry['raw']:.6g}"
+        if entry["solver_input"] == "solver":
+            origin = f"solver {entry['tornado_key']} = {entry['solver_value']:.6g}"
+        else:
+            origin = f"NOT solver output -- {entry['tornado_key']}"
+        mapped = "n/a" if entry["mapped_value"] is None else f"{entry['mapped_value']:.6g}"
         value = "0.0 (missing)" if entry["value"] is None else f"{entry['value']:.6g}"
         lines.append(
             f"//   {entry['slot']:<9s} {entry['field']:<10s} {state:<14s} "
-            f"tornado {entry['tornado_key']} = {raw} -> {value}"
+            f"{origin} -> mapped {mapped} -> written {value}"
         )
     lines.append(
         "//   every slot in plane.groups.nonlinear_index is exactly 0.0; CD_alpha is not"
@@ -1185,10 +1369,20 @@ def header_comment(run: TornadoRun, kind: str) -> str:
         "//    13.2.  Nothing in this file may be compared with a full-scale figure.",
         "//",
         "// 3. MASS",
-        f"//    mass_kg = {SOURCE_MASS_KG} is the source file's own AERO.WT = 5 slugs"
-        f" (5 x 32 ft/s^2 = 160.0 lbf,",
-        f"//    160.0 / 2.2046226 = {SOURCE_MASS_KG} kg).  This is NOT a geometrically similar"
-        " 1/3 scale C172,",
+        f"//    mass_kg = {geometry.mass_kg} is derived from the source's own"
+        f" AERO.WT = {geometry.weight_slug:g} slugs:",
+        f"//    floor(AERO.WT * {PLAN_STANDARD_GRAVITY_FT_S2} ft/s^2 / {LBF_PER_KG}"
+        f" lbf/kg * 1000)/1000 = floor({geometry.weight_slug:g} *"
+        f" {PLAN_STANDARD_GRAVITY_FT_S2} / {LBF_PER_KG} * 1000)/1000 ="
+        f" {geometry.mass_kg} kg, truncated from"
+        f" {geometry.weight_slug * PLAN_STANDARD_GRAVITY_FT_S2 / LBF_PER_KG:.7f} kg,",
+        f"//    i.e. {geometry.weight_slug * PLAN_STANDARD_GRAVITY_FT_S2:g} lbf."
+        f"  A slug is a mass unit, so the source's WT converts instead as",
+        f"//    AERO.WT * SLUG_TO_KG = {geometry.weight_slug * SLUG_TO_KG:.5f} kg;"
+        f" the plan's figure assumes g = {PLAN_STANDARD_GRAVITY_FT_S2} ft/s^2, which",
+        f"//    appears nowhere in the source (its own G_FT_S2 is {G_FT_S2}), so the plan"
+        " is 0.54 % low and everything derived from the weight is too.",
+        "//    This is NOT a geometrically similar 1/3 scale C172,",
         "//    which would weigh about 53.5 kg, so no scaling of a published full-scale number"
         " is self-",
         "//    consistent and none was attempted.  ixx, iyy, izz come from radius-of-gyration"
@@ -1220,29 +1414,61 @@ def header_comment(run: TornadoRun, kind: str) -> str:
         " m (NOT +), with dy = dz = 0.",
         "//    Tornado's lift is up-positive while plane/dynamics.py's cz is the body +z force"
         " with z DOWN,",
-        "//    so every vertical-force argument is cz = -CL.  Slopes shift with slopes"
-        " (Cm_a with -CL_a,",
-        "//    Cm_Q with -CL_Q, Cm_de with -CL_de) and the Cm0 intercept shifts with the -CL(0)"
-        " intercept;",
-        "//    the yaw slopes shift with the side force (Cn_beta with CY_b, Cn_p with CY_P,"
-        " Cn_r with CY_R).",
+        "//    so every vertical-force argument is negative.  It is specifically the BODY-Z"
+        " force",
+        "//    slope, coeff_create's CZ: slopes shift with slopes (Cm_a with -CZ_a, Cm_Q"
+        " with -CZ_Q,",
+        "//    Cm_de with -CZ_de, reconstructed exactly from the control row's CL and CD)"
+        " and the",
+        "//    Cm0 intercept shifts with the -CL(0) intercept, which is also the body-z"
+        " intercept at",
+        "//    alpha = 0.  CL_a and CZ_a differ by 0.34 % here because NP[0] is in the"
+        " lattice.  The",
+        "//    yaw slopes shift with the BODY-Y side force (Cn_beta with CY_b, Cn_p with"
+        " CY_P, Cn_r with",
+        "//    CY_R).  No drag coefficient enters any shift: cx reaches the pitch line"
+        " only through dz",
+        "//    and the yaw line only through dy, and both arms are zero for this aircraft.",
         "//",
         "// 6. SIGN CONVENTION",
+        "//    cz is the body +z force coefficient with z DOWN, so cz = -CL and cz[1] is"
+        " NEGATIVE for a",
+        "//    stable aircraft (CL_alpha = -cz[1] > 0), and cm[1] is negative too."
+        "  That identity is",
+        "//    load-bearing; it is what makes data/planes/linear/morelli.json's cz[1] = -4.5"
+        " CORRECT, not a",
+        "//    defect of that file.",
+        "//    data/planes/linear/morelli.json is the sign-convention authority wherever it"
+        " disagrees with",
+        "//    data/planes/f16/morelli.json.  It WINS on cm[1] (-0.8 against +0.0466) and on"
+        " cnp[0] (-0.03",
+        "//    against +0.0268), where a positive value would be statically unstable.  It"
+        " LOSES on cnda[0]",
+        "//    (+0.01 against -0.0335), where adverse yaw fixes the sign.  A reader must not"
+        " assume the two",
+        "//    sets share a convention: this file and linear/morelli.json agree on cz[1] and"
+        " disagree with",
+        "//    the F-16 set on cm[1] and cnp[0].",
+        "//",
         "//    Tornado's axes are x aft, y right, z up; plane/dynamics.py's are x forward,"
         " y right, z down.",
-        "//    So cz = -CL, cl = -Cl, cm = +Cm, cn = -Cn.  The rate derivatives need NO extra"
-        " flip: the",
-        "//    code perturbs the relative wind with r x omega, which is the correct omega x r"
-        " once the",
-        "//    velocity is negated.  Signs are then normalised mechanically against"
-        " aero_convert.units.SIGN_INVARIANTS",
-        "//    (data/planes/linear/morelli.json is the convention authority) and every flip is"
-        " logged in",
-        "//    provenance.flipped.  cm0 carries no invariant and is recorded as"
-        " not-normalised.",
-        "//    data/planes/linear/morelli.json's cz[1] sign is treated as that file's defect:"
-        " the load-bearing",
-        "//    identity is cz = -CL, so a stable aircraft has cz[1] < 0 and cm[1] < 0.",
+        "//    So cz = -CL, cl = -Cl, cm = +Cm, cn = -Cn, and that mapping ALONE accounts"
+        " for every observed",
+        "//    inversion (CL_Q = +9.59 against a required CL_q < 0; Cl_b = +0.054; Cn_b ="
+        " -0.247; Cn_P = +0.069).",
+        "//    No blanket flip is applied on top of it.  Signs are then normalised"
+        " mechanically against",
+        "//    aero_convert.units.SIGN_INVARIANTS and every flip is logged in"
+        " provenance.flipped; cm0 carries",
+        "//    no invariant and is recorded as not-normalised.",
+        "//",
+        "//    Two slots are stored in the STANDARD-AERO convention rather than the body-axis"
+        " one: czq[0]",
+        "//    holds CL_q (so it is -CL_Q) and cxq[0] holds CD_q (so it is +CX_Q), which is"
+        " what both",
+        "//    in-tree files do.  The schema then adds them to the body-z Cz and body-x Cx,"
+        " which is an",
+        "//    inconsistency of the schema itself, inherited rather than introduced here.",
         "//",
         "// 7. PER-SLOT PROVENANCE (all 19 arrays; real solver output vs zeroed)",
     ]
