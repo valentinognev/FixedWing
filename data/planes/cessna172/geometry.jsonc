@@ -2,7 +2,7 @@
 // data/planes/cessna172/geometry.jsonc for the Cessna 172 source analysis, generated -- do not hand-edit.
 //
 // 1. SOLVER, MESH, FLIGHT CONDITION
-//    Solver: Tornado, via the sibling package aid.tornado (imported from /home/valentin/Projects/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Python/src).
+//    Solver: Tornado, via the sibling package aid.tornado (imported from /mnt/VirtualMachine/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Python/src).
 //    Mesh: 10 chordwise x 5 spanwise (the AID batch default).  NP[0],
 //    the AR 33.3, S 3 ft^2 panel, is KEPT in the lattice and carries
 //    9.6% of the aircraft's CL at the trim alpha.
@@ -152,7 +152,7 @@
 // ==========================================================================
 {
   "model": "geometry",
-  "source": "/home/valentin/Projects/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
+  "source": "/mnt/VirtualMachine/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
   "units": {
     "length": "m",
     "mass": "kg",
@@ -232,7 +232,7 @@
       "x_station_ft": 2.5,
       "airfoil": "2412",
       "in_lattice": true,
-      "cl_share_at_trim": 0.0962341787469301,
+      "cl_share_at_trim": 0.09623417874693013,
       "kept_because": "the user ruled it in: excluding it is explicitly out of scope"
     }
   },
@@ -287,60 +287,60 @@
   },
   "trim": {
     "target_cruise_cl": 0.3,
-    "cl0": 0.16828451691889965,
-    "cl_alpha": 5.148012847936423,
-    "alpha_trim_rad": 0.026596243840299925,
-    "theta_trim_rad": 0.026596243840299925,
-    "elevator_rad": -0.014012661533384962,
-    "cruise_mps": 23.11457847254116,
-    "qbar_pa": 324.1499834353003,
+    "cl0": 0.16828451691889987,
+    "cl_alpha": 5.148012847938643,
+    "alpha_trim_rad": 0.026596243840289517,
+    "theta_trim_rad": 0.026596243840289514,
+    "elevator_rad": -0.01401266153339998,
+    "cruise_mps": 23.114578472541158,
+    "qbar_pa": 324.14998343530016,
     "rho_kg_m3": 1.2134001482844625,
     "alt_m": 100.0,
     "weight_n": 711.7078170999999,
     "cd0": -0.017218979436844056,
-    "cm_at_trim": 2.695861762991303e-10,
-    "power": 0.17263308623127407,
-    "v_ref_mps": 28.89322309067645,
+    "cm_at_trim": 2.6958617282968333e-10,
+    "power": 0.17263308623125254,
+    "v_ref_mps": 28.893223090676447,
     "thrust_scale": 0.19999999999999996,
-    "t_max_n": 1730.6695090690089,
-    "thrust_at_trim_n": 59.75416371938938,
-    "cl_at_trim": 0.29999999999999993,
-    "residual_max_abs": 1.5390123117506827e-16,
+    "t_max_n": 1730.669509069009,
+    "thrust_at_trim_n": 59.754163719381935,
+    "cl_at_trim": 0.3,
+    "residual_max_abs": 7.682288545691118e-17,
     "fallback": false
   },
   "raw_tornado": {
-    "CL_a": 5.148012847936423,
-    "CL_at_alpha0": 0.16828451691889965,
-    "CL_Q": 9.591130752128368,
+    "CL_a": 5.148012847938643,
+    "CL_at_alpha0": 0.16828451691889987,
+    "CL_Q": 9.5911307521397,
     "CL_P": 1.7506715021444903e-08,
-    "CL_R": -1.6042889977789666e-05,
-    "Cm_a": -8.786140193125513,
-    "Cm_at_alpha0": -0.2319321356612714,
-    "Cm_Q": -33.348776733878786,
-    "Cl_b": 0.05372122799922786,
-    "Cl_P": -0.4860949250681449,
-    "Cl_R": 0.04452499744596445,
-    "Cn_b": -0.24649956466084472,
-    "Cn_P": 0.06867139682171726,
-    "Cn_R": -0.28640308738561865,
-    "CY_b": -0.40826987000816295,
-    "CC_b": -0.40826987000816295,
-    "CY_P": 0.15961835084860332,
-    "CY_R": -0.3869509772286344,
+    "CL_R": -1.6042888089051395e-05,
+    "Cm_a": -8.786140193126624,
+    "Cm_at_alpha0": -0.23193213566127172,
+    "Cm_Q": -33.34877673385612,
+    "Cl_b": 0.0537212279989802,
+    "Cl_P": -0.48609492506873475,
+    "Cl_R": 0.04452499744582839,
+    "Cn_b": -0.2464995646609797,
+    "Cn_P": 0.0686713968215351,
+    "Cn_R": -0.2864030873858086,
+    "CY_b": -0.4082698700081908,
+    "CC_b": -0.4082698700081908,
+    "CY_P": 0.15961835084869766,
+    "CY_R": -0.3869509772284947,
     "CX_Q": 0.0070792752703040486,
-    "CD_at_alpha0": 0.0006035629331626441,
-    "CD_at_alpha": 0.0156762956808216,
-    "CL_at_alpha": 0.5022740423558434,
-    "CD_a": 0.43162175087214927,
+    "CD_at_alpha0": 0.0006035629331626336,
+    "CD_at_alpha": 0.015676295680821593,
+    "CL_at_alpha": 0.5022740423558433,
+    "CD_a": 0.43162175087239213,
     "CZ_a": 5.165580958710336,
-    "CZ_Q": 9.615046347063801,
-    "CZ_at_alpha0": 0.16828451691889965,
+    "CZ_Q": 9.615046347075133,
+    "CZ_at_alpha0": 0.16828451691889987,
     "K_wing": 0.08037324626140716,
     "CD0_source": 0.017218979436844056,
     "CL_wing": [
-      0.42378043404013094,
-      0.03015767834369693,
-      -1.643474547611176e-34,
+      0.4237804340401309,
+      0.030157678343696925,
+      -1.8261168073215337e-34,
       0.04833592997201538
     ],
     "wing_names": [
@@ -349,7 +349,7 @@
       "VT",
       "Wing 2"
     ],
-    "extra_panel_cl_share": 0.0962341787469301,
+    "extra_panel_cl_share": 0.09623417874693013,
     "planform": {
       "wing": {
         "chord_root_ft": 2.0,
@@ -404,7 +404,7 @@
         "x_station_ft": 2.5,
         "airfoil": "2412",
         "in_lattice": true,
-        "cl_share_at_trim": 0.0962341787469301,
+        "cl_share_at_trim": 0.09623417874693013,
         "kept_because": "the user ruled it in: excluding it is explicitly out of scope"
       }
     }
@@ -412,39 +412,39 @@
   "control_rows_per_degree": {
     "flap": {
       "delta_deg": 0.0,
-      "CL": 0.015504769664447221,
-      "CD": 0.0007602595769772222,
+      "CL": 0.015504769664447193,
+      "CD": 0.0007602595769772178,
       "Cm": -0.016334274776835245,
-      "CY": -1.034721800028644e-17,
-      "Cl": -1.7396373520621686e-18,
-      "Cn": -7.552019442415716e-18
+      "CY": 7.719640749775874e-18,
+      "Cl": -3.3584665546755754e-18,
+      "Cn": 6.759215961658217e-18
     },
     "aileron": {
       "delta_deg": 0.0,
-      "CL": -5.551115123125783e-17,
-      "CD": 0.0,
+      "CL": 0.0,
+      "CD": 1.734723475976807e-18,
       "Cm": -5.551115123125783e-17,
-      "CY": -0.0008756730696224345,
-      "Cl": 0.0042810881218524385,
-      "Cn": -0.00031138405881381954
+      "CY": -0.0008756730696224283,
+      "Cl": 0.004281088121852435,
+      "Cn": -0.0003113840588138146
     },
     "elevator": {
       "delta_deg": 0.0,
-      "CL": 0.006479685958287962,
-      "CD": 0.00032511773089293795,
-      "Cm": -0.029807885982899185,
-      "CY": -4.2131842120255646e-18,
-      "Cl": -2.295354839526477e-19,
-      "Cn": -3.412830221927518e-18
+      "CL": 0.006479685958288128,
+      "CD": 0.00032511773089295183,
+      "Cm": -0.02980788598289902,
+      "CY": -6.523640070233137e-19,
+      "Cl": 5.327639390690392e-18,
+      "Cn": 1.1793895589935362e-18
     },
     "rudder": {
       "delta_deg": 0.0,
       "CL": 5.551115123125783e-17,
-      "CD": 5.204170427930421e-18,
-      "Cm": 1.6653345369377348e-16,
-      "CY": -0.004004240094412684,
-      "Cl": 0.00037445384558744865,
-      "Cn": -0.003198765945580602
+      "CD": 1.3877787807814457e-17,
+      "Cm": 0.0,
+      "CY": -0.004004240094412686,
+      "Cl": 0.00037445384558744996,
+      "Cn": -0.0031987659455805996
     }
   },
   "provenance": {
@@ -453,7 +453,7 @@
       "10",
       "5"
     ],
-    "source": "/home/valentin/Projects/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
+    "source": "/mnt/VirtualMachine/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
     "moment_reference": {
       "reference_point": [
         0.0,
@@ -479,20 +479,20 @@
       "normalisation": "aero_convert.units.normalise_sign against SIGN_INVARIANTS"
     },
     "cl_alpha_cross_check": {
-      "coeff_create": 5.148012847936423,
-      "frozen_lattice_secant": 5.132344080083497,
-      "relative_difference": 0.003043653603002708,
+      "coeff_create": 5.148012847938643,
+      "frozen_lattice_secant": 5.132344080083656,
+      "relative_difference": 0.0030436536034018336,
       "tolerance": 0.01,
       "half_width_deg": 0.05,
-      "coarse_secant_0_to_2deg": 4.359093942279727,
-      "coarse_relative_difference": 0.1532472682100888,
+      "coarse_secant_0_to_2deg": 4.3590939422797215,
+      "coarse_relative_difference": 0.15324726821045506,
       "coarse_note": "a full re-run re-tilts the wake with alpha, so the coarse secant is not a fixed-wake derivative; it is recorded, not gated at 1 %"
     },
     "cd0": {
       "source": "source WG.CD0 (the plan's formula, Tornado CD(0) - K_wing*CL(0)^2 = -0.001673, is negative: a linear VLM has no profile drag)",
-      "CD_at_alpha0": 0.0006035629331626441,
+      "CD_at_alpha0": 0.0006035629331626336,
       "K_wing": 0.08037324626140716,
-      "induced_part": 0.0022761445049448207,
+      "induced_part": 0.0022761445049448263,
       "source_WG_CD0": 0.017218979436844056,
       "value": -0.017218979436844056
     },

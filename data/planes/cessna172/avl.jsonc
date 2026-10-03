@@ -1,0 +1,870 @@
+// ==========================================================================
+// data/planes/cessna172/avl.jsonc for the Cessna 172 source analysis, generated -- do not hand-edit.
+//
+// 1. SOLVER, MESH, FLIGHT CONDITION
+//    Solver: AVL, via aid.avl_io.run_avl_full for the stability sweep and
+//    aid.avl_controls.avl_controls for the control derivatives, both from the
+//    sibling package imported from /mnt/VirtualMachine/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Python/src.
+//    Mesh: 10 spanwise x 10 chordwise.  aid/avl_controls.py's own default, so the
+//    stability run and the control run agree.  AVL keeps only WG, HT and VT (nwing <= 3),
+//    so NP[0], which tornado.jsonc keeps in its lattice, is NOT in this file.
+//    Two runs, because run_avl_full's .sb lists no deflected surface at all and therefore carries
+//    no control columns (measured); avl_controls writes a CONTROL card for every legal surface,
+//    deflects all of them by the same delta, and reads the deflection columns out of its own .sb.
+//    That run is also the one whose aileron CONTROL card carries all seven numbers, which is what
+//    makes AVL read the trailing -1 as the duplicate sign instead of as a hinge component.
+//    Evaluated at alpha = 4 deg, the middle entry of AERO.ALSCHD, as aid/tornado_io.py::_build_state picks it. run_avl_full also
+//    solves an unconstrained case, which AVL trims to zero lift; it is recorded in
+//    provenance.reference_case and NOT used, so every slot here describes the alpha = 4 deg
+//    condition the other three files use.
+//    Flight condition from the source AERO: Mach 0.03, altitude 0.0 ft, betha 0.
+//    AID hands AVL's run card `mach * atm['a'] / 3.28084` = 10.207345 as the `v` command,
+//    and Sref/Cref/Bref are written in FEET (24.000 / 2.0000 / 12.000), so AVL's solver speed is 10.2073 ft/s
+//    = 3.1112 m/s in this model's frame -- the same reading tornado.jsonc uses, and the
+//    reason both files carry a 7.42940x rate-derivative caveat.  The same expression in
+//    SI is the PHYSICAL speed 10.2073 m/s, which is what flow5's SI deck used instead.  Both are in
+//    provenance.flight_condition.  The trimmed cruise speed is 23.1144 m/s.
+//
+// 2. THE SOURCE PLANFORM IS A CESSNA 172 AT ROUGHLY 1/3 LINEAR SCALE
+//    span 12 ft against a real 36.1 ft, chord 2 ft against 4.89 ft, area 24 ft^2
+//    against 174 ft^2.  Wing loading is therefore 6.70 lbf/ft^2 where a real C172 is
+//    13.2.  Nothing in this file may be compared with a full-scale figure.
+//
+// 3. MASS
+//    mass_kg = 72.574 is derived from the source's own AERO.WT = 5 slugs:
+//    floor(AERO.WT * 32.0 ft/s^2 / 2.2046226 lbf/kg * 1000)/1000 = 72.574 kg, truncated from
+//    72.5747799 kg, i.e. 160 lbf.  A slug is a mass unit, so the
+//    source's WT converts instead as AERO.WT * SLUG_TO_KG = 72.96951 kg; the plan's figure assumes g = 32.0 ft/s^2, which
+//    appears nowhere in the source (its own G_FT_S2 is 32.174), so the plan is 0.54 % low and
+//    everything derived from the weight is too.
+//    This is NOT a geometrically similar 1/3 scale C172, which would weigh about 53.5 kg, so no
+//    scaling of a published full-scale number is self-consistent and none was attempted.
+//    ixx, iyy, izz come from radius-of-gyration rules on THIS mass and THIS span (see below);
+//    ixz = 0 and he = 0.  All four Cessna files derive mass and inertia identically from the same
+//    geometry, so they are consistent with each other and with tornado.jsonc.
+//    xcg and xcg_ref are BOTH 0.0 here, where tornado.jsonc carries -0.896112 for both, and that
+//    difference is deliberate rather than an oversight: these three solvers report about the CG
+//    itself (verified in item 5), so the CG's offset FROM THE MOMENT REFERENCE is zero, while for
+//    Tornado it is the 2.94 ft station shift.  The schema's own `Cm + Cz*(xcgref - xcg)` term is
+//    identically zero either way, because xcg == xcg_ref on every reachable path.
+//
+// 4. UNIT CONVERSIONS APPLIED, AND THE ONES NOT TRUSTED
+//    length: ft x 0.3048 = 0.3048 m; angle: degrees x 57.29577951308232 (= DEG_TO_RAD) per radian.
+//    AVL'S OWN UNITS ARE ALREADY CORRECT for this file and NOTHING had to be
+//    repaired: its stability derivatives are per radian, its .sb deflection
+//    columns are PER DEGREE and are multiplied by 57.29577951308232 here, and its
+//    p-hat/q-hat/r-hat already use its own V with the reference lengths in the
+//    same units.  aid.handbook_pass._per_rad and aid.stability._per_deg were NOT
+//    used anywhere on this path: AVL does not go through them.
+//    Every array in this file is per radian and every length is SI.  numpy bridge: numpy.trapezoid present; no alias bound
+//    cx[0] -- the parasite drag slot, Cd0 in a drag build-up -- = 0.0170028,
+//    from AVL's own CDtot - CDind at the alpha = 0 run case (0.0187 - 0.0016972).
+//    AVL's reported CDvis is 0.017 and the #CDp card it was given was
+//    0.017219 (the source planform's own DATCOM-computed WG.CD0); all three agree
+//    to the four decimal places AVL prints them at.
+//
+// 5. THE MOMENT REFERENCE SHIFT
+//    NO MOMENT SHIFT WAS APPLIED, and that is verified rather than assumed.  aid.avl_io writes the
+//    geometry's reference station from AERO.XCG into AVL's `#Xref Yref Zref` card, and this
+//    converter read it back out of the file it wrote and got Xref = 2.9400 ft,
+//    against AERO.XCG = 2.94 ft.  A mismatch raises rather than
+//    proceeding, because every moment in this file is used unshifted.  dx = dy = dz = 0, so
+//    cm[1], cm[0], cm[2], cmq[0], cn[0], cnp[0], cnr[0] are used as they stand.  Contrast
+//    tornado.jsonc, whose ref_point is 2.94 ft AHEAD of the CG and is corrected by dx = -0.896112 m.
+//
+// 6. SIGN CONVENTION
+//    cz is the body +z force coefficient with z DOWN, so cz = -CL and cz[1] is NEGATIVE for a
+//    stable aircraft (CL_alpha = -cz[1] > 0), and cm[1] is negative too.  That identity is
+//    load-bearing; it is what makes data/planes/linear/morelli.json's cz[1] = -4.5 CORRECT, not a
+//    defect of that file.
+//    data/planes/linear/morelli.json is the sign-convention authority wherever it disagrees with
+//    data/planes/f16/morelli.json.  It WINS on cm[1] (-0.8 against +0.0466) and on cnp[0] (-0.03
+//    against +0.0268), where a positive value would be statically unstable.  It LOSES on cnda[0]
+//    (+0.01 against -0.0335), where adverse yaw fixes the sign.  A reader must not assume the two
+//    sets share a convention: this file and linear/morelli.json agree on cz[1] and disagree with
+//    the F-16 set on cm[1] and cnp[0].
+//    AVL PRINTS ITS OWN CONVENTION, and it is the same one plane/dynamics.py uses: its .sb
+//    header reads "Standard axis orientation, X fwd, Z down", with positive Cl rolling
+//    right, positive Cm nose up and positive Cn yaw right.  So NO axis mapping is
+//    applied in this file -- the only negations are the three slots the schema stores in the
+//    wind-axis lift convention, cz[1] = -CL_alpha, czq[0] = -CL_q and cz[5] = -CL_de, because
+//    cz = -CL and both in-tree files store it that way.  CLp is NOT negated (its .st value is
+//    already negative, 0.008518), and Cn_p IS, because AVL reports
+//    +0.007108 against the invariant cnp[0] < 0.
+//    Every sign is decided mechanically by aero_convert.units.normalise_sign against SIGN_INVARIANTS;
+//    the slots it flipped are listed in provenance.flipped, computed from this run's own mapping.
+//    cm0 (Cm0) carries NO invariant -- the two in-tree reference files disagree on it and its
+//    sign is tail rigging, not a derivable convention -- so it is written through untouched and is
+//    recorded as `not-normalised` in provenance.not_normalised.  Three provenance states exist and
+//    all three are recorded: `missing` (field None, slot 0.0), `flipped` (sign normalised against
+//    its invariant row) and `not-normalised` (cm0).
+//
+//    A CAVEAT on the NINE genuinely per-phat / per-qhat / per-rhat slots:
+//    cyp[0], cyr[0], czq[0], cmq[0], clp[0], clr[0], cnp[0], cnr[0], cxq[0].
+//      NOT rescaled, as in tornado.jsonc. This solver quotes every rate
+//      derivative per p*b/(2V), q*cbar/(2V) or r*b/(2V) at the SOURCE
+//      Mach-0.03 speed V = 3.1112 m/s, while f16/aero_morelli.py forms phat =
+//      p*b_m/(2*V) at the trimmed cruise V = 23.1144 m/s. Restoring the
+//      solver's physical dC/dq would mean multiplying the nine per-hat slots
+//      by V_trim/V_source = 7.42940, because czq[0]*cbar/(2*V_trim) must
+//      equal CL_q*cbar/(2*V_source); the model's rate-damping terms are that
+//      much weaker than the solver implies. Note the plan writes that factor
+//      as AS_source/V_trim, which is the INVERSE of the direction that
+//      restores dC/dq; nothing is rescaled here either way, so the question
+//      is only ever a note.
+//    cy[1] and cy[2] are NOT in that list: they are cy_da and cy_dr, the aileron
+//    and rudder side force per radian of CONTROL DEFLECTION, which no
+//    flight-condition speed touches.
+//
+//    NO SLOT IS ABSENT: AVL produces all 25, including cnda[0] and cy[1], which DATCOM cannot.
+//    CD_alpha is not representable in this schema (cx has no CD*alpha term) and is 0.0 and
+//    declared.  cxq[0] is written 0.0: AVL's .sb carries a CXq, but run_avl_full's stacked .st
+//    does not, so no axial rate derivative was taken and the zero is a real value, not a gap.
+//
+// 7. PER-SLOT PROVENANCE (all 19 arrays; real solver output vs zeroed)
+//   cz[1]     cl_alpha   normalised     solver AVL .st CLA at alpha = 4 deg = 5.00737 -> mapped -5.00737 -> written -5.00737
+//   cm[1]     cm_alpha   normalised     solver AVL .st Cma at alpha = 4 deg = -1.42182 -> mapped -1.42182 -> written -1.42182
+//   cz[0]     cl0        normalised     solver AVL .st CLtot at alpha = 0 deg = 0.16888 -> mapped -0.16888 -> written -0.16888
+//   cm[0]     cm0        not-normalised solver AVL .st Cmtot at alpha = 0 deg = 0.02144 -> mapped 0.02144 -> written 0.02144
+//   cx[0]     cd0        normalised     solver AVL .st CDtot - CDind at alpha = 0 deg = 0.0170028 -> mapped -0.0170028 -> written -0.0170028
+//   cl[0]     cl_beta    normalised     solver AVL .st Clb at alpha = 4 deg = -0.045756 -> mapped -0.045756 -> written -0.045756
+//   cy[0]     cy_beta    normalised     solver AVL .st CYb at alpha = 4 deg = -0.374191 -> mapped -0.374191 -> written -0.374191
+//   cn[0]     cn_beta    normalised     solver AVL .st Cnb at alpha = 4 deg = 0.175872 -> mapped 0.175872 -> written 0.175872
+//   clp[0]    cl_p       normalised     solver AVL .st Clp at alpha = 4 deg = -0.470451 -> mapped -0.470451 -> written -0.470451
+//   clr[0]    cl_r       normalised     solver AVL .st Clr at alpha = 4 deg = 0.135087 -> mapped 0.135087 -> written 0.135087
+//   cyp[0]    cy_p       normalised     solver AVL .st CYp at alpha = 4 deg = -0.151727 -> mapped -0.151727 -> written -0.151727
+//   cyr[0]    cy_r       normalised     solver AVL .st CYr at alpha = 4 deg = 0.43906 -> mapped 0.43906 -> written 0.43906
+//   cnp[0]    cn_p       flipped        solver AVL .st Cnp at alpha = 4 deg = 0.007108 -> mapped 0.007108 -> written -0.007108
+//   cnr[0]    cn_r       normalised     solver AVL .st Cnr at alpha = 4 deg = -0.211615 -> mapped -0.211615 -> written -0.211615
+//   cmq[0]    cm_q       normalised     solver AVL .st Cmq at alpha = 4 deg = -18.6138 -> mapped -18.6138 -> written -18.6138
+//   czq[0]    cl_q       normalised     solver AVL .st CLq at alpha = 4 deg = 9.09483 -> mapped -9.09483 -> written -9.09483
+//   cxq[0]    cd_q       flipped        solver AVL .sb CXq (line 46) = -0.140889 -> mapped -0.140889 -> written 0.140889
+//   clda[0]   cl_da      normalised     solver aid.avl_controls[aileron].Cl = -0.004549 -> mapped -0.260639 -> written -0.260639
+//   cy[1]     cy_da      flipped        solver aid.avl_controls[aileron].CY = -0.000959 -> mapped -0.0549467 -> written 0.0549467
+//   cnda[0]   cn_da      flipped        solver aid.avl_controls[aileron].Cn = 9.4e-05 -> mapped 0.0053858 -> written -0.0053858
+//   cz[5]     cl_de      normalised     solver aid.avl_controls[elevator].CL = 0.006592 -> mapped -0.377694 -> written -0.377694
+//   cm[2]     cm_de      normalised     solver aid.avl_controls[elevator].Cm = -0.020322 -> mapped -1.16436 -> written -1.16436
+//   cldr[0]   cl_dr      flipped        solver aid.avl_controls[rudder].Cl = -0.000876 -> mapped -0.0501911 -> written 0.0501911
+//   cy[2]     cy_dr      flipped        solver aid.avl_controls[rudder].CY = -0.006586 -> mapped -0.37735 -> written 0.37735
+//   cndr[0]   cn_dr      flipped        solver aid.avl_controls[rudder].Cn = 0.003556 -> mapped 0.203744 -> written -0.203744
+//   every slot in plane.groups.nonlinear_index is exactly 0.0; CD_alpha is not
+//   representable in this schema (cx has no CD*alpha term) and is zeroed and declared
+//
+// 8. HOW TO REGENERATE THIS FILE
+//    cd python && python3 scripts/build_cessna172_aero.py
+//    Nothing else writes these files; the sibling analysis and the sibling aid tree
+//    are read-only inputs and all solver scratch goes to a temporary directory.
+// ==========================================================================
+{
+  "model": "avl",
+  "aircraft": {
+    "mass_kg": 72.574,
+    "s_m2": 7.315200000000001,
+    "b_m": 3.6576000000000004,
+    "cbar_m": 0.6096,
+    "xcg": 0.0,
+    "xcg_ref": 0.0,
+    "ixx": 118.9349697682944,
+    "iyy": 60.68110702464001,
+    "izz": 87.38079411548159,
+    "ixz": 0.0,
+    "he": 0.0,
+    "t_max_n": 1730.687148261113,
+    "tau_s": 1.0,
+    "v_ref_mps": 28.89294426711093
+  },
+  "initial": {
+    "vt_mps": 23.114355413688745,
+    "alpha_rad": 0.02731211415883744,
+    "beta_rad": 0.0,
+    "phi_rad": 0.0,
+    "theta_rad": 0.02731211415883744,
+    "psi_rad": 0.0,
+    "p_rad_s": 0.0,
+    "q_rad_s": 0.0,
+    "r_rad_s": 0.0,
+    "pn_m": 0.0,
+    "pe_m": 0.0,
+    "alt_m": 100.0,
+    "power": 0.17261934819793104
+  },
+  "controls": {
+    "throttle": 0.17261934819793104,
+    "elevator_rad": -0.014937587230267953,
+    "aileron_rad": 0.0,
+    "rudder_rad": 0.0
+  },
+  "coefficients": {
+    "cx": [
+      -0.017002800000000002,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cxq": [
+      0.140889,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cy": [
+      -0.374191,
+      0.05494665255304595,
+      0.37735000387316014
+    ],
+    "cyp": [
+      -0.151727,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cyr": [
+      0.43906,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cz": [
+      -0.16888,
+      -5.007369,
+      0.0,
+      0.0,
+      0.0,
+      -0.37769377855023867
+    ],
+    "czq": [
+      -9.094834,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cl": [
+      -0.045756,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "clp": [
+      -0.470451,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "clr": [
+      0.135087,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "clda": [
+      -0.2606385010050115,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cldr": [
+      0.050191102853460116,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cm": [
+      0.02144,
+      -1.421816,
+      -1.164364831264859,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cmq": [
+      -18.613774,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cn": [
+      0.175872,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cnp": [
+      -0.007108,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cnr": [
+      -0.211615,
+      0.0,
+      0.0
+    ],
+    "cnda": [
+      -0.005385803274229738,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cndr": [
+      -0.20374379194852074,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "provenance": {
+    "solver": "avl",
+    "solver_version": "AVL via aid.avl_io.run_avl_full and aid.avl_controls.avl_controls",
+    "mesh": [
+      "10",
+      "10"
+    ],
+    "source": "/mnt/VirtualMachine/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
+    "aid_src": "/mnt/VirtualMachine/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Python/src",
+    "flight_condition": {
+      "mach": 0.03,
+      "alt_ft": 0.0,
+      "alpha_deg": 4.0,
+      "alpha_schedule_deg": null,
+      "alpha_index_rule": "the middle entry of AERO.ALSCHD, as aid/tornado_io.py::_build_state picks it",
+      "betha_rad": 0.0,
+      "rho_kg_m3": 1.2250558830000002,
+      "v_source_mps": 3.1111988050453054,
+      "v_trim_mps": 23.114355413688745,
+      "speed_ratio_v_trim_over_v_source": 7.429404824984224,
+      "a_sound_ftps": 1116.288876590643,
+      "v_true_mps": 10.20734548754484,
+      "speed_unit_note": "AID's drivers hand over `mach * atm['a'] / 3.28084` = 10.207345 and label it ft/s (Tornado, AVL), which is why v_source_mps is that number x 0.3048.  The same expression in SI -- which is what flow5's deck actually used -- is the physical speed 10.2073 m/s at a sound speed of 1116.2889 ft/s.  Both readings are recorded and neither is reconciled away",
+      "rate_derivative_note": "NOT rescaled, as in tornado.jsonc.  This solver quotes every rate derivative per p*b/(2V), q*cbar/(2V) or r*b/(2V) at the SOURCE Mach-0.03 speed V = 3.1112 m/s, while f16/aero_morelli.py forms phat = p*b_m/(2*V) at the trimmed cruise V = 23.1144 m/s.  Restoring the solver's physical dC/dq would mean multiplying the nine per-hat slots by V_trim/V_source = 7.42940, because czq[0]*cbar/(2*V_trim) must equal CL_q*cbar/(2*V_source); the model's rate-damping terms are that much weaker than the solver implies.  Note the plan writes that factor as AS_source/V_trim, which is the INVERSE of the direction that restores dC/dq; nothing is rescaled here either way, so the question is only ever a note."
+    },
+    "moment_reference": {
+      "solver_station_ft": 2.94,
+      "aero_xcg_ft": 2.94,
+      "tolerance_ft": 0.0001,
+      "dx_m": 0.0,
+      "dy_m": 0.0,
+      "dz_m": 0.0,
+      "note": "AVL reports every moment about AERO.XCG, read back from its own input and checked against the source; dx = dy = dz = 0, so no moment shift is applied"
+    },
+    "sign_convention": {
+      "solver_axes": "AVL: x forward, y right, z DOWN (its own .sb header prints \"Standard axis orientation, X fwd, Z down\"), positive Cl roll right, positive Cm nose up, positive Cn yaw right -- identical to plane/dynamics.py, so this adapter applies no axis mapping at all",
+      "dynamics_axes": "x forward, y right, z down (plane/dynamics.py)",
+      "cz": "cz = -CL (body z down); this is the load-bearing identity and it is why cz[1] is negative for a stable aircraft",
+      "authority": "data/planes/linear/morelli.json is the sign-convention authority where it disagrees with data/planes/f16/morelli.json: it wins cm[1] (-0.8 against +0.0466) and cnp[0] (-0.03 against +0.0268) and loses cnda[0] (+0.01 against -0.0335).  Its cz[1] = -4.5 AGREES with cz = -CL and is correct, not a defect",
+      "normalisation": "aero_convert.units.normalise_sign against SIGN_INVARIANTS; no sign is applied by hand anywhere in this adapter",
+      "not_normalised": "cm0 (Cm0) carries no invariant -- the two in-tree reference files disagree on it and its sign is tail rigging -- so it is written through and recorded in provenance.not_normalised"
+    },
+    "unit_conversions": {
+      "length": "ft x 0.3048",
+      "per_degree_to_per_radian": 57.29577951308232,
+      "aid_helpers_not_trusted": "aid.stability._per_deg, aid.handbook_controls._per_deg and aid.handbook_pass._per_rad are all `if a > 1: convert else pass`; every per-degree number here is multiplied by DEG_TO_RAD explicitly instead",
+      "mass": "the source's own AERO.WT, see mass"
+    },
+    "mass": {
+      "source": "AERO.WT = 5 slugs",
+      "mass_kg": 72.574,
+      "derivation": "floor(AERO.WT * 32.0 ft/s^2 / 2.2046226 lbf/kg * 1000) / 1000 = 72.574",
+      "exact_kg_truncated_to_3dp": 72.57477991924786,
+      "weight_lbf": 160.0,
+      "slug_conversion_kg": 72.96951469999999,
+      "standard_gravity_used_ft_s2": 32.0,
+      "standard_gravity_in_source_ft_s2": 32.174,
+      "note": "A slug is a mass unit, so the source's own WT converts as AERO.WT * SLUG_TO_KG = 72.96951 kg.  The plan instead states 72.574 kg, which is AERO.WT * 32.0 ft/s^2 over 2.2046226 lbf/kg, i.e. it assumes a standard gravity of 32.0 ft/s^2.  That figure appears nowhere in the source (G_FT_S2 = 32.174 here), so the plan is 0.54 % low.  The plan's number ships because its approved design fixes it and plan test 6 pins it verbatim in the header; weight, trim qbar, V and t_max_n are therefore all that much low.  All four Cessna files derive it the same way, so they are consistent with each other"
+    },
+    "inertia": {
+      "k_xx": {
+        "rule": "roll: k_xx = 0.35 b",
+        "factor": 0.35,
+        "k_m": 1.28016,
+        "inertia_kg_m2": 118.9349697682944
+      },
+      "k_yy": {
+        "rule": "pitch: k_yy = 0.25 b",
+        "factor": 0.25,
+        "k_m": 0.9144000000000001,
+        "inertia_kg_m2": 60.68110702464001
+      },
+      "k_zz": {
+        "rule": "yaw: k_zz = 0.30 b",
+        "factor": 0.3,
+        "k_m": 1.09728,
+        "inertia_kg_m2": 87.38079411548159
+      }
+    },
+    "trim": {
+      "target_cruise_cl": 0.3,
+      "cl0": 0.16888,
+      "cl_alpha": 5.007369,
+      "alpha_trim_rad": 0.02731211415883744,
+      "theta_trim_rad": 0.02731211415883744,
+      "elevator_rad": -0.014937587230267953,
+      "cruise_mps": 23.114355413688745,
+      "qbar_pa": 324.1437272818924,
+      "rho_kg_m3": 1.2134001482844625,
+      "alt_m": 100.0,
+      "weight_n": 711.7078170999999,
+      "cd0": -0.017002800000000002,
+      "cm_at_trim": 3.300134401862387e-10,
+      "power": 0.17261934819793104,
+      "v_ref_mps": 28.89294426711093,
+      "thrust_scale": 0.19999999999999996,
+      "t_max_n": 1730.687148261113,
+      "thrust_at_trim_n": 59.75001749347386,
+      "cl_at_trim": 0.3,
+      "residual_max_abs": 7.695331267005367e-17,
+      "fallback": false
+    },
+    "zeroed_slots": {
+      "nonlinear": "every slot in plane.groups.nonlinear_index is exactly 0.0",
+      "CD_alpha": "cx has no CD*alpha term in this schema, so CD_alpha is 0.0 and is declared rather than approximated",
+      "flap": "the Morelli schema has no flap slot; the handbook/AVL/flow5 flap rows are kept in geometry.jsonc as raw output and mapped to nothing"
+    },
+    "mapping": [
+      {
+        "field": "cl_alpha",
+        "slot": "cz[1]",
+        "tornado_key": "AVL .st CLA at alpha = 4 deg",
+        "solver_value": 5.007369,
+        "mapped_value": -5.007369,
+        "conversion": "cz = -CL_alpha; AVL's axes already match plane/dynamics.py, so this is the only negation in the whole adapter",
+        "role": "slope",
+        "value": -5.007369,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cm_alpha",
+        "slot": "cm[1]",
+        "tornado_key": "AVL .st Cma at alpha = 4 deg",
+        "solver_value": -1.421816,
+        "mapped_value": -1.421816,
+        "conversion": "AVL's Cm is nose-up positive, the same sense as plane/dynamics.py's cm",
+        "role": "slope",
+        "value": -1.421816,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cl0",
+        "slot": "cz[0]",
+        "tornado_key": "AVL .st CLtot at alpha = 0 deg",
+        "solver_value": 0.16888,
+        "mapped_value": -0.16888,
+        "conversion": "cz = -CL; the alpha = 0 run-case row IS the intercept, so nothing is extrapolated",
+        "role": "intercept",
+        "value": -0.16888,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cm0",
+        "slot": "cm[0]",
+        "tornado_key": "AVL .st Cmtot at alpha = 0 deg",
+        "solver_value": 0.02144,
+        "mapped_value": 0.02144,
+        "conversion": "the alpha = 0 run-case row; Cm0's sign is tail rigging, not a derivable convention, so it is never sign-normalised",
+        "role": "intercept",
+        "value": 0.02144,
+        "state": "not-normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cd0",
+        "slot": "cx[0]",
+        "tornado_key": "AVL .st CDtot - CDind at alpha = 0 deg",
+        "solver_value": 0.017002800000000002,
+        "mapped_value": -0.017002800000000002,
+        "conversion": "total drag less the induced part at the zero-lift run case, i.e. the parasite drag; derived from two reported numbers rather than echoing the #CDp card this converter wrote",
+        "role": "intercept",
+        "value": -0.017002800000000002,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cl_beta",
+        "slot": "cl[0]",
+        "tornado_key": "AVL .st Clb at alpha = 4 deg",
+        "solver_value": -0.045756,
+        "mapped_value": -0.045756,
+        "conversion": "body-axis derivative used as it stands: AVL's axes and moment senses are plane/dynamics.py's, and AVL's own non-dimensional rates already use its p*b/(2V), q*cbar/(2V), r*b/(2V) scaling",
+        "role": "slope",
+        "value": -0.045756,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cy_beta",
+        "slot": "cy[0]",
+        "tornado_key": "AVL .st CYb at alpha = 4 deg",
+        "solver_value": -0.374191,
+        "mapped_value": -0.374191,
+        "conversion": "body-axis derivative used as it stands: AVL's axes and moment senses are plane/dynamics.py's, and AVL's own non-dimensional rates already use its p*b/(2V), q*cbar/(2V), r*b/(2V) scaling",
+        "role": "slope",
+        "value": -0.374191,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cn_beta",
+        "slot": "cn[0]",
+        "tornado_key": "AVL .st Cnb at alpha = 4 deg",
+        "solver_value": 0.175872,
+        "mapped_value": 0.175872,
+        "conversion": "body-axis derivative used as it stands: AVL's axes and moment senses are plane/dynamics.py's, and AVL's own non-dimensional rates already use its p*b/(2V), q*cbar/(2V), r*b/(2V) scaling",
+        "role": "slope",
+        "value": 0.175872,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cl_p",
+        "slot": "clp[0]",
+        "tornado_key": "AVL .st Clp at alpha = 4 deg",
+        "solver_value": -0.470451,
+        "mapped_value": -0.470451,
+        "conversion": "body-axis derivative used as it stands: AVL's axes and moment senses are plane/dynamics.py's, and AVL's own non-dimensional rates already use its p*b/(2V), q*cbar/(2V), r*b/(2V) scaling",
+        "role": "slope",
+        "value": -0.470451,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cl_r",
+        "slot": "clr[0]",
+        "tornado_key": "AVL .st Clr at alpha = 4 deg",
+        "solver_value": 0.135087,
+        "mapped_value": 0.135087,
+        "conversion": "body-axis derivative used as it stands: AVL's axes and moment senses are plane/dynamics.py's, and AVL's own non-dimensional rates already use its p*b/(2V), q*cbar/(2V), r*b/(2V) scaling",
+        "role": "slope",
+        "value": 0.135087,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cy_p",
+        "slot": "cyp[0]",
+        "tornado_key": "AVL .st CYp at alpha = 4 deg",
+        "solver_value": -0.151727,
+        "mapped_value": -0.151727,
+        "conversion": "body-axis derivative used as it stands: AVL's axes and moment senses are plane/dynamics.py's, and AVL's own non-dimensional rates already use its p*b/(2V), q*cbar/(2V), r*b/(2V) scaling",
+        "role": "slope",
+        "value": -0.151727,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cy_r",
+        "slot": "cyr[0]",
+        "tornado_key": "AVL .st CYr at alpha = 4 deg",
+        "solver_value": 0.43906,
+        "mapped_value": 0.43906,
+        "conversion": "body-axis derivative used as it stands: AVL's axes and moment senses are plane/dynamics.py's, and AVL's own non-dimensional rates already use its p*b/(2V), q*cbar/(2V), r*b/(2V) scaling",
+        "role": "slope",
+        "value": 0.43906,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cn_p",
+        "slot": "cnp[0]",
+        "tornado_key": "AVL .st Cnp at alpha = 4 deg",
+        "solver_value": 0.007108,
+        "mapped_value": 0.007108,
+        "conversion": "body-axis derivative used as it stands: AVL's axes and moment senses are plane/dynamics.py's, and AVL's own non-dimensional rates already use its p*b/(2V), q*cbar/(2V), r*b/(2V) scaling",
+        "role": "slope",
+        "value": -0.007108,
+        "state": "flipped",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cn_r",
+        "slot": "cnr[0]",
+        "tornado_key": "AVL .st Cnr at alpha = 4 deg",
+        "solver_value": -0.211615,
+        "mapped_value": -0.211615,
+        "conversion": "body-axis derivative used as it stands: AVL's axes and moment senses are plane/dynamics.py's, and AVL's own non-dimensional rates already use its p*b/(2V), q*cbar/(2V), r*b/(2V) scaling",
+        "role": "slope",
+        "value": -0.211615,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cm_q",
+        "slot": "cmq[0]",
+        "tornado_key": "AVL .st Cmq at alpha = 4 deg",
+        "solver_value": -18.613774,
+        "mapped_value": -18.613774,
+        "conversion": "body-axis derivative used as it stands: AVL's axes and moment senses are plane/dynamics.py's, and AVL's own non-dimensional rates already use its p*b/(2V), q*cbar/(2V), r*b/(2V) scaling",
+        "role": "slope",
+        "value": -18.613774,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cl_q",
+        "slot": "czq[0]",
+        "tornado_key": "AVL .st CLq at alpha = 4 deg",
+        "solver_value": 9.094834,
+        "mapped_value": -9.094834,
+        "conversion": "czq[0] holds the standard-aero CL_q (what both in-tree files do), so it is -CLq; the schema then adds it to the body-z Cz, an inconsistency inherited from those files",
+        "role": "slope",
+        "value": -9.094834,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cd_q",
+        "slot": "cxq[0]",
+        "tornado_key": "AVL .sb CXq (line 46)",
+        "solver_value": -0.140889,
+        "mapped_value": -0.140889,
+        "conversion": "AVL's geometry-axis CXq, used as it stands: it is already the body-x coefficient per q-hat, which is what cxq[0] adds to the body-x cx.  Note the invariant table wants cxq[0] > 0 while AVL reports a NEGATIVE CXq, so normalise_sign flips it and the flip is logged",
+        "role": "slope",
+        "value": 0.140889,
+        "state": "flipped",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cl_da",
+        "slot": "clda[0]",
+        "tornado_key": "aid.avl_controls[aileron].Cl",
+        "solver_value": -0.004549,
+        "mapped_value": -0.2606385010050115,
+        "conversion": "per degree x 57.29577951308232; AVL's deflection columns are per degree.  AVL's axes and moment senses are plane/dynamics.py's, so no frame sign is applied and normalise_sign decides the sign",
+        "role": "slope",
+        "value": -0.2606385010050115,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cy_da",
+        "slot": "cy[1]",
+        "tornado_key": "aid.avl_controls[aileron].CY",
+        "solver_value": -0.000959,
+        "mapped_value": -0.05494665255304595,
+        "conversion": "per degree x 57.29577951308232; AVL's deflection columns are per degree.  AVL's axes and moment senses are plane/dynamics.py's, so no frame sign is applied and normalise_sign decides the sign",
+        "role": "slope",
+        "value": 0.05494665255304595,
+        "state": "flipped",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cn_da",
+        "slot": "cnda[0]",
+        "tornado_key": "aid.avl_controls[aileron].Cn",
+        "solver_value": 9.4e-05,
+        "mapped_value": 0.005385803274229738,
+        "conversion": "per degree x 57.29577951308232; AVL's deflection columns are per degree.  AVL's axes and moment senses are plane/dynamics.py's, so no frame sign is applied and normalise_sign decides the sign",
+        "role": "slope",
+        "value": -0.005385803274229738,
+        "state": "flipped",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cl_de",
+        "slot": "cz[5]",
+        "tornado_key": "aid.avl_controls[elevator].CL",
+        "solver_value": 0.006592,
+        "mapped_value": -0.37769377855023867,
+        "conversion": "per degree x 57.29577951308232; AVL's deflection columns are per degree.  cz = -CL, and cz[5] holds the standard-aero CL_de the schema and both in-tree files store there",
+        "role": "slope",
+        "value": -0.37769377855023867,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cm_de",
+        "slot": "cm[2]",
+        "tornado_key": "aid.avl_controls[elevator].Cm",
+        "solver_value": -0.020322,
+        "mapped_value": -1.164364831264859,
+        "conversion": "per degree x 57.29577951308232; AVL's deflection columns are per degree.  AVL's axes and moment senses are plane/dynamics.py's, so no frame sign is applied and normalise_sign decides the sign",
+        "role": "slope",
+        "value": -1.164364831264859,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cl_dr",
+        "slot": "cldr[0]",
+        "tornado_key": "aid.avl_controls[rudder].Cl",
+        "solver_value": -0.000876,
+        "mapped_value": -0.050191102853460116,
+        "conversion": "per degree x 57.29577951308232; AVL's deflection columns are per degree.  AVL's axes and moment senses are plane/dynamics.py's, so no frame sign is applied and normalise_sign decides the sign",
+        "role": "slope",
+        "value": 0.050191102853460116,
+        "state": "flipped",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cy_dr",
+        "slot": "cy[2]",
+        "tornado_key": "aid.avl_controls[rudder].CY",
+        "solver_value": -0.006586,
+        "mapped_value": -0.37735000387316014,
+        "conversion": "per degree x 57.29577951308232; AVL's deflection columns are per degree.  AVL's axes and moment senses are plane/dynamics.py's, so no frame sign is applied and normalise_sign decides the sign",
+        "role": "slope",
+        "value": 0.37735000387316014,
+        "state": "flipped",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cn_dr",
+        "slot": "cndr[0]",
+        "tornado_key": "aid.avl_controls[rudder].Cn",
+        "solver_value": 0.003556,
+        "mapped_value": 0.20374379194852074,
+        "conversion": "per degree x 57.29577951308232; AVL's deflection columns are per degree.  AVL's axes and moment senses are plane/dynamics.py's, so no frame sign is applied and normalise_sign decides the sign",
+        "role": "slope",
+        "value": -0.20374379194852074,
+        "state": "flipped",
+        "solver_input": "solver"
+      }
+    ],
+    "flipped": [
+      "cd_q",
+      "cl_dr",
+      "cn_da",
+      "cn_dr",
+      "cn_p",
+      "cy_da",
+      "cy_dr"
+    ],
+    "not_normalised": [
+      "cm0"
+    ],
+    "missing": [],
+    "numpy_bridge": "numpy.trapezoid present; no alias bound",
+    "control_rows": {
+      "flap": {
+        "surface": "flap",
+        "delta_deg": 0.0,
+        "available": true,
+        "reason": "",
+        "CL": 0.016304,
+        "CD": 0.000273,
+        "Cm": 0.009049,
+        "CY": 0.000397,
+        "Cl": 0.000112,
+        "Cn": -0.000223
+      },
+      "aileron": {
+        "surface": "aileron",
+        "delta_deg": 0.0,
+        "available": true,
+        "reason": "",
+        "CL": -7.7e-05,
+        "CD": -1e-06,
+        "Cm": 0.00031,
+        "CY": -0.000959,
+        "Cl": -0.004549,
+        "Cn": 9.4e-05
+      },
+      "elevator": {
+        "surface": "elevator",
+        "delta_deg": 0.0,
+        "available": true,
+        "reason": "",
+        "CL": 0.006592,
+        "CD": 3.5e-05,
+        "Cm": -0.020322,
+        "CY": 0.000358,
+        "Cl": 3.7e-05,
+        "Cn": -0.000192
+      },
+      "rudder": {
+        "surface": "rudder",
+        "delta_deg": 0.0,
+        "available": true,
+        "reason": "",
+        "CL": 0.003009,
+        "CD": 1e-05,
+        "Cm": -0.009143,
+        "CY": -0.006586,
+        "Cl": -0.000876,
+        "Cn": 0.003556
+      }
+    },
+    "control_run": {
+      "why_two_runs": "run_avl_full's .sb lists no deflected surface, so parse_sb returns no control columns; avl_controls writes a CONTROL card for every legal surface and deflects all of them",
+      "delta_deg": 0.0,
+      "surfaces_available": [
+        "aileron",
+        "elevator",
+        "flap",
+        "rudder"
+      ],
+      "per_degree": {
+        "aileron": {
+          "CL": -7.7e-05,
+          "CD": -1e-06,
+          "Cm": 0.00031,
+          "CY": -0.000959,
+          "Cl": -0.004549,
+          "Cn": 9.4e-05
+        },
+        "elevator": {
+          "CL": 0.006592,
+          "CD": 3.5e-05,
+          "Cm": -0.020322,
+          "CY": 0.000358,
+          "Cl": 3.7e-05,
+          "Cn": -0.000192
+        },
+        "rudder": {
+          "CL": 0.003009,
+          "CD": 1e-05,
+          "Cm": -0.009143,
+          "CY": -0.006586,
+          "Cl": -0.000876,
+          "Cn": 0.003556
+        }
+      }
+    },
+    "cd0": {
+      "value": 0.017002800000000002,
+      "CDtot_at_alpha0": 0.0187,
+      "CDind_at_alpha0": 0.0016972,
+      "CDvis_reported": 0.017,
+      "cdp_fed_to_avl": 0.017218979436844056,
+      "note": "AVL's #CDp card is aid's own stored WG.CD0; CDtot - CDind is derived from the solver's own two numbers and agrees with it to the four decimal places both are printed at"
+    },
+    "reference_case": {
+      "note": "run_avl_full also solves an unconstrained case (`x` before the first `a a`), which AVL trims to zero lift; it is recorded but NOT used, because every slot comes from the alpha = 4 deg row of the schedule so all four models describe the same condition",
+      "alpha_deg": -1.9039,
+      "CLtot": 0.0008
+    }
+  }
+}

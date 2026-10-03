@@ -1,0 +1,911 @@
+// ==========================================================================
+// data/planes/cessna172/datcom.jsonc for the Cessna 172 source analysis, generated -- do not hand-edit.
+//
+// 1. SOLVER, MESH, FLIGHT CONDITION
+//    Solver: Digital DATCOM.  TWO solvers, because each answers a different
+//    question: (a) the Fortran binary run by aid.datcom_run.run_datcom on a card
+//    file written into a TemporaryDirectory -- binary at
+//    Matlab/fsroot/code/DATCOM/datcom via aid.paths.datcom_wrapper -- supplies
+//    the longitudinal static set (CLA, CMA, CL and CM rows) and the two
+//    intercepts; (b) aid.handbook_pass.apply_handbook supplies what the Fortran
+//    table does not carry: the parasite drag build-up (aid.drag), the vertical-
+//    tail geometry DATCOM Section 7 needs, and the control derivatives
+//    (aid.handbook_controls).  There is no mesh: DATCOM is the handbook method.
+//    Evaluated at alpha = 4 deg, the middle entry of AERO.ALSCHD, as aid/tornado_io.py::_build_state picks it.
+//    Flight condition from the source AERO: Mach 0.03, altitude 0.0 ft, betha 0; the Fortran's own
+//    for006 header echoes `$FLTCON ... ALT=0.00, MACH=0.030`, so the Fortran half of
+//    this file runs at the source condition.
+//    AID hands its drivers `mach * atm['a'] / 3.28084` = 10.207345 and labels it ft/s, and the Fortran
+//    works its reference geometry in feet, so the solver speed is 10.2073 ft/s = 3.1112 m/s
+//    in this model's frame.  The same expression evaluated in SI is the PHYSICAL speed 10.2073 m/s at a
+//    sound speed of 1116.2889 ft/s -- and that is the speed flow5's SI deck used, which is
+//    why avl.jsonc and flow5.jsonc record different source speeds for the same Mach 0.03.  Both readings are
+//    in provenance.flight_condition and neither is reconciled away.
+//    The trimmed cruise speed the model actually flies at is 23.1141 m/s.
+//
+// 2. THE SOURCE PLANFORM IS A CESSNA 172 AT ROUGHLY 1/3 LINEAR SCALE
+//    span 12 ft against a real 36.1 ft, chord 2 ft against 4.89 ft, area 24 ft^2
+//    against 174 ft^2.  Wing loading is therefore 6.70 lbf/ft^2 where a real C172 is
+//    13.2.  Nothing in this file may be compared with a full-scale figure.
+//
+// 3. MASS
+//    mass_kg = 72.574 is derived from the source's own AERO.WT = 5 slugs:
+//    floor(AERO.WT * 32.0 ft/s^2 / 2.2046226 lbf/kg * 1000)/1000 = 72.574 kg, truncated from
+//    72.5747799 kg, i.e. 160 lbf.  A slug is a mass unit, so the
+//    source's WT converts instead as AERO.WT * SLUG_TO_KG = 72.96951 kg; the plan's figure assumes g = 32.0 ft/s^2, which
+//    appears nowhere in the source (its own G_FT_S2 is 32.174), so the plan is 0.54 % low and
+//    everything derived from the weight is too.
+//    This is NOT a geometrically similar 1/3 scale C172, which would weigh about 53.5 kg, so no
+//    scaling of a published full-scale number is self-consistent and none was attempted.
+//    ixx, iyy, izz come from radius-of-gyration rules on THIS mass and THIS span (see below);
+//    ixz = 0 and he = 0.  All four Cessna files derive mass and inertia identically from the same
+//    geometry, so they are consistent with each other and with tornado.jsonc.
+//    xcg and xcg_ref are BOTH 0.0 here, where tornado.jsonc carries -0.896112 for both, and that
+//    difference is deliberate rather than an oversight: these three solvers report about the CG
+//    itself (verified in item 5), so the CG's offset FROM THE MOMENT REFERENCE is zero, while for
+//    Tornado it is the 2.94 ft station shift.  The schema's own `Cm + Cz*(xcgref - xcg)` term is
+//    identically zero either way, because xcg == xcg_ref on every reachable path.
+//
+// 4. UNIT CONVERSIONS APPLIED, AND THE ONES NOT TRUSTED
+//    length: ft x 0.3048 = 0.3048 m; angle: degrees x 57.29577951308232 (= DEG_TO_RAD) per radian.
+//    THE FORTRAN'S OWN STABILITY TABLE IS PER DEGREE.  Measured against its own
+//    cl column, `cla` equals the secant dCL/dalpha in per degree to three
+//    decimals (0.10030/deg against a centred secant of
+//    0.10038/deg over +/-4 deg).  Every derivative read out of it is multiplied by
+//    57.29577951308232 by this converter.
+//    AID's HELPBOOK SLOPES ARE NOT TRUSTED EITHER, and three separate defects on
+//    this path were corrected rather than inherited:
+//      (1) aid.stability._per_deg, aid.handbook_controls._per_deg and aid.handbook_pass._per_rad are all
+//          `if a > 1: convert else pass`.  This planform's slopes are
+//          0.076-0.084 /deg, so every one of them is a NO-OP and the number
+//          that needs a per-radian value is handed the per-degree one.
+//          Measured: aid's own longitudinal_dynamic CLq = 0.103851 where 57.2958x it is
+//          5.950221, and aid's own lateral_dynamic Clp = -0.013938 against
+//          -0.798610.  The DATCOM Section 7 formulae are therefore
+//          recomputed in this converter with the factor applied by hand, and the
+//          uncorrected numbers are kept in provenance.handbook_cross_check.
+//      (2) aid/lateral.py:571 ends its tail lift-slope formula with `vt_a * pi/180`.
+//          That formula returns the units of the `k = a0/(2*pi)` it was fed and AID feeds it
+//          VT.a0 = 6.8396 DEGREES, so the result is already per degree and the pi/180 makes it
+//          57.3x too small.  Every quantity linear in that slope is corrected: CYb, Cnb,
+//          Clb and the three Section 7 rate terms that use it.  The evidence that
+//          the correction is the right one: AID's Clb is -0.003091, a factor 21.7 below
+//          the sibling's own AVL gold Clb = -0.065868 for the same planform (measured), while
+//          the corrected -0.068966 is within 5 per cent of that gold and 1.51x AVL's
+//          own alpha = 4 deg row, -0.045756, which avl.jsonc ships.
+//      (3) aid/lateral.py:616 returns a HARDCODED 0.1 for both Clda and Cnda and
+//          aid/handbook_controls.py has no aileron CY or Cn column at all.  Those
+//          0.1 values are a placeholder, not a computation, and are NOT used: cy[1]
+//          and cnda[0] are 0.0 and declared in provenance.missing.
+//    Every array in this file is per radian and every length is SI.  numpy bridge: numpy.trapezoid present; no alias bound
+//    cx[0] -- the parasite drag slot, Cd0 in a drag build-up -- = 0.0172694.
+//    Source: aid.drag.aircraft_cd0, which is 1.25 x the summed section drag.  The Fortran's own CD at alpha = 0 is 0.024 with an induced part of 0.00137929,
+//    i.e. a parasite of 0.0226207, 1.310x the handbook build-up; both are recorded.
+//
+// 5. THE MOMENT REFERENCE SHIFT
+//    NO MOMENT SHIFT WAS APPLIED, and that is verified rather than assumed.  The Fortran's $SYNTHS card carries
+//    XCG = 2.94 ft, which is the station this converter read back out of
+//    its own card file and compared against AERO.XCG = 2.94 ft; AID's handbook pass takes the same station
+//    for the VT arms (hp = VT.Z + VT.ymac - AERO.ZCG, lp = VT.X + VT.xmac +
+//    VT.cbar/4 - AERO.XCG).  dx = dy = dz = 0, so every moment here is already about the CG and
+//    cm[1], cm[0], cm[2], cmq[0], cn[0], cnp[0], cnr[0] are used as they stand.  Contrast
+//    tornado.jsonc, whose ref_point is 2.94 ft AHEAD of the CG and is corrected by dx = -0.896112 m.
+//
+// 6. SIGN CONVENTION
+//    cz is the body +z force coefficient with z DOWN, so cz = -CL and cz[1] is NEGATIVE for a
+//    stable aircraft (CL_alpha = -cz[1] > 0), and cm[1] is negative too.  That identity is
+//    load-bearing; it is what makes data/planes/linear/morelli.json's cz[1] = -4.5 CORRECT, not a
+//    defect of that file.
+//    data/planes/linear/morelli.json is the sign-convention authority wherever it disagrees with
+//    data/planes/f16/morelli.json.  It WINS on cm[1] (-0.8 against +0.0466) and on cnp[0] (-0.03
+//    against +0.0268), where a positive value would be statically unstable.  It LOSES on cnda[0]
+//    (+0.01 against -0.0335), where adverse yaw fixes the sign.  A reader must not assume the two
+//    sets share a convention: this file and linear/morelli.json agree on cz[1] and disagree with
+//    the F-16 set on cm[1] and cnp[0].
+//    DATCOM, plane/dynamics.py and every in-tree reference file share ONE axis
+//    convention: x forward, y right, z DOWN, positive Cm nose up, positive Cl
+//    roll right, positive Cn yaw right.  So there is no frame mapping in this
+//    file at all: the only negations are the three slots the schema stores in
+//    the wind-axis lift convention, cz[1] = -CL_alpha, czq[0] = -CL_q and
+//    cz[5] = -CL_de, because cz = -CL and both in-tree files store it that way.
+//    The source planform runs x AFT-positive (XW = 2.2 < XCG = 2.94 < XH = 8.75 ft), which is why
+//    tornado.jsonc needs a shift and this file does not.
+//    cm0 (Cm0) carries NO invariant -- the two in-tree reference files disagree on it and its
+//    sign is tail rigging, not a derivable convention -- so it is written through untouched and is
+//    recorded as `not-normalised` in provenance.not_normalised.  Three provenance states exist and
+//    all three are recorded: `missing` (field None, slot 0.0), `flipped` (sign normalised against
+//    its invariant row) and `not-normalised` (cm0).
+//
+//    A CAVEAT on the NINE genuinely per-phat / per-qhat / per-rhat slots:
+//    cyp[0], cyr[0], czq[0], cmq[0], clp[0], clr[0], cnp[0], cnr[0], cxq[0].
+//      NOT rescaled, as in tornado.jsonc. This solver quotes every rate
+//      derivative per p*b/(2V), q*cbar/(2V) or r*b/(2V) at the SOURCE
+//      Mach-0.03 speed V = 3.1112 m/s, while f16/aero_morelli.py forms phat =
+//      p*b_m/(2*V) at the trimmed cruise V = 23.1141 m/s. Restoring the
+//      solver's physical dC/dq would mean multiplying the nine per-hat slots
+//      by V_trim/V_source = 7.42933, because czq[0]*cbar/(2*V_trim) must
+//      equal CL_q*cbar/(2*V_source); the model's rate-damping terms are that
+//      much weaker than the solver implies. Note the plan writes that factor
+//      as AS_source/V_trim, which is the INVERSE of the direction that
+//      restores dC/dq; nothing is rescaled here either way, so the question
+//      is only ever a note.
+//    cy[1] and cy[2] are NOT in that list: they are cy_da and cy_dr, the aileron
+//    and rudder side force per radian of CONTROL DEFLECTION, which no
+//    flight-condition speed touches.
+//
+//    THREE SLOTS ARE GENUINELY ABSENT and are declared, not guessed:
+//      cy[1]   cy_da -- aid/handbook_controls.py has no aileron side-force column at all and
+//          aid/lateral.py:616's Clda is a hardcoded 0.1 placeholder
+//      cnda[0] cn_da -- aid/lateral.py:616's Cnda is a hardcoded 0.1 placeholder and
+//          aid/handbook_controls.py omits aileron yaw entirely
+//      cxq[0]  cd_q  -- DATCOM Section 7 has NO axial rate derivative at all and
+//          aid/longitudinal_dynamic.py hardcodes cxq = 0.0, which records the
+//          absence of a formula rather than a computed zero
+//    Every other slot is real output.  CD_alpha is not representable in this
+//    schema (cx has no CD*alpha term) and is 0.0 and declared.
+//
+// 7. PER-SLOT PROVENANCE (all 19 arrays; real solver output vs zeroed)
+//   cz[1]     cl_alpha   normalised     solver DATCOM for006 CLA at alpha = 4 deg = 0.1003 -> mapped -5.74677 -> written -5.74677
+//   cm[1]     cm_alpha   normalised     solver DATCOM for006 CMA at alpha = 4 deg = -0.01431 -> mapped -0.819903 -> written -0.819903
+//   cz[0]     cl0        normalised     solver DATCOM for006 CL at alpha = 0 deg = 0.131 -> mapped -0.131 -> written -0.131
+//   cm[0]     cm0        not-normalised solver DATCOM for006 CM at alpha = 0 deg = 0.0472 -> mapped 0.0472 -> written 0.0472
+//   cx[0]     cd0        normalised     solver aid.drag.aircraft_cd0 (via aid.handbook_pass) = 0.0172694 -> mapped -0.0172694 -> written -0.0172694
+//   cl[0]     cl_beta    normalised     solver aid.lateral.lateral_static.Clb = -0.00309062 -> mapped -0.0689662 -> written -0.0689662
+//   cy[0]     cy_beta    normalised     solver aid.lateral.lateral_static.CYb = -0.0093265 -> mapped -0.608244 -> written -0.608244
+//   cn[0]     cn_beta    flipped        solver aid.lateral.lateral_static.Cnb = 0.00361948 -> mapped -0.248239 -> written 0.248239
+//   czq[0]    cl_q       normalised     NOT solver output -- DATCOM Section 7 CL_Q (this converter) -> mapped -5.95022 -> written -5.95022
+//   cmq[0]    cm_q       normalised     NOT solver output -- DATCOM Section 7 CM_Q (this converter) -> mapped -18.6548 -> written -18.6548
+//   cyp[0]    cy_p       flipped        NOT solver output -- DATCOM Section 7 CY_P (this converter) -> mapped 0.0353587 -> written -0.0353587
+//   cyr[0]    cy_r       normalised     NOT solver output -- DATCOM Section 7 CY_R (this converter) -> mapped 0.51156 -> written 0.51156
+//   clp[0]    cl_p       normalised     NOT solver output -- DATCOM Section 7 CL_P (this converter) -> mapped -0.79861 -> written -0.79861
+//   clr[0]    cl_r       normalised     NOT solver output -- DATCOM Section 7 CL_R (this converter) -> mapped 0.0953425 -> written 0.0953425
+//   cnp[0]    cn_p       normalised     NOT solver output -- DATCOM Section 7 CN_P (this converter) -> mapped -0.0344068 -> written -0.0344068
+//   cnr[0]    cn_r       normalised     NOT solver output -- DATCOM Section 7 CN_R (this converter) -> mapped -0.287448 -> written -0.287448
+//   cxq[0]    cd_q       missing        ABSENT -- DATCOM Section 7 (no axial rate term exists) (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
+//   clda[0]   cl_da      flipped        solver aid.handbook_controls[aileron].Cl = 0.00362976 -> mapped 0.20797 -> written -0.20797
+//   cz[5]     cl_de      flipped        solver aid.handbook_controls[elevator].CL = 0.00449314 -> mapped 0.257438 -> written -0.257438
+//   cm[2]     cm_de      normalised     solver aid.handbook_controls[elevator].Cm = -0.0140867 -> mapped -0.807106 -> written -0.807106
+//   cldr[0]   cl_dr      normalised     solver aid.handbook_controls[rudder].Cl = 0.000499984 -> mapped 0.028647 -> written 0.028647
+//   cy[2]     cy_dr      normalised     solver aid.handbook_controls[rudder].CY = 0.00454568 -> mapped 0.260448 -> written 0.260448
+//   cndr[0]   cn_dr      normalised     solver aid.handbook_controls[rudder].Cn = -0.00191156 -> mapped -0.109524 -> written -0.109524
+//   cnda[0]   cn_da      missing        ABSENT -- aid.handbook_controls[aileron].Cn (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
+//   cy[1]     cy_da      missing        ABSENT -- aid.handbook_controls[aileron].CY (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
+//   every slot in plane.groups.nonlinear_index is exactly 0.0; CD_alpha is not
+//   representable in this schema (cx has no CD*alpha term) and is zeroed and declared
+//
+// 8. HOW TO REGENERATE THIS FILE
+//    cd python && python3 scripts/build_cessna172_aero.py
+//    Nothing else writes these files; the sibling analysis and the sibling aid tree
+//    are read-only inputs and all solver scratch goes to a temporary directory.
+// ==========================================================================
+{
+  "model": "datcom",
+  "aircraft": {
+    "mass_kg": 72.574,
+    "s_m2": 7.315200000000001,
+    "b_m": 3.6576000000000004,
+    "cbar_m": 0.6096,
+    "xcg": 0.0,
+    "xcg_ref": 0.0,
+    "ixx": 118.9349697682944,
+    "iyy": 60.68110702464001,
+    "izz": 87.38079411548159,
+    "ixz": 0.0,
+    "he": 0.0,
+    "t_max_n": 1730.7062123580881,
+    "tau_s": 1.0,
+    "v_ref_mps": 28.892642920004967
+  },
+  "initial": {
+    "vt_mps": 23.114114336003972,
+    "alpha_rad": 0.028065260942174097,
+    "beta_rad": 0.0,
+    "phi_rad": 0.0,
+    "theta_rad": 0.028065260942174094,
+    "psi_rad": 0.0,
+    "p_rad_s": 0.0,
+    "q_rad_s": 0.0,
+    "r_rad_s": 0.0,
+    "pn_m": 0.0,
+    "pe_m": 0.0,
+    "alt_m": 100.0,
+    "power": 0.17598884722427033
+  },
+  "controls": {
+    "throttle": 0.17598884722427033,
+    "elevator_rad": 0.0299703116712332,
+    "aileron_rad": 0.0,
+    "rudder_rad": 0.0
+  },
+  "coefficients": {
+    "cx": [
+      -0.01726937123110341,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cxq": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cy": [
+      -0.6082444104218907,
+      0.0,
+      0.26044805583920866
+    ],
+    "cyp": [
+      -0.03535868993134663,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cyr": [
+      0.5115600771886895,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cz": [
+      -0.131,
+      -5.746766685162157,
+      0.0,
+      0.0,
+      0.0,
+      -0.2574378769152686
+    ],
+    "czq": [
+      -5.95022084548837,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cl": [
+      -0.06896624615490778,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "clp": [
+      -0.7986100292146804,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "clr": [
+      0.09534248151407834,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "clda": [
+      -0.20797018211264304,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cldr": [
+      0.02864696077636093,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cm": [
+      0.0472,
+      -0.819902604832208,
+      -0.8071060293937741,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cmq": [
+      -18.654827246725755,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cn": [
+      0.2482385665675611,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cnp": [
+      -0.03440682038461791,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cnr": [
+      -0.2874483865517269,
+      0.0,
+      0.0
+    ],
+    "cnda": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "cndr": [
+      -0.10952408708230896,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "provenance": {
+    "solver": "datcom",
+    "solver_version": "Digital DATCOM Fortran via aid.datcom_run.run_datcom, plus aid.handbook_pass.apply_handbook (imp sibling)",
+    "mesh": [
+      "none",
+      "none"
+    ],
+    "source": "/mnt/VirtualMachine/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
+    "aid_src": "/mnt/VirtualMachine/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Python/src",
+    "flight_condition": {
+      "mach": 0.03,
+      "alt_ft": 0.0,
+      "alpha_deg": 4.0,
+      "alpha_schedule_deg": [
+        -4.0,
+        0.0,
+        4.0,
+        8.0,
+        12.0
+      ],
+      "alpha_index_rule": "the middle entry of AERO.ALSCHD, as aid/tornado_io.py::_build_state picks it",
+      "betha_rad": 0.0,
+      "rho_kg_m3": 1.2250558830000002,
+      "v_source_mps": 3.1111988050453054,
+      "v_trim_mps": 23.114114336003972,
+      "speed_ratio_v_trim_over_v_source": 7.429327337912558,
+      "a_sound_ftps": 1116.288876590643,
+      "v_true_mps": 10.20734548754484,
+      "speed_unit_note": "AID's drivers hand over `mach * atm['a'] / 3.28084` = 10.207345 and label it ft/s (Tornado, AVL), which is why v_source_mps is that number x 0.3048.  The same expression in SI -- which is what flow5's deck actually used -- is the physical speed 10.2073 m/s at a sound speed of 1116.2889 ft/s.  Both readings are recorded and neither is reconciled away",
+      "rate_derivative_note": "NOT rescaled, as in tornado.jsonc.  This solver quotes every rate derivative per p*b/(2V), q*cbar/(2V) or r*b/(2V) at the SOURCE Mach-0.03 speed V = 3.1112 m/s, while f16/aero_morelli.py forms phat = p*b_m/(2*V) at the trimmed cruise V = 23.1141 m/s.  Restoring the solver's physical dC/dq would mean multiplying the nine per-hat slots by V_trim/V_source = 7.42933, because czq[0]*cbar/(2*V_trim) must equal CL_q*cbar/(2*V_source); the model's rate-damping terms are that much weaker than the solver implies.  Note the plan writes that factor as AS_source/V_trim, which is the INVERSE of the direction that restores dC/dq; nothing is rescaled here either way, so the question is only ever a note.",
+      "alpha_index": 2,
+      "fortran_mach": 0.03,
+      "fortran_alt": 0.0,
+      "fortran_note": "the Fortran's own for006 header echoes `$FLTCON ... ALT=0.00, MACH=0.030`, so the Fortran part of this file runs at the source condition; the AID handbook part runs at the same Mach and altitude with AC.alpha = the middle of ALSCHD",
+      "handbook_level_flight_CL": null
+    },
+    "moment_reference": {
+      "solver_station_ft": 2.94,
+      "aero_xcg_ft": 2.94,
+      "tolerance_ft": 0.0001,
+      "dx_m": 0.0,
+      "dy_m": 0.0,
+      "dz_m": 0.0,
+      "note": "DATCOM reports every moment about AERO.XCG, read back from its own input and checked against the source; dx = dy = dz = 0, so no moment shift is applied"
+    },
+    "sign_convention": {
+      "solver_axes": "DATCOM: x forward, y right, z DOWN, positive Cm nose up, positive Cl roll right, positive Cn yaw right -- identical to plane/dynamics.py, so this adapter applies no axis mapping at all",
+      "dynamics_axes": "x forward, y right, z down (plane/dynamics.py)",
+      "cz": "cz = -CL (body z down); this is the load-bearing identity and it is why cz[1] is negative for a stable aircraft",
+      "authority": "data/planes/linear/morelli.json is the sign-convention authority where it disagrees with data/planes/f16/morelli.json: it wins cm[1] (-0.8 against +0.0466) and cnp[0] (-0.03 against +0.0268) and loses cnda[0] (+0.01 against -0.0335).  Its cz[1] = -4.5 AGREES with cz = -CL and is correct, not a defect",
+      "normalisation": "aero_convert.units.normalise_sign against SIGN_INVARIANTS; no sign is applied by hand anywhere in this adapter",
+      "not_normalised": "cm0 (Cm0) carries no invariant -- the two in-tree reference files disagree on it and its sign is tail rigging -- so it is written through and recorded in provenance.not_normalised"
+    },
+    "unit_conversions": {
+      "length": "ft x 0.3048",
+      "per_degree_to_per_radian": 57.29577951308232,
+      "aid_helpers_not_trusted": "aid.stability._per_deg, aid.handbook_controls._per_deg and aid.handbook_pass._per_rad are all `if a > 1: convert else pass`; every per-degree number here is multiplied by DEG_TO_RAD explicitly instead",
+      "mass": "the source's own AERO.WT, see mass"
+    },
+    "mass": {
+      "source": "AERO.WT = 5 slugs",
+      "mass_kg": 72.574,
+      "derivation": "floor(AERO.WT * 32.0 ft/s^2 / 2.2046226 lbf/kg * 1000) / 1000 = 72.574",
+      "exact_kg_truncated_to_3dp": 72.57477991924786,
+      "weight_lbf": 160.0,
+      "slug_conversion_kg": 72.96951469999999,
+      "standard_gravity_used_ft_s2": 32.0,
+      "standard_gravity_in_source_ft_s2": 32.174,
+      "note": "A slug is a mass unit, so the source's own WT converts as AERO.WT * SLUG_TO_KG = 72.96951 kg.  The plan instead states 72.574 kg, which is AERO.WT * 32.0 ft/s^2 over 2.2046226 lbf/kg, i.e. it assumes a standard gravity of 32.0 ft/s^2.  That figure appears nowhere in the source (G_FT_S2 = 32.174 here), so the plan is 0.54 % low.  The plan's number ships because its approved design fixes it and plan test 6 pins it verbatim in the header; weight, trim qbar, V and t_max_n are therefore all that much low.  All four Cessna files derive it the same way, so they are consistent with each other"
+    },
+    "inertia": {
+      "k_xx": {
+        "rule": "roll: k_xx = 0.35 b",
+        "factor": 0.35,
+        "k_m": 1.28016,
+        "inertia_kg_m2": 118.9349697682944
+      },
+      "k_yy": {
+        "rule": "pitch: k_yy = 0.25 b",
+        "factor": 0.25,
+        "k_m": 0.9144000000000001,
+        "inertia_kg_m2": 60.68110702464001
+      },
+      "k_zz": {
+        "rule": "yaw: k_zz = 0.30 b",
+        "factor": 0.3,
+        "k_m": 1.09728,
+        "inertia_kg_m2": 87.38079411548159
+      }
+    },
+    "trim": {
+      "target_cruise_cl": 0.3,
+      "cl0": 0.131,
+      "cl_alpha": 5.746766685162157,
+      "alpha_trim_rad": 0.028065260942174097,
+      "theta_trim_rad": 0.028065260942174094,
+      "elevator_rad": 0.0299703116712332,
+      "cruise_mps": 23.114114336003972,
+      "qbar_pa": 324.13696582041996,
+      "rho_kg_m3": 1.2134001482844625,
+      "alt_m": 100.0,
+      "weight_n": 711.7078170999999,
+      "cd0": -0.01726937123110341,
+      "cm_at_trim": 1.9555291413952958e-10,
+      "power": 0.17598884722427033,
+      "v_ref_mps": 28.892642920004967,
+      "thrust_scale": 0.20000000000000007,
+      "t_max_n": 1730.7062123580881,
+      "thrust_at_trim_n": 60.916998239356644,
+      "cl_at_trim": 0.3,
+      "residual_max_abs": 6.545876550784343e-16,
+      "fallback": false
+    },
+    "zeroed_slots": {
+      "nonlinear": "every slot in plane.groups.nonlinear_index is exactly 0.0",
+      "CD_alpha": "cx has no CD*alpha term in this schema, so CD_alpha is 0.0 and is declared rather than approximated",
+      "flap": "the Morelli schema has no flap slot; the handbook/AVL/flow5 flap rows are kept in geometry.jsonc as raw output and mapped to nothing"
+    },
+    "mapping": [
+      {
+        "field": "cl_alpha",
+        "slot": "cz[1]",
+        "tornado_key": "DATCOM for006 CLA at alpha = 4 deg",
+        "solver_value": 0.1003,
+        "mapped_value": -5.746766685162157,
+        "conversion": "per degree x 57.29577951308232, then cz = -CL_alpha; the Fortran table is per degree (measured against its own cl column), and cz = -CL because plane/dynamics.py's z axis points down",
+        "role": "slope",
+        "value": -5.746766685162157,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cm_alpha",
+        "slot": "cm[1]",
+        "tornado_key": "DATCOM for006 CMA at alpha = 4 deg",
+        "solver_value": -0.01431,
+        "mapped_value": -0.819902604832208,
+        "conversion": "per degree x 57.29577951308232; DATCOM's Cm is nose-up positive, the same sense as plane/dynamics.py's cm, so no axis sign change",
+        "role": "slope",
+        "value": -0.819902604832208,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cl0",
+        "slot": "cz[0]",
+        "tornado_key": "DATCOM for006 CL at alpha = 0 deg",
+        "solver_value": 0.131,
+        "mapped_value": -0.131,
+        "conversion": "cz = -CL; the alpha = 0 row of the table is the intercept outright",
+        "role": "intercept",
+        "value": -0.131,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cm0",
+        "slot": "cm[0]",
+        "tornado_key": "DATCOM for006 CM at alpha = 0 deg",
+        "solver_value": 0.0472,
+        "mapped_value": 0.0472,
+        "conversion": "the alpha = 0 row of the table; Cm0's sign is tail rigging, not a derivable convention, so it is never sign-normalised",
+        "role": "intercept",
+        "value": 0.0472,
+        "state": "not-normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cd0",
+        "slot": "cx[0]",
+        "tornado_key": "aid.drag.aircraft_cd0 (via aid.handbook_pass)",
+        "solver_value": 0.01726937123110341,
+        "mapped_value": -0.01726937123110341,
+        "conversion": "parasite drag as a positive magnitude, then cx = -(parasite)",
+        "role": "intercept",
+        "value": -0.01726937123110341,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cl_beta",
+        "slot": "cl[0]",
+        "tornado_key": "aid.lateral.lateral_static.Clb",
+        "solver_value": -0.003090622882802272,
+        "mapped_value": -0.06896624615490778,
+        "conversion": "AID's value with its own vertical-tail term re-evaluated using the tail's lift slope x 57.29577951308232: aid/lateral.py:571 multiplies that slope by pi/180 in the WRONG direction, so AID's Clb = -0.00309062 is 57.3x too small in its tail part (AID's Clb = -0.003091 against the sibling's own AVL gold Clb = -0.065868, and against AVL's alpha = 4 deg row -0.045756 this adapter writes -0.068966)",
+        "role": "slope",
+        "value": -0.06896624615490778,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cy_beta",
+        "slot": "cy[0]",
+        "tornado_key": "aid.lateral.lateral_static.CYb",
+        "solver_value": -0.009326495800599612,
+        "mapped_value": -0.6082444104218907,
+        "conversion": "AID's value with its own vertical-tail term re-evaluated using the tail's lift slope x 57.29577951308232: aid/lateral.py:571 multiplies that slope by pi/180 in the WRONG direction, so AID's CYb = -0.0093265 is 57.3x too small in its tail part (AID's Clb = -0.003091 against the sibling's own AVL gold Clb = -0.065868, and against AVL's alpha = 4 deg row -0.045756 this adapter writes -0.068966)",
+        "role": "slope",
+        "value": -0.6082444104218907,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cn_beta",
+        "slot": "cn[0]",
+        "tornado_key": "aid.lateral.lateral_static.Cnb",
+        "solver_value": 0.0036194771593376467,
+        "mapped_value": -0.2482385665675611,
+        "conversion": "AID's value with its own vertical-tail term re-evaluated using the tail's lift slope x 57.29577951308232: aid/lateral.py:571 multiplies that slope by pi/180 in the WRONG direction, so AID's Cnb = 0.00361948 is 57.3x too small in its tail part (AID's Clb = -0.003091 against the sibling's own AVL gold Clb = -0.065868, and against AVL's alpha = 4 deg row -0.045756 this adapter writes -0.068966)",
+        "role": "slope",
+        "value": 0.2482385665675611,
+        "state": "flipped",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cl_q",
+        "slot": "czq[0]",
+        "tornado_key": "DATCOM Section 7 CL_Q (this converter)",
+        "solver_value": null,
+        "mapped_value": -5.95022084548837,
+        "conversion": "DATCOM Section 7 formula, computed here with every lift slope x 57.29577951308232; aid's own 0.103851 comes from a _per_rad no-op and is 57.30x too small",
+        "role": "slope",
+        "value": -5.95022084548837,
+        "state": "normalised",
+        "solver_input": "source file"
+      },
+      {
+        "field": "cm_q",
+        "slot": "cmq[0]",
+        "tornado_key": "DATCOM Section 7 CM_Q (this converter)",
+        "solver_value": null,
+        "mapped_value": -18.654827246725755,
+        "conversion": "DATCOM Section 7 formula, computed here with every lift slope x 57.29577951308232; aid's own -0.325588 comes from a _per_rad no-op and is 57.30x too small",
+        "role": "slope",
+        "value": -18.654827246725755,
+        "state": "normalised",
+        "solver_input": "source file"
+      },
+      {
+        "field": "cy_p",
+        "slot": "cyp[0]",
+        "tornado_key": "DATCOM Section 7 CY_P (this converter)",
+        "solver_value": null,
+        "mapped_value": 0.03535868993134663,
+        "conversion": "DATCOM Section 7 formula, computed here with every lift slope x 57.29577951308232; aid's own 0.000617126 comes from a _per_rad no-op and is 57.30x too small",
+        "role": "slope",
+        "value": -0.03535868993134663,
+        "state": "flipped",
+        "solver_input": "source file"
+      },
+      {
+        "field": "cy_r",
+        "slot": "cyr[0]",
+        "tornado_key": "DATCOM Section 7 CY_R (this converter)",
+        "solver_value": null,
+        "mapped_value": 0.5115600771886895,
+        "conversion": "DATCOM Section 7 formula, computed here with every lift slope x 57.29577951308232; aid's own 0.00892841 comes from a _per_rad no-op and is 57.30x too small",
+        "role": "slope",
+        "value": 0.5115600771886895,
+        "state": "normalised",
+        "solver_input": "source file"
+      },
+      {
+        "field": "cl_p",
+        "slot": "clp[0]",
+        "tornado_key": "DATCOM Section 7 CL_P (this converter)",
+        "solver_value": null,
+        "mapped_value": -0.7986100292146804,
+        "conversion": "DATCOM Section 7 formula, computed here with every lift slope x 57.29577951308232; aid's own -0.0139384 comes from a _per_rad no-op and is 57.30x too small",
+        "role": "slope",
+        "value": -0.7986100292146804,
+        "state": "normalised",
+        "solver_input": "source file"
+      },
+      {
+        "field": "cl_r",
+        "slot": "clr[0]",
+        "tornado_key": "DATCOM Section 7 CL_R (this converter)",
+        "solver_value": null,
+        "mapped_value": 0.09534248151407834,
+        "conversion": "DATCOM Section 7 formula, computed here with every lift slope x 57.29577951308232; aid's own 0.00166404 comes from a _per_rad no-op and is 57.30x too small",
+        "role": "slope",
+        "value": 0.09534248151407834,
+        "state": "normalised",
+        "solver_input": "source file"
+      },
+      {
+        "field": "cn_p",
+        "slot": "cnp[0]",
+        "tornado_key": "DATCOM Section 7 CN_P (this converter)",
+        "solver_value": null,
+        "mapped_value": -0.03440682038461791,
+        "conversion": "DATCOM Section 7 formula, computed here with every lift slope x 57.29577951308232; aid's own -0.000600512 comes from a _per_rad no-op and is 57.30x too small",
+        "role": "slope",
+        "value": -0.03440682038461791,
+        "state": "normalised",
+        "solver_input": "source file"
+      },
+      {
+        "field": "cn_r",
+        "slot": "cnr[0]",
+        "tornado_key": "DATCOM Section 7 CN_R (this converter)",
+        "solver_value": null,
+        "mapped_value": -0.2874483865517269,
+        "conversion": "DATCOM Section 7 formula, computed here with every lift slope x 57.29577951308232; aid's own -0.00501692 comes from a _per_rad no-op and is 57.30x too small",
+        "role": "slope",
+        "value": -0.2874483865517269,
+        "state": "normalised",
+        "solver_input": "source file"
+      },
+      {
+        "field": "cd_q",
+        "slot": "cxq[0]",
+        "tornado_key": "DATCOM Section 7 (no axial rate term exists)",
+        "solver_value": null,
+        "mapped_value": null,
+        "conversion": "not produced by this solver",
+        "role": "absent",
+        "value": null,
+        "state": "missing",
+        "solver_input": "none"
+      },
+      {
+        "field": "cl_da",
+        "slot": "clda[0]",
+        "tornado_key": "aid.handbook_controls[aileron].Cl",
+        "solver_value": 0.003629764423837838,
+        "mapped_value": 0.20797018211264304,
+        "conversion": "per degree x 57.29577951308232; the row is linear in a lift slope AID stores per degree, so it inherits that unit.  DATCOM's and plane/dynamics.py's moment senses agree, so no frame sign is applied here and normalise_sign decides the sign",
+        "role": "slope",
+        "value": -0.20797018211264304,
+        "state": "flipped",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cl_de",
+        "slot": "cz[5]",
+        "tornado_key": "aid.handbook_controls[elevator].CL",
+        "solver_value": 0.00449313857151534,
+        "mapped_value": 0.2574378769152686,
+        "conversion": "per degree x 57.29577951308232; the row is linear in a lift slope AID stores per degree, so it inherits that unit.  DATCOM's and plane/dynamics.py's moment senses agree, so no frame sign is applied here and normalise_sign decides the sign",
+        "role": "slope",
+        "value": -0.2574378769152686,
+        "state": "flipped",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cm_de",
+        "slot": "cm[2]",
+        "tornado_key": "aid.handbook_controls[elevator].Cm",
+        "solver_value": -0.014086657625619491,
+        "mapped_value": -0.8071060293937741,
+        "conversion": "per degree x 57.29577951308232; the row is linear in a lift slope AID stores per degree, so it inherits that unit.  DATCOM's and plane/dynamics.py's moment senses agree, so no frame sign is applied here and normalise_sign decides the sign",
+        "role": "slope",
+        "value": -0.8071060293937741,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cl_dr",
+        "slot": "cldr[0]",
+        "tornado_key": "aid.handbook_controls[rudder].Cl",
+        "solver_value": 0.0004999837862371692,
+        "mapped_value": 0.02864696077636093,
+        "conversion": "per degree x 57.29577951308232; the row is linear in a lift slope AID stores per degree, so it inherits that unit.  DATCOM's and plane/dynamics.py's moment senses agree, so no frame sign is applied here and normalise_sign decides the sign",
+        "role": "slope",
+        "value": 0.02864696077636093,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cy_dr",
+        "slot": "cy[2]",
+        "tornado_key": "aid.handbook_controls[rudder].CY",
+        "solver_value": 0.004545676104812234,
+        "mapped_value": 0.26044805583920866,
+        "conversion": "per degree x 57.29577951308232; the row is linear in a lift slope AID stores per degree, so it inherits that unit.  DATCOM's and plane/dynamics.py's moment senses agree, so no frame sign is applied here and normalise_sign decides the sign",
+        "role": "slope",
+        "value": 0.26044805583920866,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cn_dr",
+        "slot": "cndr[0]",
+        "tornado_key": "aid.handbook_controls[rudder].Cn",
+        "solver_value": -0.001911555929827281,
+        "mapped_value": -0.10952408708230896,
+        "conversion": "per degree x 57.29577951308232; the row is linear in a lift slope AID stores per degree, so it inherits that unit.  DATCOM's and plane/dynamics.py's moment senses agree, so no frame sign is applied here and normalise_sign decides the sign",
+        "role": "slope",
+        "value": -0.10952408708230896,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cn_da",
+        "slot": "cnda[0]",
+        "tornado_key": "aid.handbook_controls[aileron].Cn",
+        "solver_value": null,
+        "mapped_value": null,
+        "conversion": "not produced by this solver",
+        "role": "absent",
+        "value": null,
+        "state": "missing",
+        "solver_input": "none"
+      },
+      {
+        "field": "cy_da",
+        "slot": "cy[1]",
+        "tornado_key": "aid.handbook_controls[aileron].CY",
+        "solver_value": null,
+        "mapped_value": null,
+        "conversion": "not produced by this solver",
+        "role": "absent",
+        "value": null,
+        "state": "missing",
+        "solver_input": "none"
+      }
+    ],
+    "flipped": [
+      "cl_da",
+      "cl_de",
+      "cn_beta",
+      "cy_p"
+    ],
+    "not_normalised": [
+      "cm0"
+    ],
+    "missing": [
+      {
+        "field": "cd_q",
+        "slot": "cxq[0]",
+        "solver_key": "DATCOM Section 7 (no axial rate term exists)",
+        "reason": "DATCOM's Section 7 formulae carry no axial rate derivative at all and aid/longitudinal_dynamic.py hardcodes cxq = 0.0, which records the absence of a formula rather than a computed value"
+      },
+      {
+        "field": "cn_da",
+        "slot": "cnda[0]",
+        "solver_key": "aid.handbook_controls[aileron].Cn",
+        "reason": "aid/handbook_controls.py has no aileron yaw column at all, and aid/lateral.py:616's Clda/Cnda = 0.1 is a hardcoded placeholder, not a computation; using it would put a fabricated number in a coefficient array"
+      },
+      {
+        "field": "cy_da",
+        "slot": "cy[1]",
+        "solver_key": "aid.handbook_controls[aileron].CY",
+        "reason": "aid/handbook_controls.py has no aileron side force column at all, and aid/lateral.py:616's Clda/Cnda = 0.1 is a hardcoded placeholder, not a computation; using it would put a fabricated number in a coefficient array"
+      }
+    ],
+    "handbook_cross_check": {
+      "aid_CLa_as_reported": 0.09115859371450025,
+      "aid_CLa_corrected": 5.223002686188658,
+      "datcom_CLa_used": 5.746766685162157,
+      "aid_Cma_as_reported": -0.01099618832657766,
+      "aid_Cma_corrected_by_factor": -0.6300351818439233,
+      "datcom_Cma_used": -0.819902604832208,
+      "aid_CL0_as_reported": 0.1599173420302446,
+      "aid_Cm0_as_reported": 0.02030704769680876,
+      "aid_lateral_as_reported": {
+        "CYb": -0.009326495800599612,
+        "Cnb": 0.0036194771593376467,
+        "Clb": -0.003090622882802272
+      },
+      "lateral_corrected": {
+        "cy_beta": -0.6082444104218907,
+        "cn_beta": -0.2482385665675611,
+        "cl_beta": -0.06896624615490778,
+        "cyb_v_as_reported": -0.010638771144151423,
+        "cyb_v": -0.6095566857654425,
+        "cyb_wb": 0.001312275343551812,
+        "vt_a_as_reported": 0.06109307940241697,
+        "vt_a_per_rad": 3.500375607216114,
+        "units_factor": 57.29577951308232
+      },
+      "aid_longitudinal_dynamic_CLq": 0.10385094497457285,
+      "aid_lateral_dynamic_Clp": -0.013938374449244277,
+      "section7_cl_q_used": 5.95022084548837,
+      "section7_cl_p_used": -0.7986100292146804,
+      "units_note": "aid's values are built from stability._per_deg / handbook_pass._per_rad, both `if a > 1: convert else pass`, so every one of them is DEG_TO_RAD too small; the ones this adapter needs are recomputed and the rest are recorded here"
+    },
+    "cd0": {
+      "source": "aid.drag.aircraft_cd0, which is 1.25 x the summed section drag",
+      "value": 0.01726937123110341,
+      "datcom_own_CD_at_alpha0": 0.024,
+      "induced_part": 0.0013792852790920085,
+      "datcom_own_parasite": 0.022620714720907993,
+      "ratio_datcom_to_aid": 1.3098748308894084,
+      "note": "aid/drag.py builds its skin-friction coefficient from a Reynolds number PER UNIT LENGTH (atm['Re'] = D*mach*a/V) rather than per chord, then multiplies the sum by DATCOM's 1.25; the Fortran's own CD column at alpha = 0 less its induced part is the same quantity computed the other way, and both are recorded"
+    },
+    "numpy_bridge": "numpy.trapezoid present; no alias bound",
+    "control_rows": {
+      "flap": {
+        "surface": "flap",
+        "delta_deg": 0.0,
+        "available": true,
+        "reason": "",
+        "CL": 0.012099259177416555,
+        "CD": null,
+        "Cm": -0.005545513955081216,
+        "CY": null,
+        "Cl": null,
+        "Cn": null
+      },
+      "aileron": {
+        "surface": "aileron",
+        "delta_deg": 0.0,
+        "available": true,
+        "reason": "",
+        "CL": null,
+        "CD": null,
+        "Cm": null,
+        "CY": null,
+        "Cl": 0.003629764423837838,
+        "Cn": null
+      },
+      "elevator": {
+        "surface": "elevator",
+        "delta_deg": 0.0,
+        "available": true,
+        "reason": "",
+        "CL": 0.00449313857151534,
+        "CD": null,
+        "Cm": -0.014086657625619491,
+        "CY": null,
+        "Cl": null,
+        "Cn": null
+      },
+      "rudder": {
+        "surface": "rudder",
+        "delta_deg": 0.0,
+        "available": true,
+        "reason": "",
+        "CL": null,
+        "CD": null,
+        "Cm": null,
+        "CY": 0.004545676104812234,
+        "Cl": 0.0004999837862371692,
+        "Cn": -0.001911555929827281
+      }
+    }
+  }
+}
