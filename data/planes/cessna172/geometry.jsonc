@@ -7,7 +7,11 @@
 //    the AR 33.3, S 3 ft^2 panel, is KEPT in the lattice and carries
 //    9.6% of the aircraft's CL at the trim alpha.
 //    Flight condition from the source AERO: Mach 0.03, altitude 0.0 ft, betha 0.0 rad,
-//    evaluated at alpha = 4 deg (the middle of AERO.ALSCHD), V = 10.2073 m/s, rho = 1.225056 kg/m^3.
+//    evaluated at alpha = 4 deg (the middle of AERO.ALSCHD), V = 3.1112 m/s,
+//    rho = 1.225056 kg/m^3.  Tornado's state["AS"] is in FT/S -- it is 10.2073 ft/s, and AID works in feet
+//    throughout (aid.atmosphere.atmosphere(0)['a'] = 1116.288876590643 ft/s) -- so the m/s figure above
+//    is that value x 0.3048, and both are recorded in provenance.flight_condition.  This is the SOURCE Mach-0.03 speed;
+//    the trimmed cruise speed the model actually flies at is in provenance.trim.cruise_mps.
 //
 // 2. THE SOURCE PLANFORM IS A CESSNA 172 AT ROUGHLY 1/3 LINEAR SCALE
 //    span 12 ft against a real 36.1 ft, chord 2 ft against 4.89 ft, area 24 ft^2
@@ -72,17 +76,27 @@
 //    Tornado (aft, right, up) component slots without converting their sense, so roll-right is
 //    omega_x_aft = -P and nose-right is omega_z_up = -R and the P and R columns come back
 //    inverted whatever the mapping does -- measured CY_P = +0.160 where physics needs CY_p < 0
-//    and CY_R = -0.387 where it needs CY_r > 0, while Cm_Q is right.  Those slots are left to
-//    the invariant table, which flips Cl_P, Cl_R, Cn_P, Cn_R, CY_P and CY_R and logs each
-//    flip in provenance.flipped.  No blanket flip is applied on top of the mapping, and it makes
+//    and CY_R = -0.387 where it needs CY_r > 0, while Cm_Q is right.  The slots the mapping leaves
+//    on the wrong side, computed from this run's provenance.flipped rather than written out, are:
+//      cl_p
+//      cl_r
+//      cn_r
+//      cy_p
+//      cy_r
+//    Cn_P is NOT among them: -Cn_P = -0.0687 already satisfies cn_p < 0, so cn_p is absent
+//    from provenance.flipped.  No blanket flip is applied on top of the mapping, and it makes
 //    no difference to any written coefficient: recomputed under both readings, all twenty-five
 //    values are identical, because the table is the final authority and a component-sense
 //    flip reverses the moment and its shift's force coefficient together.
 //    Signs are normalised mechanically against aero_convert.units.SIGN_INVARIANTS and every flip is
 //    logged in provenance.flipped; cm0 carries no invariant and is recorded as not-normalised.
 //
-//    A CAVEAT on the rate derivatives -- cy[1], cy[2], cyp, cyr, czq, clp, clr, cnp,
-//    cnr -- inherited from the flight condition and NOT corrected here.
+//    A CAVEAT on the NINE genuinely per-phat / per-qhat / per-rhat slots:
+//    cyp[0], cyr[0], czq[0], cmq[0], clp[0], clr[0], cnp[0], cnr[0], cxq[0].
+//    cy[1] and cy[2] are NOT in that list: they are cy_da and cy_dr, the
+//    aileron and rudder side force per radian of CONTROL DEFLECTION, which no
+//    flight-condition speed touches.  Inherited from the flight condition and
+//    NOT corrected here.
 //    coeff_create quotes them per p-hat = p*b_ref/(2*AS) using the SOURCE speed
 //    state["AS"] = 10.2073 ft/s = 3.1112 m/s (Mach 0.03, sea level), while
 //    f16/aero_morelli.py forms phat = p*b_m/(2*V) with V the model's own speed,
@@ -227,8 +241,10 @@
     "alt_ft": 0.0,
     "betha_rad": 0.0,
     "alpha_deg": 4.0,
-    "as_mps": 10.207345160909794,
-    "rho_kg_m3": 1.2250558830000002
+    "as_mps": 3.1111988050453054,
+    "as_ftps": 10.207345160909794,
+    "rho_kg_m3": 1.2250558830000002,
+    "speed_note": "Tornado's state[\"AS\"] is in FT/S (aid.atmosphere.atmosphere(0)['a'] = 1116.288876590643 ft/s, _build_state divides by 3.28084), so as_mps is as_ftps x 0.3048 and as_ftps carries the solver's own number.  This is the Mach-0.03 SOURCE speed, not the trimmed cruise speed in provenance.trim.cruise_mps."
   },
   "mesh": [
     "10",

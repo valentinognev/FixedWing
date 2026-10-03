@@ -52,17 +52,22 @@ Tornado reports            mapped to dynamics   invariant table wants      resol
 ``Cn_b = -0.246500``       ``cn = -Cn_b``        ``cn_beta`` > 0             mapping
 ``Cm_a = -8.786140``       ``cm = +Cm_a``        ``cm_alpha`` < 0            mapping
 ``Cm_Q = -33.348777``      ``cm = +Cm_Q``        ``cm_q`` < 0                mapping
-``Cn_P = +0.068671``       ``cn = -Cn_P = -0.0687``  ``cn_p`` < 0            the table
 ``Cl_P = -0.486095``       ``cl = -Cl_P = +0.4861``  ``cl_p`` < 0            the table
+``Cl_R = +0.044525``       ``cl = -Cl_R = -0.0445``  ``cl_r`` > 0            the table
 ``CY_P = +0.159618``       ``cy = +CY_P``        ``cy_p`` < 0                the table
 ``CY_R = -0.386951``       ``cy = +CY_R``        ``cy_r`` > 0                the table
-``Cl_R = +0.044525``       ``cl = -Cl_R``        ``cl_r`` > 0                the table
 ``Cn_R = -0.286403``       ``cn = -Cn_R = +0.2864``  ``cn_r`` < 0            the table
+``Cn_P = +0.068671``       ``cn = -Cn_P = -0.0687``  ``cn_p`` < 0            mapping
 =========================  ===================  ==========================  ==========
 
-Note the last column honestly: the mapping hands ``Cl_P``, ``Cn_P``, ``Cn_R``,
-``CY_P`` and ``CY_R`` to the table **still on the wrong side**, and it is the
-table, not the mapping, that puts them right.  Two of the three moment axes flip
+Note the last column honestly: the mapping hands ``Cl_P``, ``Cl_R``, ``Cn_R``,
+``CY_P`` and ``CY_R`` to the table **still on the wrong side** -- five slots -- and
+it is the table, not the mapping, that puts them right.  ``Cn_P`` is *not* one of
+them: ``-Cn_P = -0.0687`` already satisfies ``cn_p < 0``, so that row's provenance
+reads ``"state": "normalised"`` and ``cn_p`` is absent from ``provenance.flipped``.
+This table is prose and cannot be derived from data, so **the file header computes
+the same set from the run's own ``provenance.flipped`` at build time** (see
+``_flipped_rate_slots``), which is what stops the two from drifting apart.  Two of the three moment axes flip
 because a right-handed frame that reverses two of its three axes reverses
 exactly those two moment senses; the pitch axis (right in both) does not flip,
 which is what keeps ``Cm`` the one quantity whose sign survives untouched.  Every
@@ -299,6 +304,7 @@ class Geometry:
     betha_rad: float
     alpha_deg: float
     as_mps: float
+    as_ftps: float
     rho_kg_m3: float
     mass_kg: float
     weight_slug: float
@@ -424,7 +430,12 @@ def _geometry(ac: Any, geo: dict, state: dict) -> Geometry:
         alt_ft=float(_first(aero["ALT"])),
         betha_rad=float(state["betha"]),
         alpha_deg=math.degrees(float(state["alpha"])),
-        as_mps=float(state["AS"]),
+        # Tornado's state["AS"] is in FT/S: aid.atmosphere.atmosphere(0)["a"] is
+        # 1116.288876590643 ft/s (the speed of sound in feet per second) and
+        # _build_state divides by 3.28084.  AID works in feet throughout, so the
+        # value is converted here rather than stored under a key that says m/s.
+        as_ftps=float(state["AS"]),
+        as_mps=float(state["AS"]) * FT_TO_M,
         rho_kg_m3=float(state["rho"]),
         mass_kg=source_mass_kg(aero),
         weight_slug=float(_first(aero["WT"])),
@@ -922,7 +933,15 @@ def tornado_run(source: Path | None = None) -> TornadoRun:
             "betha_rad": geometry.betha_rad,
             "alpha_deg": geometry.alpha_deg,
             "as_mps": geometry.as_mps,
+            "as_ftps": geometry.as_ftps,
             "rho_kg_m3": geometry.rho_kg_m3,
+            "speed_note": (
+                "Tornado's state[\"AS\"] is in FT/S (aid.atmosphere.atmosphere(0)['a'] "
+                "= 1116.288876590643 ft/s, _build_state divides by 3.28084), so as_mps is "
+                f"as_ftps x {FT_TO_M} and as_ftps carries the solver's own number.  This "
+                "is the Mach-0.03 SOURCE speed, not the trimmed cruise speed in "
+                "provenance.trim.cruise_mps."
+            ),
         },
         "moment_reference": {
             "reference_point": [geometry.x_ref_ft, 0.0, 0.0],
@@ -1334,6 +1353,18 @@ def model_payload(run: TornadoRun) -> dict[str, Any]:
     }
 
 
+def _flipped_rate_slots(flipped: list[str]) -> list[str]:
+    """The flipped slots that are rate/sideslip columns, i.e. the P and R defect.
+
+    Derived from the run's own ``provenance.flipped`` rather than written out, so
+    the header cannot name a slot the table did not flip or omit one it did.  The
+    control-derivative fields are excluded by their ``_da`` / ``_dr`` / ``_de``
+    suffixes: they are per radian of control deflection and are unaffected by the
+    P and R component-sense defect.
+    """
+    return [name for name in flipped if not name.endswith(("_da", "_dr", "_de"))]
+
+
 def _slot_lines(run: TornadoRun) -> list[str]:
     """One line per coefficient slot: what the solver said, and what was done to it.
 
@@ -1386,7 +1417,15 @@ def header_comment(run: TornadoRun, kind: str) -> str:
         f"//    Flight condition from the source AERO: Mach {geometry.mach}, altitude {geometry.alt_ft} ft,"
         f" betha {geometry.betha_rad} rad,",
         f"//    evaluated at alpha = {geometry.alpha_deg:.4g} deg (the middle of AERO.ALSCHD),"
-        f" V = {geometry.as_mps:.4f} m/s, rho = {geometry.rho_kg_m3:.6f} kg/m^3.",
+        f" V = {geometry.as_mps:.4f} m/s,",
+        f"//    rho = {geometry.rho_kg_m3:.6f} kg/m^3.  Tornado's state[\"AS\"] is in FT/S --"
+        f" it is {geometry.as_ftps:.4f} ft/s, and AID works in feet",
+        "//    throughout (aid.atmosphere.atmosphere(0)['a'] = 1116.288876590643 ft/s) --"
+        " so the m/s figure above",
+        f"//    is that value x {FT_TO_M}, and both are recorded in"
+        " provenance.flight_condition.  This is the SOURCE Mach-0.03 speed;",
+        "//    the trimmed cruise speed the model actually flies at is in"
+        " provenance.trim.cruise_mps.",
         "//",
         "// 2. THE SOURCE PLANFORM IS A CESSNA 172 AT ROUGHLY 1/3 LINEAR SCALE",
         "//    span 12 ft against a real 36.1 ft, chord 2 ft against 4.89 ft, area 24 ft^2",
@@ -1492,11 +1531,14 @@ def header_comment(run: TornadoRun, kind: str) -> str:
         " back",
         "//    inverted whatever the mapping does -- measured CY_P = +0.160 where physics"
         " needs CY_p < 0",
-        "//    and CY_R = -0.387 where it needs CY_r > 0, while Cm_Q is right.  Those slots"
-        " are left to",
-        "//    the invariant table, which flips Cl_P, Cl_R, Cn_P, Cn_R, CY_P and CY_R"
-        " and logs each",
-        "//    flip in provenance.flipped.  No blanket flip is applied on top of the"
+        "//    and CY_R = -0.387 where it needs CY_r > 0, while Cm_Q is right.  The slots"
+        " the mapping leaves",
+        "//    on the wrong side, computed from this run's provenance.flipped rather than"
+        " written out, are:",
+        *[f"//      {name}" for name in _flipped_rate_slots(run.provenance["flipped"])],
+        "//    Cn_P is NOT among them: -Cn_P = -0.0687 already satisfies cn_p < 0, so"
+        " cn_p is absent",
+        "//    from provenance.flipped.  No blanket flip is applied on top of the"
         " mapping, and it makes",
         "//    no difference to any written coefficient: recomputed under both readings,"
         " all twenty-five",
@@ -1508,8 +1550,12 @@ def header_comment(run: TornadoRun, kind: str) -> str:
         "//    logged in provenance.flipped; cm0 carries no invariant and is recorded as"
         " not-normalised.",
         "//",
-        "//    A CAVEAT on the rate derivatives -- cy[1], cy[2], cyp, cyr, czq, clp, clr, cnp,",
-        "//    cnr -- inherited from the flight condition and NOT corrected here.",
+        "//    A CAVEAT on the NINE genuinely per-phat / per-qhat / per-rhat slots:",
+        "//    cyp[0], cyr[0], czq[0], cmq[0], clp[0], clr[0], cnp[0], cnr[0], cxq[0].",
+        "//    cy[1] and cy[2] are NOT in that list: they are cy_da and cy_dr, the",
+        "//    aileron and rudder side force per radian of CONTROL DEFLECTION, which no",
+        "//    flight-condition speed touches.  Inherited from the flight condition and",
+        "//    NOT corrected here.",
         "//    coeff_create quotes them per p-hat = p*b_ref/(2*AS) using the SOURCE speed",
         "//    state[\"AS\"] = 10.2073 ft/s = 3.1112 m/s (Mach 0.03, sea level), while",
         "//    f16/aero_morelli.py forms phat = p*b_m/(2*V) with V the model's own speed,",

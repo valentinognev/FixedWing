@@ -17,7 +17,7 @@ from tempfile import TemporaryDirectory
 
 from aero_convert.morelli import to_morelli
 from aero_convert.solvers import build, tornado_run
-from aero_convert.units import DEG_TO_RAD, SIGN_INVARIANTS
+from aero_convert.units import DEG_TO_RAD, SIGN_INVARIANTS, normalise_sign
 from plane.groups import MORELLI_LENGTHS, nonlinear_index
 
 # The 19 slots the plan's Task 3 RED list names, in the plan's order.
@@ -323,8 +323,6 @@ class TornadoAdapterTest(unittest.TestCase):
                 "cm[1]": cm_alpha,
                 "cmq[0]": cm_q,
             }
-        from aero_convert.units import normalise_sign
-
         fields = {
             "cl[0]": "cl_beta", "cy[0]": "cy_beta", "clp[0]": "cl_p", "clr[0]": "cl_r",
             "cyp[0]": "cy_p", "cyr[0]": "cy_r", "cnp[0]": "cn_p", "cnr[0]": "cn_r",
@@ -340,6 +338,62 @@ class TornadoAdapterTest(unittest.TestCase):
                     normalise_sign(fields[slot], variants["shipped"][slot])[0],
                     shipped[array][index], places=12,
                 )
+
+    def test_15_dropping_the_shift_moves_exactly_seven_slots(self) -> None:
+        """The other half of the materiality claim: the SHIFT is not immaterial.
+
+        The P/R sign dispute changes nothing (test_14), but discarding the CG shift
+        as well is a different hypothesis and moves exactly the seven slots the
+        shift touches -- cm[0], cm[1], cm[2], cmq[0], cn[0], cnp[0], cnr[0].  This
+        pins the boundary between the two claims, so "the sign dispute is
+        immaterial" can never be read as "the moment reference is".
+        """
+        from aero_convert.units import shift_moments_to_cg
+
+        run = self.solver_run
+        raw = run.raw
+        geometry = run.geometry
+        shipped = self.coefficients()
+        rows = {row["surface"]: row for row in run.control_rows}
+        elevator = rows["elevator"]
+
+        def shift(cz: float, cy: float, cm: float, cn: float) -> tuple[float, float]:
+            out = shift_moments_to_cg(
+                cz, 0.0, cy, 0.0, cm, cn,
+                dx=geometry.dx_m, dy=geometry.dy_m, dz=geometry.dz_m,
+                s_ref=geometry.s_ref_m2, b_ref=geometry.b_ref_m, c_ref=geometry.c_ref_m,
+            )
+            return out[4], out[5]
+
+        sin_a = math.sin(math.radians(geometry.alpha_deg))
+        cos_a = math.cos(math.radians(geometry.alpha_deg))
+        cl_de = float(elevator["CL"]) * DEG_TO_RAD
+        cd_de = float(elevator["CD"]) * DEG_TO_RAD
+        cz_de = -(cos_a * cl_de + sin_a * cd_de)
+        cm_de = float(elevator["Cm"]) * DEG_TO_RAD
+
+        cases = {
+            "cm[1]": ("cm_alpha", shift(-raw["CZ_a"], 0.0, raw["Cm_a"], 0.0)[0], raw["Cm_a"]),
+            "cm[0]": ("cm0", shift(-raw["CL_at_alpha0"], 0.0, raw["Cm_at_alpha0"], 0.0)[0],
+                      raw["Cm_at_alpha0"]),
+            "cmq[0]": ("cm_q", shift(-raw["CZ_Q"], 0.0, raw["Cm_Q"], 0.0)[0], raw["Cm_Q"]),
+            "cm[2]": ("cm_de", shift(cz_de, 0.0, cm_de, 0.0)[0], cm_de),
+            "cn[0]": ("cn_beta", shift(0.0, raw["CY_b"], 0.0, -raw["Cn_b"])[1], -raw["Cn_b"]),
+            "cnp[0]": ("cn_p", shift(0.0, raw["CY_P"], 0.0, -raw["Cn_P"])[1], -raw["Cn_P"]),
+            "cnr[0]": ("cn_r", shift(0.0, raw["CY_R"], 0.0, -raw["Cn_R"])[1], -raw["Cn_R"]),
+        }
+        moved = set()
+        for slot, (field, mapped, unshifted) in cases.items():
+            with self.subTest(slot=slot):
+                array, index = slot.split("[")
+                index = int(index.rstrip("]"))
+                self.assertAlmostEqual(
+                    normalise_sign(field, mapped)[0], shipped[array][index], places=12,
+                    msg=f"{slot} must be the CG-shifted value the file ships",
+                )
+                if normalise_sign(field, mapped)[0] != normalise_sign(field, unshifted)[0]:
+                    moved.add(slot)
+        self.assertEqual(moved, set(cases), "exactly the seven shifted slots must move")
 
     def test_9_trimmed_aircraft_is_positive_where_it_must_be(self) -> None:
         """plane/aircraft.py's _POSITIVE_KEYS: nothing may be zero or negative."""
