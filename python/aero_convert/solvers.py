@@ -46,8 +46,13 @@ a conversion:
   body-+z coefficient with **z down**: up-positive lift enters as a negative ``cz``.
   That follows from ``xd[11]`` being the NED altitude rate, from the flight model
   alone, and it is what makes ``data/planes/linear/morelli.json``'s ``cz[1] = -4.5``
-  CORRECT rather than a defect.  It applies to ``cz[1]`` (``-CL_a``) and ``cz[5]``
-  (``-CL_de``), which are the two slots whose *name* is ``CL_...``.
+  CORRECT rather than a defect.  It applies to every slot whose solver channel is a
+  ``CL`` lift channel -- which for Tornado is ``cz[1]`` (``-CL_a``), ``cz[0]``
+  (``-CL(0)``) and ``cz[5]`` (``-CL_de``), not the two this paragraph used to name:
+  ``cz[0]`` was missing, and item 5 of the same generated file already said so while
+  item 6 denied it.  ``identity_negated`` now derives the set from
+  ``provenance.mapping`` and each header prints its own, because it differs per model
+  (Tornado three, DATCOM three, AVL five, flow5 one).
 * **Everything else is read as the solver reports it.**  ``cl``, ``cm``, ``cn``, ``cy``
   and ``cx`` are body coefficients whose senses already match, so ``Cl_b``, ``Cl_P``,
   ``Cn_R``, ``CX_Q``, ``Cm_a`` and the control rows all enter the arrays unaltered.
@@ -58,12 +63,16 @@ a conversion:
   reference files store the standard-aero ``CL_q``/``CD_q`` in these two slots and a
   reader comparing against them needs to know which is which.
 
-What this re-base changed in the written numbers: nothing measurable.  Every one of
-the twenty-five coefficients came out the same, because every slot that used to be
-negated and then flipped by the invariant table is now already on the invariant side
-of zero.  What changed is the bookkeeping -- ten slots used to appear in
-``provenance.flipped`` and four do now -- and every ``conversion=`` string, which used
-to claim a frame reason that no longer exists.
+What this re-base changed in the written numbers: ONE slot, and it is deliberate.
+``czq[0]`` now holds the body-axis ``CZ_Q`` instead of the wind-axis ``CL_Q``, which
+the schema's own arithmetic requires (it adds the slot to the body-axis ``cz``); the
+two differ by about a quarter of a per cent here because CL and CZ part company
+wherever the axial force is non-zero.  Every other written coefficient is unchanged,
+because every slot that used to be negated and then flipped by the invariant table is
+now already on the invariant side of zero.  Both numbers are kept in
+``provenance.cd_q_convention``, so no count needs stating here: read
+``len(provenance.flipped)`` from the run rather than trusting a sentence, which is
+what the header now does.
 
 ``shift_moments_to_cg``'s ``cz`` is the **body-z force** coefficient, not the
 wind-axis lift: the pitch line is ``dx * F_z / c_ref``, so the argument is
@@ -154,9 +163,11 @@ with ``AERO.XCG``; a mismatch raises.  So ``dx = dy = dz = 0`` and no moment
 shift is applied.  ``AVL`` and ``flow5`` additionally share
 ``plane/dynamics.py``'s frame outright -- AVL's own ``.sb`` prints "Standard axis
 orientation, X fwd, Z down" -- so neither adapter contains an axis mapping at
-all.  The only negations anywhere are the three slots the schema stores in the
-wind-axis lift convention, ``cz[1]``, ``czq[0]`` and ``cz[5]``, because
-``cz = -CL``.
+all.  The sign-convention negations that remain are the slots the schema itself
+stores in the wind-axis lift convention, because ``cz = -CL``; which ones those are
+differs per model (Tornado's ``cz[0]``/``cz[1]``/``cz[5]``, AVL's plus ``czq[0]`` and
+``cx[0]``, flow5's ``cz[5]`` alone), so each header now derives its own list from
+``provenance.mapping`` via ``identity_negated`` rather than asserting a shared one.
 
 Four defects in the sibling package sit on these paths and are corrected here
 rather than inherited, each with the measurement that shows it:
@@ -168,7 +179,7 @@ rather than inherited, each with the measurement that shows it:
   ``cl`` column, ``cla`` equals the per-degree secant ``dCL/dalpha`` (0.1003/deg
   against a centred 0.100375/deg secant at alpha = 4 deg), so every derivative
   read out of ``for006`` is multiplied by ``DEG_TO_RAD``.
-* ``aid/lateral.py:571`` ends its vertical-tail lift-slope formula with
+* ``aid/lateral.py:570`` ends its vertical-tail lift-slope formula with
   ``vt_a * pi/180``, which is the wrong conversion in the wrong direction.  The
   formula's ``k`` comes from ``aid/lateral.py:565``, which reads ``HT["a0"]`` --
   not ``VT.a0``, which appears nowhere in the sibling tree -- and ``apply_handbook``
@@ -199,20 +210,37 @@ Model                   of 25  Why
                                 no ``cy_da``, no ``cd_q``
 ``avl.jsonc``             25   AVL's ``.sb`` carries aileron AND rudder deflection
                                 columns, which ``run_avl_full``'s own ``.sb`` does not
-``flow5.jsonc``           7   see below
+``flow5.jsonc``           21   the twelve ``StabDerivatives``, the lateral control
+                                rows and the ``CDvis``/``CDind`` split; no q-derivative,
+                                no ``cy_da``
 ======================  ====  ==========================================================
 
-**flow5 produces seven of the twenty-five fields and that is its whole
-capability**, read off ``FLOW5/run/flow5_run.cpp``: the deck's only condition key
-is ``polar.alpha_deg``, the analysis calls ``setComputeDerivatives(false)``, and
-``polar_to_json`` serialises exactly ``alpha``, ``CL``, ``CD``, ``Cm``, ``CLa``
-and ``Cma``.  There is no sideslip sweep, no rate sweep, and no roll, yaw or
-side-force column anywhere in its output, so ``aid.flow5_controls`` returns
-``None`` for every aileron and rudder coefficient even though its ``_KEEP`` table
-asks for them.  ``flow5.jsonc`` is therefore a *longitudinal* cross-check on the
-lift slope, the pitching slope, the two intercepts, the elevator and the parasite
-drag.  It flies, but it is not a 6-DOF data set and the file says so in its
-header.
+**flow5 fills twenty-one of the twenty-five fields**, read off the 26 keys
+``aid.flow5_io.run_flow5`` returns at mesh ``("10", "10")``: the six longitudinal
+polar channels, the twelve ``StabDerivatives`` (``CZa``, ``CXa``, ``CYb``,
+``CYp``, ``CYr``, ``Clb``, ``Clp``, ``Clr``, ``Cnb``, ``Cnp``, ``Cnr``, ``XNP``),
+``CLa``/``Cma``, a ``CDvis``/``CDind`` split, the body ``Cx``/``Cz``/``Cl``/``Cn``
+point channels and the alpha/beta schedules.  So every sideslip and every roll- and
+yaw-rate derivative is real, and all five aileron/rudder coefficients are real.
+
+The four it cannot fill are absent because its *runner* declines to forward them, not
+because the panel method cannot compute them: ``FLOW5/run/flow5_run.cpp``'s
+``stab_derivative_fields()`` does not pass on ``CXq``/``CZq``/``Cmq``, so ``cl_q``,
+``cm_q`` and ``cd_q`` are empty; and ``aid.flow5_controls``' ``_KEEP`` table asks the
+aileron for ``Cl`` and ``Cn`` but never for ``CY``, so ``cy_da`` is empty.  All four
+are written as ``None`` and DECLARED, never as zeros, so an honestly empty slot cannot
+be read as a measurement.
+
+Two flow5 facts constrain how far its numbers can be trusted, and both are recorded
+in the file rather than left to a reader to rediscover.  Its twelve
+``StabDerivatives`` are **beta-flat** -- ``computeStabilityDerivatives`` and
+``computeAngularDerivatives`` both hardcode ``double beta(0.0)`` -- while its
+``CLa``/``Cma`` are polar OLS slopes that *do* follow beta; we fly beta = 0, so
+nothing is wrong today.  And its ``Clb`` is **mesh-dependent to the point of
+inverting sign**: -0.0736 at ``("5","3")``, **+0.0018** at ``("10","5")``, -0.0530 at
+``("10","10")``, -0.0593 at ``("20","10")``, against AVL's -0.045756.  The positive
+value at ``("10","5")`` would pass a sign-only invariant table while being badly
+wrong, which is why ``FLOW5_MESH`` is pinned by a test rather than left to a comment.
 
 Rate derivatives and the flight condition
 -----------------------------------------
@@ -1812,7 +1840,7 @@ def _datcom_section7(
         Cn_r   = -2 * a_VT * swash * (S_VT/S) * (l/b)^2
 
     ``vt_a_per_rad`` is the CORRECTED per-radian vertical-tail lift slope: the one
-    on the aircraft has been divided by ``pi/180`` at ``aid/lateral.py:571`` (see
+    on the aircraft has been divided by ``pi/180`` at ``aid/lateral.py:570`` (see
     ``_datcom_lateral``), so it cannot be read back off it.
     """
     wg, ht, vt = ac.WG, ac.HT, ac.VT
@@ -1868,7 +1896,7 @@ DATCOM_TAIL_UNSTEADY_FACTOR = 1.1
 def _datcom_lateral(lateral: dict, ac: Any, vt_a_per_rad: float) -> dict[str, float]:
     """DATCOM's lateral static set, with the vertical-tail lift slope corrected.
 
-    ``aid/lateral.py:571`` ends its tail lift-slope formula with
+    ``aid/lateral.py:570`` ends its tail lift-slope formula with
     ``vt_a = vt_a * pi / 180``, which is the wrong conversion in the wrong
     direction.  The formula itself,
 
@@ -1910,7 +1938,7 @@ def _datcom_lateral(lateral: dict, ac: Any, vt_a_per_rad: float) -> dict[str, fl
         -float(vt["k"]) * float(vt["a"]) * float(vt["swash"])
         * float(_last(vt["S"])) / float(_last(ac.WG["S"]))
     )
-    # Undo aid/lateral.py:571's `* pi/180`, which divided a per-radian slope by
+    # Undo aid/lateral.py:570's `* pi/180`, which divided a per-radian slope by
     # 180.  DEG_TO_RAD is the numerical reciprocal of that division; it is NOT a
     # per-degree-to-per-radian conversion here -- see the docstring.
     cyb_v = cyb_v_as_reported * DEG_TO_RAD
@@ -1927,7 +1955,7 @@ def _datcom_lateral(lateral: dict, ac: Any, vt_a_per_rad: float) -> dict[str, fl
         "vt_a_as_reported": float(vt["a"]),
         "vt_a_per_rad": vt_a_per_rad,
         "units_factor": DEG_TO_RAD,
-        "units_factor_meaning": "aid/lateral.py:571 divided a PER RADIAN slope by pi/180, "
+        "units_factor_meaning": "aid/lateral.py:570 divided a PER RADIAN slope by pi/180, "
                                 "so this multiplies it back by DEG_TO_RAD.  It is the "
                                 "numerical reciprocal of that division, not a "
                                 "per-degree-to-per-radian conversion",
@@ -1936,7 +1964,7 @@ def _datcom_lateral(lateral: dict, ac: Any, vt_a_per_rad: float) -> dict[str, fl
         "mechanism": "aid/lateral.py:565 reads HT['a0'] (rewritten by apply_handbook to "
                      "6.8396 PER RADIAN), so k = a0/(2*pi) = 1.0886/rad and the tail slope "
                      "formula returns 3.5004 PER RADIAN -- 51 per cent of the 2-D 6.8396/rad, "
-                     "the reduction a fin of AR ~ 1.8 must show.  aid/lateral.py:571 then "
+                     "the reduction a fin of AR ~ 1.8 must show.  aid/lateral.py:570 then "
                      "multiplies that by pi/180, which is the defect",
     }
 
@@ -2131,7 +2159,7 @@ def datcom_run(source: Path | None = None) -> CrossCheckRun:
             field, lateral_fixed[correct], tornado_key=f"aid.lateral.lateral_static.{key}",
             solver_value=float(lateral[key]),
             conversion="AID's value with its own vertical-tail term re-evaluated using the "
-                       f"tail's lift slope x {DEG_TO_RAD}.  aid/lateral.py:571 divides that "
+                       f"tail's lift slope x {DEG_TO_RAD}.  aid/lateral.py:570 divides that "
                        f"PER RADIAN slope by pi/180, so AID's {key} = "
                        f"{float(lateral[key]):.6g} has a tail part 57.3x too small (AID's "
                        "Clb = -0.003091 against the sibling's own AVL gold Clb = -0.065868, "
@@ -2378,11 +2406,13 @@ def avl_run(source: Path | None = None) -> CrossCheckRun:
     ``plane/dynamics.py``: its own ``.sb`` header prints "Standard axis
     orientation, X fwd, Z down", the same x-forward, y-right, z-down frame and the
     same moment senses (positive ``Cl`` rolls right, positive ``Cm`` noses up,
-    positive ``Cn`` yaws right).  So no axis mapping is applied at all -- the only
-    negation anywhere is on the three slots the schema stores in the wind-axis
-    lift convention (``cz[1]``, ``czq[0]``, ``cz[5]``, i.e. ``cz = -CL``), and
-    ``normalise_sign`` still decides the sign of every slot from the invariant
-    table.
+    positive ``Cn`` yaws right).  So no axis mapping is applied at all.  The
+    negations that remain are only the schema's own sign-convention identities --
+    ``cz = -CL`` on the lift slots and ``cx = -CD`` on the drag slot -- and which
+    slots those touch is DERIVED per file by ``identity_negated`` rather than
+    listed here, because the set is different for every model and a hand-written
+    list is exactly the kind of sentence that goes stale.  ``normalise_sign``
+    still decides the sign of every slot from the invariant table.
 
     Two runs, because AVL reports them separately:
 
@@ -2987,19 +3017,9 @@ def flow5_run(source: Path | None = None) -> CrossCheckRun:
                          "nothing.  It is NOT carried in this file; see "
                          "provenance.raw_output_location for where the build put it",
             },
-            "cross_solver_disagreements": {
-                "cn_p": "flow5's Cnp is POSITIVE (+0.0403) where this table wants cnp[0] < 0, "
-                        "and Tornado, DATCOM and AVL all report it negative.  The sign is "
-                        "established -- roll and yaw damping have one sign and "
-                        "data/planes/linear/morelli.json is the named authority -- so "
-                        "normalise_sign flips it mechanically and provenance.flipped records "
-                        "it.  It is recorded here as a CROSS-SOLVER DISAGREEMENT rather than "
-                        "routine normalisation, because three solvers agree and one does not",
-                "cz_5": "flow5's elevator CL is positive per degree where this table wants "
-                        "cz[5] < 0, which is the same `cz = -CL` identity that gives cz[1] its "
-                        "sign and is applied to every solver equally; the flip recorded in "
-                        "provenance.flipped is that identity plus the table",
-            },
+            "cross_solver_disagreements": _cross_solver_disagreements(
+                collector.mapping, collector.flipped,
+            ),
             "invariant_band_note": (
                 f"cm[1] = {coefficients['cm'][1]:.6f}/rad is 4.9 % BELOW the plan's "
                 "pitched-moment slope band of -1.5 ... -0.3 /rad, which that band was "
@@ -3264,7 +3284,8 @@ def geometry_block(
         },
         "provenance": {
             key: run.provenance[key]
-            for key in ("solver", "mesh", "source", "aid_src", "aid_src_commit",
+            for key in ("solver", "mesh", "source", "aid_src", "aid_src_from_env",
+                        "aid_src_commit",
                         "moment_reference",
                         "sign_convention", "cl_alpha_cross_check", "cd0", "flipped",
                         "not_normalised", "missing")
@@ -3301,8 +3322,199 @@ def _flipped_rate_slots(flipped: list[str]) -> list[str]:
     -- the whole class of "the P and R columns come back component-sense inverted"
     defects it was built to report no longer exists -- so an empty result is the
     expected answer and the header says so rather than listing something.
+
+    The header now prints the FULL flipped list beside this subset and labels the
+    subset as a subset.  It used to print only this subset under the words "this
+    run's own flipped list", which answered a seven-element question with two
+    elements.
     """
     return [name for name in flipped if not name.endswith(("_da", "_dr", "_de"))]
+
+
+def _q_convention_lines(run: TornadoRun | CrossCheckRun) -> list[str]:
+    """Item 6's pitch-rate convention paragraph, derived from the run's own data.
+
+    This paragraph used to assert, in hand-written words, that ``czq[0]`` holds
+    ``CL_q`` and ``cxq[0]`` holds ``CD_q`` "in the STANDARD-AERO convention rather than
+    the body-axis one".  After the re-base that was false -- the file ships the
+    body-axis ``CZ_Q`` -- and the SAME file contradicted it 35 lines earlier and in
+    ``provenance.cd_q_convention``.  Every number here now comes out of that
+    provenance block, so the sentence cannot outlive the computation.
+    """
+    convention = run.provenance.get("cd_q_convention")
+    if not convention:
+        return [
+            "//    No cd_q_convention block: this run has no separate wind-axis/body-axis",
+            "//    distinction to record for the rate slots.",
+        ]
+    lines = [
+        "//    THE PITCH-RATE SLOT IS BODY-AXIS, not standard-aero.  Written out from",
+        "//    provenance.cd_q_convention so it cannot drift from what shipped:",
+        f"//      shipped:      {convention['shipped']}",
+        f"//      why:          {convention['why']}",
+        f"//      czq[0] writes {float(convention['body_axis_cz_q_shipped']):.6f}"
+        f" (CZ_Q, body axis)",
+    ]
+    if "wind_axis_cl_q" in convention:
+        lines += [
+            f"//      the WIND-axis CL_Q is {float(convention['wind_axis_cl_q']):.6f}, i.e."
+            f" {float(convention['wind_axis_cl_q_slot_if_standard_aero']):.6f}"
+            " in this slot if standard-aero",
+            f"//      convention were used -- it is NOT what this file writes.  The two"
+            f" differ by {abs(float(convention['difference_percent'])):.3f} per cent,",
+            "//      because CL and CZ part company wherever the axial force is non-zero.",
+            "//      Any sentence in this header quoting a wind-axis CL_Q number means the",
+            "//      WIND-axis one above, not the value in the arrays.",
+        ]
+    return lines
+
+
+def _cross_solver_disagreements(
+    mapping: list[dict[str, Any]], flipped: list[str],
+) -> dict[str, str]:
+    """One entry per slot where this solver's own sign fights the invariant table.
+
+    DERIVED from ``provenance.mapping`` and ``provenance.flipped``, never written out.
+    This block used to name two slots by hand -- ``cn_p`` and a mislabelled ``cz_5`` --
+    and both were wrong in the same way: ``cn_p`` was the only one of four such
+    disagreements that got an entry, and ``cz_5`` claimed "the flip recorded in
+    provenance.flipped is that identity plus the table" when ``cl_de`` is state
+    `normalised` and absent from ``flipped``, because the ``cz = -CL`` identity
+    supplies that sign before the table ever runs.
+
+    So the rule is mechanical: a slot belongs here exactly when it is in ``flipped``,
+    which by construction means ``normalise_sign`` reversed it, which by construction
+    means the solver's own sign was on the wrong side of the invariant.  Anything the
+    sign-convention identities handled is NOT here, and says so.
+    """
+    from aero_convert.units import SIGN_INVARIANTS
+
+    by_field = {entry["field"]: entry for entry in mapping}
+    out: dict[str, str] = {}
+    for field in sorted(flipped):
+        invariant = SIGN_INVARIANTS.get(field)
+        entry = by_field.get(field, {})
+        solver_value = entry.get("solver_value")
+        if invariant is None:
+            out[field] = (
+                f"{field} was flipped but SIGN_INVARIANTS has no row for it, which should "
+                "be impossible; recorded rather than dropped"
+            )
+            continue
+        sign = "negative" if invariant < 0 else "positive"
+        if solver_value is None:
+            out[field] = (
+                f"the invariant table wants {field} {sign}, and this slot was flipped to "
+                "match, but its mapping carries no solver value to compare against"
+            )
+            continue
+        out[field] = (
+            f"{field}: this solver's own {entry.get('tornado_key')} is "
+            f"{float(solver_value):+.6f}, where morelli.json wants {field} {sign} "
+            f"(SIGN_INVARIANTS[{field!r}] = {invariant:+d}).  The sign is established -- "
+            "roll, pitch and yaw damping each have one sign, and "
+            "data/planes/linear/morelli.json is the named authority -- so normalise_sign "
+            "flips it mechanically and provenance.flipped records it.  Recorded here as a "
+            "CROSS-SOLVER DISAGREEMENT rather than routine normalisation, because the "
+            "other solvers sit on the invariant side of zero"
+        )
+    # And the near-miss worth stating explicitly, because it looks like one and is not.
+    identity_only = [
+        field for field in ("cl_de", "cl_alpha", "cl0", "cd0")
+        if field in by_field and field not in flipped
+    ]
+    if identity_only:
+        out["_not_a_disagreement"] = (
+            "For the record, " + ", ".join(sorted(identity_only))
+            + " are NOT in this list: the sign-convention identities (`cz = -CL`, "
+            "`cx = -CD`) already put them on the invariant side, so normalise_sign leaves "
+            "them alone and provenance.flipped does not name them.  An earlier version of "
+            "this block listed cz[5] here anyway and described a flip that was never "
+            "recorded."
+        )
+    return out
+
+
+def identity_negated(run: TornadoRun | CrossCheckRun) -> list[dict[str, Any]]:
+    """Every slot whose ONLY transformation is the ``cz = -CL`` sign identity.
+
+    Derived from ``provenance.mapping``, never written out.  A field qualifies when
+    its mapped value is exactly minus its solver value, optionally scaled by
+    ``DEG_TO_RAD`` for a per-degree control row, AND it is neither CG-shifted nor
+    present in ``provenance.flipped``.  Anything else in the file went through the
+    moment shift or the invariant table, which is a different thing with a different
+    justification.
+
+    This exists because the header used to say "TWO negations survive ... cz[1] and
+    cz[5]" while the same file's item 5 already admitted ``cz[0]`` carries it too,
+    so one file contradicted itself.  The count is now whatever the data says: three
+    for Tornado, one for flow5, zero for the two solvers whose ``.st``/``.sb`` are
+    already body-axis.
+    """
+    from aero_convert.morelli import SLOT_MAP
+
+    field_slot = {
+        name: (array, index)
+        for array, slots in SLOT_MAP.items()
+        for index, name in slots
+    }
+    flipped = set(run.provenance["flipped"])
+    found: list[dict[str, Any]] = []
+    for entry in run.provenance["mapping"]:
+        field = entry["field"]
+        solver_value = entry.get("solver_value")
+        mapped_value = entry.get("mapped_value")
+        if solver_value is None or mapped_value is None or field in flipped:
+            continue
+        if solver_value == 0.0:
+            continue
+        ratio = mapped_value / -solver_value
+        per_degree = abs(ratio - DEG_TO_RAD) < 1e-9
+        if abs(ratio - 1.0) < 1e-12 or per_degree:
+            array, index = field_slot[field]
+            found.append({
+                "field": field,
+                "slot": f"{array}[{index}]",
+                "solver_key": entry.get("tornado_key"),
+                "solver_value": float(solver_value),
+                "mapped_value": float(mapped_value),
+                "per_degree": per_degree,
+            })
+    return found
+
+
+def identity_lines(run: TornadoRun | CrossCheckRun) -> list[str]:
+    """Header lines naming the ``cz = -CL`` survivors, with their real numbers."""
+    found = identity_negated(run)
+    if not found:
+        return [
+            "//    NO negation survives here, and that is the point: this solver's channels",
+            "//    are already body-axis, so every slot is read exactly as reported.",
+        ]
+    lines = [
+        f"//    {len(found)} negation"
+        + ("" if len(found) == 1 else "s")
+        + (" survives" if len(found) == 1 else " survive")
+        + ", and none is a frame conversion.  Each is a SIGN-CONVENTION identity"
+        " that the schema",
+        "//    itself requires -- `cz = -CL` for the lift slots, its body +z axis pointing"
+        " down, and",
+        "//    `cx = -CD` for the drag slot -- not a change of axis.  Listed from"
+        " provenance.mapping:",
+    ]
+    for item in found:
+        if item["per_degree"]:
+            per_deg = item["solver_value"]
+            lines.append(
+                f"//      {item['slot']} from {item['solver_key']} = {per_deg:.6f} per degree"
+                f" -> {item['mapped_value']:.6f} per radian"
+            )
+        else:
+            lines.append(
+                f"//      {item['slot']} from {item['solver_key']}"
+                f" = {item['solver_value']:.6f} -> {item['mapped_value']:.6f} per radian"
+            )
+    return lines
 
 
 def _slot_lines(run: TornadoRun | CrossCheckRun) -> list[str]:
@@ -3475,26 +3687,21 @@ def header_comment(
         "//    up-positive z, and it is GONE: cl, cm, cn, cy and cx are read exactly as reported,",
         "//    and the P and R columns need no flip because they no longer arrive inverted.",
         "//",
-        "//    TWO negations survive, and neither is a frame conversion -- both are the",
-        "//    plane/dynamics.py identity `cz = -CL`, its body +z axis pointing down:",
-        f"//      cz[1] = -CL_a = {float(run.raw['CL_a']):.6f} -> {run.coefficients['cz'][1]:.6f}"
-        " per radian",
-        f"//      cz[5] = -CL_de = {float(-run.coefficients['cz'][5] / DEG_TO_RAD):.6f}"
-        f" per degree -> {run.coefficients['cz'][5]:.6f} per radian",
+        *identity_lines(run),
+        "//",
         "//    Everything else is unnegated, including czq[0] = CZ_Q and cxq[0] = CX_Q, which are",
-        "//    the body-axis coefficients the schema actually adds to cz and cx.  The wind-axis",
-        "//    numbers sit in provenance.cd_q_convention for a reader comparing against the in-tree",
-        "//    files, which store the standard-aero CL_q and CD_q in those two slots.",
+        "//    the body-axis coefficients the schema actually adds to cz and cx.",
         "//",
         "//    Signs are normalised mechanically against aero_convert.units.SIGN_INVARIANTS and",
         "//    every flip is logged in provenance.flipped.  Computed from this run's own flipped",
-        f"//    list rather than written out, it is:"
-        f" {_flipped_rate_slots(run.provenance['flipped']) or '(none)'}.",
+        "//    list rather than written out, it is ALL of them:",
+        f"//      {run.provenance['flipped'] or '(none)'}",
+        "//    of which the rate and sideslip columns -- the ones this header used to print on",
+        "//    their own, under words that claimed they were the whole list -- are:",
+        f"//      {_flipped_rate_slots(run.provenance['flipped']) or '(none)'}",
         "//    Those are convention differences, not frame errors: the invariant table is the",
         "//    final authority, and each is a slot whose SIGN the two in-tree reference files",
         "//    disagree on.  cm0 carries no invariant and is recorded as not-normalised.",
-        "//    logged in provenance.flipped; cm0 carries no invariant and is recorded as"
-        " not-normalised.",
         "//",
         "//    A CAVEAT on the NINE genuinely per-phat / per-qhat / per-rhat slots:",
         "//    cyp[0], cyr[0], czq[0], cmq[0], clp[0], clr[0], cnp[0], cnr[0], cxq[0].",
@@ -3516,13 +3723,7 @@ def header_comment(
         "//    value.  NOT rescaled here: the plan fixes the flight condition from the",
         "//    source AERO, and rescaling it is a physics decision for a later task.",
         "//",
-        "//    Two slots are stored in the STANDARD-AERO convention rather than the body-axis"
-        " one: czq[0]",
-        "//    holds CL_q (so it is -CL_Q) and cxq[0] holds CD_q (so it is +CX_Q), which is"
-        " what both",
-        "//    in-tree files do.  The schema then adds them to the body-z Cz and body-x Cx,"
-        " which is an",
-        "//    inconsistency of the schema itself, inherited rather than introduced here.",
+        *_q_convention_lines(run),
         "//",
         "// 7. PER-SLOT PROVENANCE (all 19 arrays; real solver output vs zeroed)",
     ]
@@ -3611,7 +3812,7 @@ def cross_check_header(
             "  The DATCOM Section 7 formulae are therefore",
             "//          recomputed in this converter with the factor applied by hand, and the",
             "//          uncorrected numbers are kept in provenance.handbook_cross_check.",
-            "//      (2) aid/lateral.py:571 ends its tail lift-slope formula with"
+            "//      (2) aid/lateral.py:570 ends its tail lift-slope formula with"
             " `vt_a * pi/180`,",
             "//          which is the wrong conversion in the wrong direction.  The formula's",
             "//          `k` comes from aid/lateral.py:565, which reads HT[\'a0\'] -- NOT",
@@ -3683,9 +3884,9 @@ def cross_check_header(
             "//    DATCOM, plane/dynamics.py and every in-tree reference file share ONE axis",
             "//    convention: x forward, y right, z DOWN, positive Cm nose up, positive Cl",
             "//    roll right, positive Cn yaw right.  So there is no frame mapping in this",
-            "//    file at all: the only negations are the three slots the schema stores in",
-            "//    the wind-axis lift convention, cz[1] = -CL_alpha, czq[0] = -CL_q and",
-            "//    cz[5] = -CL_de, because cz = -CL and both in-tree files store it that way.",
+            "//    file at all.  Which slots, if any, the `cz = -CL` identity still negates"
+            " is derived:",
+            *identity_lines(run),
             "//    The source planform runs x AFT-positive (XW = 2.2 < XCG = 2.94 < XH = 8.75"
             " ft), which is why",
             "//    tornado.jsonc needs a shift and this file does not.",
@@ -3791,11 +3992,10 @@ def cross_check_header(
             "//    header reads \"Standard axis orientation, X fwd, Z down\", with positive"
             " Cl rolling",
             "//    right, positive Cm nose up and positive Cn yaw right.  So NO axis mapping is",
-            "//    applied in this file -- the only negations are the three slots the schema"
-            " stores in the",
-            "//    wind-axis lift convention, cz[1] = -CL_alpha, czq[0] = -CL_q and"
-            " cz[5] = -CL_de, because",
-            "//    cz = -CL and both in-tree files store it that way.  CLp is NOT negated"
+            "//    applied in this file.  Which slots, if any, the `cz = -CL` identity still"
+            " negates is derived:",
+            *identity_lines(run),
+            "//    CLp is NOT negated"
             " (its .st value is",
             f"//    already negative, {float(run.raw['st_alpha_rows']['CLp'][run.raw['alpha_index']]):.6f}),"
             " and Cn_p IS, because AVL reports",
@@ -3816,7 +4016,7 @@ def cross_check_header(
         ]
     else:
         item1 = [
-            "//    Solver: flow5, via aid.flow5_io.write_flow5_deck / run_flow5_native and",
+            "//    Solver: flow5, via aid.flow5_io.write_flow5_deck / run_flow5(ac, mesh) and",
             f"//    aid.flow5_controls.flow5_controls, from the sibling package imported from"
             f" {run.provenance['aid_src']},",
             "//    a path relative to this repository's root so the bytes do not depend on which",
@@ -3918,12 +4118,13 @@ def cross_check_header(
             "//    plane/dynamics.py uses: its CL is up-positive (CLa > 0), so the body-z force",
             "//    coefficient is its negative, and its Cm is nose-up positive.  So NO axis"
             " mapping and NO",
-            "//    moment shift is applied; the only negation is cz[1] = -CL_alpha and"
-            " cz[5] = -CL_de, the",
-            "//    two slots the schema stores in the wind-axis lift convention because"
-            " cz = -CL and",
-            "//    both in-tree files store it that way.  Its Cma ="
-            f" {float(run.raw['Cma']):.6f} is already negative, the",
+            "//    moment shift is applied.  Which slots that leaves negated is DERIVED from",
+            "//    provenance.mapping rather than asserted -- this item used to claim",
+            "//    `cz[1] = -CL_alpha`, which was true while cz[1] came from CLa and stopped",
+            "//    being true when the source became the body-axis CZa, which needs no",
+            "//    negation at all:",
+            *identity_lines(run),
+            f"//    Its Cma = {float(run.raw['Cma']):.6f} is already negative, the",
             "//    invariant sign, so it is written through unnegated.",
             "//    Every sign is decided mechanically by aero_convert.units.normalise_sign"
             " against SIGN_INVARIANTS.",
@@ -4125,13 +4326,23 @@ def _gap_lines(run: CrossCheckRun) -> list[str]:
         lines.append("//      (none: this solver filled every slot in the schema)")
     flipped = sorted(run.provenance["flipped"])
     if flipped:
+        # This used to be appended with no lead-in, so it read as a FOURTH absent slot
+        # inside the "N SLOTS ARE GENUINELY ABSENT" list -- and an absent slot and a
+        # flipped slot are different states entirely.  It now opens its own labelled
+        # paragraph, and names the count so it cannot disagree with the slot table.
+        lines.append("")
         lines.append(
-            "//      the slots whose sign the invariant table reversed, so the solver's own"
-            " sign sits on"
+            f"//    SEPARATELY, {len(flipped)} SLOT(S) ARE FILLED BUT FLIPPED -- these are NOT"
+            " absent:"
         )
         lines.append(
-            "//      the other side of zero: " + ", ".join(flipped)
-            + ".  Every one is in the slot table above with state `flipped`."
+            "//    they carry a real solver value whose sign the invariant table reversed, so"
+        )
+        lines.append(
+            "//    the solver's own sign sits on the other side of zero: " + ", ".join(flipped)
+        )
+        lines.append(
+            "//    Every one is in the slot table above with state `flipped`."
         )
     return lines
 

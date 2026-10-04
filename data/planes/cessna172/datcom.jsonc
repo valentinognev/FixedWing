@@ -64,7 +64,7 @@
 //          -0.798610.  The DATCOM Section 7 formulae are therefore
 //          recomputed in this converter with the factor applied by hand, and the
 //          uncorrected numbers are kept in provenance.handbook_cross_check.
-//      (2) aid/lateral.py:571 ends its tail lift-slope formula with `vt_a * pi/180`,
+//      (2) aid/lateral.py:570 ends its tail lift-slope formula with `vt_a * pi/180`,
 //          which is the wrong conversion in the wrong direction.  The formula's
 //          `k` comes from aid/lateral.py:565, which reads HT['a0'] -- NOT
 //          VT.a0, which appears nowhere in the sibling tree -- and
@@ -119,9 +119,13 @@
 //    DATCOM, plane/dynamics.py and every in-tree reference file share ONE axis
 //    convention: x forward, y right, z DOWN, positive Cm nose up, positive Cl
 //    roll right, positive Cn yaw right.  So there is no frame mapping in this
-//    file at all: the only negations are the three slots the schema stores in
-//    the wind-axis lift convention, cz[1] = -CL_alpha, czq[0] = -CL_q and
-//    cz[5] = -CL_de, because cz = -CL and both in-tree files store it that way.
+//    file at all.  Which slots, if any, the `cz = -CL` identity still negates is derived:
+//    3 negations survive, and none is a frame conversion.  Each is a SIGN-CONVENTION identity that the schema
+//    itself requires -- `cz = -CL` for the lift slots, its body +z axis pointing down, and
+//    `cx = -CD` for the drag slot -- not a change of axis.  Listed from provenance.mapping:
+//      cz[1] from DATCOM for006 CLA at alpha = 4 deg = 0.100300 per degree -> -5.746767 per radian
+//      cz[0] from DATCOM for006 CL at alpha = 0 deg = 0.131000 -> -0.131000 per radian
+//      cx[0] from aid.drag.aircraft_cd0 (via aid.handbook_pass) = 0.017269 -> -0.017269 per radian
 //    The source planform runs x AFT-positive (XW = 2.2 < XCG = 2.94 < XH = 8.75 ft), which is why
 //    tornado.jsonc needs a shift and this file does not.
 //    cm0 (Cm0) carries NO invariant -- the two in-tree reference files disagree on it and its
@@ -152,8 +156,11 @@
 //      cnda[0]   cn_da   ZEROED AND DECLARED -- no value exists: aid/handbook_controls.py has no aileron yaw column at all, and aid/lateral.py:616's Clda/Cnda = 0.1 is a hardcoded placeholder, not a computation; using it would put a fabricated number in a coefficient array
 //      cxq[0]    cd_q    ZEROED AND DECLARED -- no value exists: DATCOM's Section 7 formulae carry no axial rate derivative at all and aid/longitudinal_dynamic.py hardcodes cxq = 0.0, which records the absence of a formula rather than a computed value
 //      cy[1]     cy_da   ZEROED AND DECLARED -- no value exists: aid/handbook_controls.py has no aileron side force column at all, and aid/lateral.py:616's Clda/Cnda = 0.1 is a hardcoded placeholder, not a computation; using it would put a fabricated number in a coefficient array
-//      the slots whose sign the invariant table reversed, so the solver's own sign sits on
-//      the other side of zero: cl_da, cl_de, cn_beta, cy_p.  Every one is in the slot table above with state `flipped`.
+
+//    SEPARATELY, 4 SLOT(S) ARE FILLED BUT FLIPPED -- these are NOT absent:
+//    they carry a real solver value whose sign the invariant table reversed, so
+//    the solver's own sign sits on the other side of zero: cl_da, cl_de, cn_beta, cy_p
+//    Every one is in the slot table above with state `flipped`.
 //    Every other slot is real output.  CD_alpha is not representable in this
 //    schema (cx has no CD*alpha term) and is 0.0 and declared.
 //
@@ -581,7 +588,7 @@
         "tornado_key": "aid.lateral.lateral_static.Clb",
         "solver_value": -0.003090622882802272,
         "mapped_value": -0.06896624615490778,
-        "conversion": "AID's value with its own vertical-tail term re-evaluated using the tail's lift slope x 57.29577951308232.  aid/lateral.py:571 divides that PER RADIAN slope by pi/180, so AID's Clb = -0.00309062 has a tail part 57.3x too small (AID's Clb = -0.003091 against the sibling's own AVL gold Clb = -0.065868, and against AVL's alpha = 4 deg row -0.045756 this adapter writes -0.068966)",
+        "conversion": "AID's value with its own vertical-tail term re-evaluated using the tail's lift slope x 57.29577951308232.  aid/lateral.py:570 divides that PER RADIAN slope by pi/180, so AID's Clb = -0.00309062 has a tail part 57.3x too small (AID's Clb = -0.003091 against the sibling's own AVL gold Clb = -0.065868, and against AVL's alpha = 4 deg row -0.045756 this adapter writes -0.068966)",
         "role": "slope",
         "value": -0.06896624615490778,
         "state": "normalised",
@@ -593,7 +600,7 @@
         "tornado_key": "aid.lateral.lateral_static.CYb",
         "solver_value": -0.009326495800599612,
         "mapped_value": -0.6082444104218907,
-        "conversion": "AID's value with its own vertical-tail term re-evaluated using the tail's lift slope x 57.29577951308232.  aid/lateral.py:571 divides that PER RADIAN slope by pi/180, so AID's CYb = -0.0093265 has a tail part 57.3x too small (AID's Clb = -0.003091 against the sibling's own AVL gold Clb = -0.065868, and against AVL's alpha = 4 deg row -0.045756 this adapter writes -0.068966)",
+        "conversion": "AID's value with its own vertical-tail term re-evaluated using the tail's lift slope x 57.29577951308232.  aid/lateral.py:570 divides that PER RADIAN slope by pi/180, so AID's CYb = -0.0093265 has a tail part 57.3x too small (AID's Clb = -0.003091 against the sibling's own AVL gold Clb = -0.065868, and against AVL's alpha = 4 deg row -0.045756 this adapter writes -0.068966)",
         "role": "slope",
         "value": -0.6082444104218907,
         "state": "normalised",
@@ -605,7 +612,7 @@
         "tornado_key": "aid.lateral.lateral_static.Cnb",
         "solver_value": 0.0036194771593376467,
         "mapped_value": -0.2482385665675611,
-        "conversion": "AID's value with its own vertical-tail term re-evaluated using the tail's lift slope x 57.29577951308232.  aid/lateral.py:571 divides that PER RADIAN slope by pi/180, so AID's Cnb = 0.00361948 has a tail part 57.3x too small (AID's Clb = -0.003091 against the sibling's own AVL gold Clb = -0.065868, and against AVL's alpha = 4 deg row -0.045756 this adapter writes -0.068966)",
+        "conversion": "AID's value with its own vertical-tail term re-evaluated using the tail's lift slope x 57.29577951308232.  aid/lateral.py:570 divides that PER RADIAN slope by pi/180, so AID's Cnb = 0.00361948 has a tail part 57.3x too small (AID's Clb = -0.003091 against the sibling's own AVL gold Clb = -0.065868, and against AVL's alpha = 4 deg row -0.045756 this adapter writes -0.068966)",
         "role": "slope",
         "value": 0.2482385665675611,
         "state": "flipped",
@@ -869,10 +876,10 @@
         "vt_a_as_reported": 0.06109307940241697,
         "vt_a_per_rad": 3.500375607216114,
         "units_factor": 57.29577951308232,
-        "units_factor_meaning": "aid/lateral.py:571 divided a PER RADIAN slope by pi/180, so this multiplies it back by DEG_TO_RAD.  It is the numerical reciprocal of that division, not a per-degree-to-per-radian conversion",
+        "units_factor_meaning": "aid/lateral.py:570 divided a PER RADIAN slope by pi/180, so this multiplies it back by DEG_TO_RAD.  It is the numerical reciprocal of that division, not a per-degree-to-per-radian conversion",
         "ht_a0_per_radian_as_read": 6.839621084719293,
         "helmbold_k_per_radian": 1.0885595045086265,
-        "mechanism": "aid/lateral.py:565 reads HT['a0'] (rewritten by apply_handbook to 6.8396 PER RADIAN), so k = a0/(2*pi) = 1.0886/rad and the tail slope formula returns 3.5004 PER RADIAN -- 51 per cent of the 2-D 6.8396/rad, the reduction a fin of AR ~ 1.8 must show.  aid/lateral.py:571 then multiplies that by pi/180, which is the defect"
+        "mechanism": "aid/lateral.py:565 reads HT['a0'] (rewritten by apply_handbook to 6.8396 PER RADIAN), so k = a0/(2*pi) = 1.0886/rad and the tail slope formula returns 3.5004 PER RADIAN -- 51 per cent of the 2-D 6.8396/rad, the reduction a fin of AR ~ 1.8 must show.  aid/lateral.py:570 then multiplies that by pi/180, which is the defect"
       },
       "aid_longitudinal_dynamic_CLq": 0.10385094497457285,
       "aid_lateral_dynamic_Clp": -0.013938374449244277,

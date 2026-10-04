@@ -1,5 +1,12 @@
 # Updates
 
+## 0.91.0 - Cessna 172 aero headers: derive every count and slot name from the run
+- Header prose that stated a count, slot name, key set or capability is now computed from the run at build time. `item6` prints the whole `provenance.flipped` list and derives its sign-convention negations via `identity_negated`, instead of naming two slots and calling a 7-element list a 2-element one.
+- `provenance.cross_solver_disagreements` is derived from `SIGN_INVARIANTS`, so it covers every slot whose sign the table reverses rather than one hand-picked case.
+- `geometry.jsonc` provenance now carries `aid_src_from_env`, matching the other four files.
+- New `test_18_hand_written_counts_in_the_headers_must_match_the_data` parses the built headers and checks each stated count against the run, by two independent paths.
+- No coefficient changed: this release is prose only.
+
 ## 0.90.0 - Cessna 172 aero: Tornado re-based onto Forward-Right-Down, flow5 at 21 of 25
 - The sibling `aid` package now returns every solver in Forward-Right-Down, which is `plane/dynamics.py`'s own frame, so `aero_convert/solvers.py` reads Tornado's `cl`, `cm`, `cn`, `cy`, `cx` and all rate columns directly. Only the two `cz = -CL` identities (`cz[1]`, `cz[5]`) still negate, and neither is a frame conversion.
 - `czq[0]` now holds the body-axis `CZ_Q` rather than the wind-axis `CL_Q` (+0.249 %). Both numbers are kept in `provenance.cd_q_convention`.

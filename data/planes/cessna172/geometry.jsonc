@@ -86,22 +86,26 @@
 //    up-positive z, and it is GONE: cl, cm, cn, cy and cx are read exactly as reported,
 //    and the P and R columns need no flip because they no longer arrive inverted.
 //
-//    TWO negations survive, and neither is a frame conversion -- both are the
-//    plane/dynamics.py identity `cz = -CL`, its body +z axis pointing down:
-//      cz[1] = -CL_a = 5.148013 -> -5.148013 per radian
-//      cz[5] = -CL_de = 0.006480 per degree -> -0.371259 per radian
+//    3 negations survive, and none is a frame conversion.  Each is a SIGN-CONVENTION identity that the schema
+//    itself requires -- `cz = -CL` for the lift slots, its body +z axis pointing down, and
+//    `cx = -CD` for the drag slot -- not a change of axis.  Listed from provenance.mapping:
+//      cz[1] from CL_a = 5.148013 -> -5.148013 per radian
+//      cz[0] from CL(alpha=0) = 0.168285 -> -0.168285 per radian
+//      cz[5] from tornado_controls[elevator].CL = 0.006480 per degree -> -0.371259 per radian
+//
 //    Everything else is unnegated, including czq[0] = CZ_Q and cxq[0] = CX_Q, which are
-//    the body-axis coefficients the schema actually adds to cz and cx.  The wind-axis
-//    numbers sit in provenance.cd_q_convention for a reader comparing against the in-tree
-//    files, which store the standard-aero CL_q and CD_q in those two slots.
+//    the body-axis coefficients the schema actually adds to cz and cx.
 //
 //    Signs are normalised mechanically against aero_convert.units.SIGN_INVARIANTS and
 //    every flip is logged in provenance.flipped.  Computed from this run's own flipped
-//    list rather than written out, it is: ['cd_q', 'cn_p'].
+//    list rather than written out, it is ALL of them:
+//      ['cd_q', 'cl_dr', 'cn_da', 'cn_dr', 'cn_p', 'cy_da', 'cy_dr']
+//    of which the rate and sideslip columns -- the ones this header used to print on
+//    their own, under words that claimed they were the whole list -- are:
+//      ['cd_q', 'cn_p']
 //    Those are convention differences, not frame errors: the invariant table is the
 //    final authority, and each is a slot whose SIGN the two in-tree reference files
 //    disagree on.  cm0 carries no invariant and is recorded as not-normalised.
-//    logged in provenance.flipped; cm0 carries no invariant and is recorded as not-normalised.
 //
 //    A CAVEAT on the NINE genuinely per-phat / per-qhat / per-rhat slots:
 //    cyp[0], cyr[0], czq[0], cmq[0], clp[0], clr[0], cnp[0], cnr[0], cxq[0].
@@ -123,10 +127,16 @@
 //    value.  NOT rescaled here: the plan fixes the flight condition from the
 //    source AERO, and rescaling it is a physics decision for a later task.
 //
-//    Two slots are stored in the STANDARD-AERO convention rather than the body-axis one: czq[0]
-//    holds CL_q (so it is -CL_Q) and cxq[0] holds CD_q (so it is +CX_Q), which is what both
-//    in-tree files do.  The schema then adds them to the body-z Cz and body-x Cx, which is an
-//    inconsistency of the schema itself, inherited rather than introduced here.
+//    THE PITCH-RATE SLOT IS BODY-AXIS, not standard-aero.  Written out from
+//    provenance.cd_q_convention so it cannot drift from what shipped:
+//      shipped:      czq[0] = coeff_create['CZ_Q'] and cxq[0] = coeff_create['CX_Q'], the BODY-axis pitch-rate coefficients, read unnegated
+//      why:          the schema ADDS both slots to the body-axis cz and cx, so the body-axis coefficient is what they mean.  The sibling returns both in Forward-Right-Down, so no identity and no conversion apply
+//      czq[0] writes -9.615046 (CZ_Q, body axis)
+//      the WIND-axis CL_Q is 9.591131, i.e. -9.591131 in this slot if standard-aero
+//      convention were used -- it is NOT what this file writes.  The two differ by 0.249 per cent,
+//      because CL and CZ part company wherever the axial force is non-zero.
+//      Any sentence in this header quoting a wind-axis CL_Q number means the
+//      WIND-axis one above, not the value in the arrays.
 //
 // 7. PER-SLOT PROVENANCE (all 19 arrays; real solver output vs zeroed)
 //   cz[1]     cl_alpha   normalised     solver CL_a = 5.14801 -> mapped -5.14801 -> written -5.14801
@@ -480,6 +490,7 @@
     ],
     "source": "../USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
     "aid_src": "../USAF_DATCOM/AircraftIntuitiveDesign/Python/src",
+    "aid_src_from_env": false,
     "aid_src_commit": "c273aa6f0e7bb1672284404a540e9a1c9310dc32",
     "moment_reference": {
       "reference_point": [
@@ -641,10 +652,10 @@
         "vt_a_as_reported": 0.06109307940241697,
         "vt_a_per_rad": 3.500375607216114,
         "units_factor": 57.29577951308232,
-        "units_factor_meaning": "aid/lateral.py:571 divided a PER RADIAN slope by pi/180, so this multiplies it back by DEG_TO_RAD.  It is the numerical reciprocal of that division, not a per-degree-to-per-radian conversion",
+        "units_factor_meaning": "aid/lateral.py:570 divided a PER RADIAN slope by pi/180, so this multiplies it back by DEG_TO_RAD.  It is the numerical reciprocal of that division, not a per-degree-to-per-radian conversion",
         "ht_a0_per_radian_as_read": 6.839621084719293,
         "helmbold_k_per_radian": 1.0885595045086265,
-        "mechanism": "aid/lateral.py:565 reads HT['a0'] (rewritten by apply_handbook to 6.8396 PER RADIAN), so k = a0/(2*pi) = 1.0886/rad and the tail slope formula returns 3.5004 PER RADIAN -- 51 per cent of the 2-D 6.8396/rad, the reduction a fin of AR ~ 1.8 must show.  aid/lateral.py:571 then multiplies that by pi/180, which is the defect"
+        "mechanism": "aid/lateral.py:565 reads HT['a0'] (rewritten by apply_handbook to 6.8396 PER RADIAN), so k = a0/(2*pi) = 1.0886/rad and the tail slope formula returns 3.5004 PER RADIAN -- 51 per cent of the 2-D 6.8396/rad, the reduction a fin of AR ~ 1.8 must show.  aid/lateral.py:570 then multiplies that by pi/180, which is the defect"
       },
       "section7": {
         "cl_q": 5.95022084548837,

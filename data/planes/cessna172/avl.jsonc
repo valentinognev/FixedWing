@@ -88,9 +88,16 @@
 //    AVL PRINTS ITS OWN CONVENTION, and it is the same one plane/dynamics.py uses: its .sb
 //    header reads "Standard axis orientation, X fwd, Z down", with positive Cl rolling
 //    right, positive Cm nose up and positive Cn yaw right.  So NO axis mapping is
-//    applied in this file -- the only negations are the three slots the schema stores in the
-//    wind-axis lift convention, cz[1] = -CL_alpha, czq[0] = -CL_q and cz[5] = -CL_de, because
-//    cz = -CL and both in-tree files store it that way.  CLp is NOT negated (its .st value is
+//    applied in this file.  Which slots, if any, the `cz = -CL` identity still negates is derived:
+//    5 negations survive, and none is a frame conversion.  Each is a SIGN-CONVENTION identity that the schema
+//    itself requires -- `cz = -CL` for the lift slots, its body +z axis pointing down, and
+//    `cx = -CD` for the drag slot -- not a change of axis.  Listed from provenance.mapping:
+//      cz[1] from AVL .st CLA at alpha = 4 deg = 5.007369 -> -5.007369 per radian
+//      cz[0] from AVL .st CLtot at alpha = 0 deg = 0.168880 -> -0.168880 per radian
+//      cx[0] from AVL .st CDtot - CDind at alpha = 0 deg = 0.017003 -> -0.017003 per radian
+//      czq[0] from AVL .st CLq at alpha = 4 deg = 9.094834 -> -9.094834 per radian
+//      cz[5] from aid.avl_controls[elevator].CL = 0.006592 per degree -> -0.377694 per radian
+//    CLp is NOT negated (its .st value is
 //    already negative, 0.008518), and Cn_p IS, because AVL reports
 //    +0.007108 against the invariant cnp[0] < 0.
 //    Every sign is decided mechanically by aero_convert.units.normalise_sign against SIGN_INVARIANTS;
@@ -122,8 +129,11 @@
 //    CD_alpha is not representable in this schema (cx has no CD*alpha term) and is 0.0 and
 //    declared.
 //      (none: this solver filled every slot in the schema)
-//      the slots whose sign the invariant table reversed, so the solver's own sign sits on
-//      the other side of zero: cd_q, cl_dr, cn_da, cn_dr, cn_p, cy_da, cy_dr.  Every one is in the slot table above with state `flipped`.
+
+//    SEPARATELY, 7 SLOT(S) ARE FILLED BUT FLIPPED -- these are NOT absent:
+//    they carry a real solver value whose sign the invariant table reversed, so
+//    the solver's own sign sits on the other side of zero: cd_q, cl_dr, cn_da, cn_dr, cn_p, cy_da, cy_dr
+//    Every one is in the slot table above with state `flipped`.
 //
 // 7. PER-SLOT PROVENANCE (all 19 arrays; real solver output vs zeroed)
 //   cz[1]     cl_alpha   normalised     solver AVL .st CLA at alpha = 4 deg = 5.00737 -> mapped -5.00737 -> written -5.00737

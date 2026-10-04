@@ -2,7 +2,7 @@
 // data/planes/cessna172/flow5.jsonc for the Cessna 172 source analysis, generated -- do not hand-edit.
 //
 // 1. SOLVER, MESH, FLIGHT CONDITION
-//    Solver: flow5, via aid.flow5_io.write_flow5_deck / run_flow5_native and
+//    Solver: flow5, via aid.flow5_io.write_flow5_deck / run_flow5(ac, mesh) and
 //    aid.flow5_controls.flow5_controls, from the sibling package imported from ../USAF_DATCOM/AircraftIntuitiveDesign/Python/src,
 //    a path relative to this repository's root so the bytes do not depend on which
 //    mount point the repo is reached through; see provenance.aid_src.
@@ -107,9 +107,16 @@
 //    flow5 reports about its `cog_m` in the SAME x-forward, y-right, z-DOWN frame
 //    plane/dynamics.py uses: its CL is up-positive (CLa > 0), so the body-z force
 //    coefficient is its negative, and its Cm is nose-up positive.  So NO axis mapping and NO
-//    moment shift is applied; the only negation is cz[1] = -CL_alpha and cz[5] = -CL_de, the
-//    two slots the schema stores in the wind-axis lift convention because cz = -CL and
-//    both in-tree files store it that way.  Its Cma = -1.573326 is already negative, the
+//    moment shift is applied.  Which slots that leaves negated is DERIVED from
+//    provenance.mapping rather than asserted -- this item used to claim
+//    `cz[1] = -CL_alpha`, which was true while cz[1] came from CLa and stopped
+//    being true when the source became the body-axis CZa, which needs no
+//    negation at all:
+//    1 negation survives, and none is a frame conversion.  Each is a SIGN-CONVENTION identity that the schema
+//    itself requires -- `cz = -CL` for the lift slots, its body +z axis pointing down, and
+//    `cx = -CD` for the drag slot -- not a change of axis.  Listed from provenance.mapping:
+//      cz[5] from aid.flow5_controls[elevator].CL = 0.010631 per degree -> -0.609126 per radian
+//    Its Cma = -1.573326 is already negative, the
 //    invariant sign, so it is written through unnegated.
 //    Every sign is decided mechanically by aero_convert.units.normalise_sign against SIGN_INVARIANTS.
 //    cm0 (Cm0) carries NO invariant -- the two in-tree reference files disagree on it and its
@@ -145,8 +152,11 @@
 //      cxq[0]    cd_q    ZEROED AND DECLARED -- no value exists: pitch-rate derivative of the axial force: flow5's library DOES compute CXq / CZq / Cmq, but FLOW5/run/flow5_run.cpp's stab_derivative_fields() does not forward them, so they never reach the JSON.  No q-derivative of any kind is available
 //      cy[1]     cy_da   ZEROED AND DECLARED -- no value exists: aileron side force: aid/flow5_controls' _KEEP table asks the aileron for Cl and Cn only, and does not ask for CY at all, so no aileron side-force coefficient is computed
 //      czq[0]    cl_q    ZEROED AND DECLARED -- no value exists: pitch-rate derivative of roll: flow5's library DOES compute CXq / CZq / Cmq, but FLOW5/run/flow5_run.cpp's stab_derivative_fields() does not forward them, so they never reach the JSON.  No q-derivative of any kind is available
-//      the slots whose sign the invariant table reversed, so the solver's own sign sits on
-//      the other side of zero: cl_da, cl_dr, cn_dr, cn_p.  Every one is in the slot table above with state `flipped`.
+
+//    SEPARATELY, 4 SLOT(S) ARE FILLED BUT FLIPPED -- these are NOT absent:
+//    they carry a real solver value whose sign the invariant table reversed, so
+//    the solver's own sign sits on the other side of zero: cl_da, cl_dr, cn_dr, cn_p
+//    Every one is in the slot table above with state `flipped`.
 //    This is flow5's real capability, measured, not a shortfall of this adapter:
 //    its runner emits 26 keys over the alpha sweep (CD, CDind, CDvis, CL, CLa, CXa, CY, CYb, CYp, CYr, CZa, Cl, Clb, Clp, Clr, Cm, Cma, Cn, Cnb, Cnp, Cnr, Cx, Cz, XNP, alpha, beta),
 //    and of those only CL, CD, Cm, CLa and Cma are longitudinal coefficients the
@@ -958,8 +968,11 @@
       "cd_de": "flow5 DOES produce an elevator drag derivative -- aid.flow5_controls keeps ('CL', 'CD', 'Cm') for the elevator -- but this schema has no cd_de slot in any of the 19 arrays, so it maps to nothing.  It is NOT carried in this file; see provenance.raw_output_location for where the build put it"
     },
     "cross_solver_disagreements": {
-      "cn_p": "flow5's Cnp is POSITIVE (+0.0403) where this table wants cnp[0] < 0, and Tornado, DATCOM and AVL all report it negative.  The sign is established -- roll and yaw damping have one sign and data/planes/linear/morelli.json is the named authority -- so normalise_sign flips it mechanically and provenance.flipped records it.  It is recorded here as a CROSS-SOLVER DISAGREEMENT rather than routine normalisation, because three solvers agree and one does not",
-      "cz_5": "flow5's elevator CL is positive per degree where this table wants cz[5] < 0, which is the same `cz = -CL` identity that gives cz[1] its sign and is applied to every solver equally; the flip recorded in provenance.flipped is that identity plus the table"
+      "cl_da": "cl_da: this solver's own aid.flow5_controls[aileron].Cl is +0.005592, where morelli.json wants cl_da negative (SIGN_INVARIANTS['cl_da'] = -1).  The sign is established -- roll, pitch and yaw damping each have one sign, and data/planes/linear/morelli.json is the named authority -- so normalise_sign flips it mechanically and provenance.flipped records it.  Recorded here as a CROSS-SOLVER DISAGREEMENT rather than routine normalisation, because the other solvers sit on the invariant side of zero",
+      "cl_dr": "cl_dr: this solver's own aid.flow5_controls[rudder].Cl is -0.000557, where morelli.json wants cl_dr positive (SIGN_INVARIANTS['cl_dr'] = +1).  The sign is established -- roll, pitch and yaw damping each have one sign, and data/planes/linear/morelli.json is the named authority -- so normalise_sign flips it mechanically and provenance.flipped records it.  Recorded here as a CROSS-SOLVER DISAGREEMENT rather than routine normalisation, because the other solvers sit on the invariant side of zero",
+      "cn_dr": "cn_dr: this solver's own aid.flow5_controls[rudder].Cn is +0.002757, where morelli.json wants cn_dr negative (SIGN_INVARIANTS['cn_dr'] = -1).  The sign is established -- roll, pitch and yaw damping each have one sign, and data/planes/linear/morelli.json is the named authority -- so normalise_sign flips it mechanically and provenance.flipped records it.  Recorded here as a CROSS-SOLVER DISAGREEMENT rather than routine normalisation, because the other solvers sit on the invariant side of zero",
+      "cn_p": "cn_p: this solver's own flow5 Cnp (StabDerivative, already stability-axis) is +0.040302, where morelli.json wants cn_p negative (SIGN_INVARIANTS['cn_p'] = -1).  The sign is established -- roll, pitch and yaw damping each have one sign, and data/planes/linear/morelli.json is the named authority -- so normalise_sign flips it mechanically and provenance.flipped records it.  Recorded here as a CROSS-SOLVER DISAGREEMENT rather than routine normalisation, because the other solvers sit on the invariant side of zero",
+      "_not_a_disagreement": "For the record, cd0, cl0, cl_alpha, cl_de are NOT in this list: the sign-convention identities (`cz = -CL`, `cx = -CD`) already put them on the invariant side, so normalise_sign leaves them alone and provenance.flipped does not name them.  An earlier version of this block listed cz[5] here anyway and described a flip that was never recorded."
     },
     "invariant_band_note": "cm[1] = -1.573326/rad is 4.9 % BELOW the plan's pitched-moment slope band of -1.5 ... -0.3 /rad, which that band was estimated from (tornado.jsonc ships -1.1927).  The sign and the static margin are both correct and the band is the outlier here, not the coefficient; it is recorded rather than forced, and Task 5's suite is where magnitudes are asserted",
     "raw_output_location": "geometry.jsonc, under raw_cross_checks.flow5"

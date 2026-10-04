@@ -22,14 +22,26 @@ rather than assumed, so each test states the solver's real capability:
   of a formula rather than a computed zero.
 * AVL produces all 25, because its ``.sb`` carries aileron and rudder
   deflection columns.
-* flow5's runner emits only ``CL``, ``CD`` and ``Cm`` against alpha
-  (``FLOW5/run/flow5_run.cpp`` reads ``polar.alpha_deg`` and nothing else, and
-  calls ``setComputeDerivatives(false)``), so it has no sideslip, no rate and
-  no lateral-control derivative at all: 7 of 25.  That is the fail-closed
-  answer, not a gap to be papered over.
+* flow5 produces 21 of 25, read off the 26 keys ``aid.flow5_io.run_flow5``
+  returns at mesh ``("10", "10")``: the six longitudinal polar channels, the
+  twelve ``StabDerivatives``, ``CLa``/``Cma``, a ``CDvis``/``CDind`` split, the
+  body ``Cx``/``Cz``/``Cl``/``Cn`` point channels and the alpha/beta
+  schedules.  So every sideslip and every roll/yaw-rate derivative is real,
+  and all five aileron/rudder coefficients are real.  The four it cannot fill
+  are absent because its *runner* declines to forward them: ``flow5_run.cpp``'s
+  ``stab_derivative_fields()`` omits ``CXq``/``CZq``/``Cmq`` (so ``cl_q``,
+  ``cm_q``, ``cd_q``) and ``aid.flow5_controls`` never asks the aileron for
+  ``CY`` (so ``cy_da``).  They are ``None`` and declared, never zeros -- that
+  is the fail-closed answer, not a gap to be papered over.
+
+The counts in this paragraph are checked against the runs by
+``CrossCheckAdapterTest.test_18_hand_written_counts_match_the_data``, because
+that is the whole defect class this file was rewritten for: a sentence about a
+computed quantity goes stale the moment the computation changes.
 """
 from __future__ import annotations
 
+import json
 import math
 import unittest
 from pathlib import Path
@@ -159,27 +171,21 @@ class TornadoAdapterTest(unittest.TestCase):
 
     @classmethod
     def avl_run(cls) -> object:
-        """AVL, used only as the natively-F-R-D yardstick in ``test_14``.
+        """AVL, the natively-F-R-D yardstick ``test_14`` checks Tornado against.
 
         ``aid/axes.py``'s AVL entry is ``{}``, so AVL's coefficients need no
         conversion at all and are already in ``plane/dynamics.py``'s frame.  That
         makes them the one honest reference against which Tornado's frame claim can
-        be checked without appealing to our own invariant table.
+        be checked without appealing to our own invariant table -- and ``test_14``
+        compares ``provenance.mapping`` PRE-``normalise_sign`` values against it, not
+        the shipped arrays, because on the shipped arrays the comparison is
+        ``table == table`` and cannot fail.
         """
         if getattr(cls, "_avl", None) is None:
             from aero_convert.solvers import avl_run as _avl_run
 
             cls._avl = _avl_run()
         return cls._avl
-
-    def avl_coefficients(self) -> dict[str, object]:
-        run = self.avl_run()
-        coefficients, _missing = to_morelli(run.derivatives)
-        return {**coefficients, "st_alpha_rows": run.raw.get("st_alpha_rows", {})}
-
-    def avl_alpha_index(self) -> int:
-        """Which ``.st`` alpha row AVL's rate derivatives come from."""
-        return int(self.avl_run().raw["alpha_index"])
 
     def test_1_required_slots_are_present(self) -> None:
         """Test 1: none of the 19 named slots is ``None``."""
@@ -532,22 +538,28 @@ class TornadoAdapterTest(unittest.TestCase):
                     msg=f"shift(-{cn_key}) reproduced the shipped {field}; the negation is back",
                 )
 
-        # Cross-solver sign agreement, compared like-for-like: shipped to shipped.
-        # Not shipped to AVL's raw ``.st`` row, because AVL's own ``Cnp`` crosses zero
-        # across its alpha sweep (+0.0707 at -4 deg, +0.0071 at +4 deg, -0.0598 at
-        # +12 deg) and AVL therefore table-flips ``cn_p`` too.
-        avl = to_morelli(self.avl_run().derivatives)[0]
+        # Cross-solver sign agreement -- on the PRE-table values, which is the only
+        # version of this comparison that can fail.
+        #
+        # The obvious version, shipped-versus-shipped, is ``table == table``:
+        # ``normalise_sign`` has already forced both numbers onto the invariant side of
+        # zero, so the assertion can only trip on an exact zero or a missing invariant
+        # row.  Its failure message used to claim a FRAME error, which it cannot detect.
+        # ``provenance.mapping[*]["mapped_value"]`` is the value BEFORE the table runs, so
+        # two solvers in one shared frame genuinely have to agree there.
+        avl_pre = {e["field"]: e for e in self.avl_run().provenance["mapping"]}
+        ours_pre = {e["field"]: e for e in self.solver_run.provenance["mapping"]}
         for field in (*unshifted, *shifted):
-            with self.subTest(field=field, leg="sign agrees with AVL"):
-                array, position = SLOT_OF[field]
-                ours = float(shipped[array][position])
-                theirs = float(avl[array][position])
+            with self.subTest(field=field, leg="pre-table sign agrees with AVL"):
+                ours = float(ours_pre[field]["mapped_value"])
+                theirs = float(avl_pre[field]["mapped_value"])
                 self.assertNotEqual(ours, 0.0)
                 self.assertNotEqual(theirs, 0.0)
                 self.assertEqual(
                     ours > 0.0, theirs > 0.0,
-                    f"{field}: Tornado {ours:+.6g} vs AVL {theirs:+.6g} disagree in sign, "
-                    "so one of them is not in the shared F-R-D frame",
+                    f"{field}: PRE-normalise_sign Tornado {ours:+.6g} vs AVL "
+                    f"{theirs:+.6g} disagree in sign.  These are the values before the "
+                    "invariant table, so this IS a frame statement",
                 )
 
     def test_15_dropping_the_shift_moves_exactly_the_seven_shifted_slots(self) -> None:
@@ -1130,24 +1142,43 @@ class CrossCheckAdapterTest(unittest.TestCase):
             "set shrinks, a control slot has become frame-sensitive and needs its own guard",
         )
 
-        # (3) The genuine cross-solver check, on the invariant table rather than frames.
+        # (3) WHY the table being the final authority matters here, stated as a measured
+        # fact rather than as a cross-solver check that cannot fail.  The obvious
+        # comparison -- ``derivatives.<field>`` against ``coefficients("avl")`` -- is
+        # ``table == table`` and can only trip on an exact zero; an earlier version of this
+        # test called it "a genuine cross-solver consistency check", which is true and
+        # also nearly content-free.  So this asserts the opposite of agreement: the solvers
+        # really do disagree in sign BEFORE the table runs, on control derivatives, which is
+        # why ``normalise_sign`` -- not a cross-solver vote -- is what settles the sign.
+        pre = {
+            model: {e["field"]: e["mapped_value"]
+                    for e in self.runs[model].provenance["mapping"]}
+            for model in ("flow5", "datcom", "avl")
+        }
+        disagreements = {}
         for field in ("cl_da", "cl_de", "cm_de", "cl_dr", "cy_dr", "cn_dr",
                       "cy_da", "cn_da"):
-            array, index = slot_of(field)
-            avl_value = float(self.coefficients("avl")[array][index])
-            self.assertNotEqual(avl_value, 0.0)
+            avl_value = pre["avl"].get(field)
+            if avl_value is None:
+                continue
             for model in ("flow5", "datcom"):
-                value = getattr(self.runs[model].derivatives, field)
-                if value is None:
-                    continue  # DATCOM has no cn_da/cy_da; declared absent by test_4.
-                with self.subTest(model=model, field=field, check="table vs AVL"):
-                    self.assertNotEqual(float(value), 0.0)
-                    self.assertEqual(
-                        float(value) > 0.0, avl_value > 0.0,
-                        f"{model} {field}={float(value):+.6g} vs AVL "
-                        f"{avl_value:+.6g}: the invariant table and AVL disagree, which "
-                        "is a table question for Task 5, not a frame question",
-                    )
+                value = pre[model].get(field)
+                if value is None or value == 0.0 or avl_value == 0.0:
+                    continue
+                if (value > 0.0) != (avl_value > 0.0):
+                    disagreements.setdefault(field, []).append(model)
+        self.assertTrue(
+            disagreements,
+            "the solvers are expected to disagree in sign before normalise_sign runs on "
+            "the control derivatives.  If they no longer do, the table is doing less work "
+            "than the headers say and item 6 needs rewriting",
+        )
+        for field, models in disagreements.items():
+            with self.subTest(field=field, note="pre-table sign disagreement, table settles it"):
+                self.assertTrue(models)
+                for model in models:
+                    with self.subTest(model=model):
+                        self.assertNotEqual(pre[model][field], 0.0)
 
     def test_17_every_written_file_records_the_sibling_commit_it_was_built_from(self) -> None:
         """Part 7: ``aid_src_commit`` in all five files, checked against real git.
@@ -1168,8 +1199,7 @@ class CrossCheckAdapterTest(unittest.TestCase):
         import tempfile
         from pathlib import Path as _Path
 
-        from aero_convert.solvers import aid_src, geometry_block, write_model
-        from aero_convert.solvers import write_all, tornado_run
+        from aero_convert.solvers import aid_src, write_model, write_all
 
         sibling = aid_src()
         head = subprocess.run(
@@ -1206,6 +1236,162 @@ class CrossCheckAdapterTest(unittest.TestCase):
                         f"{name} does not record the sibling commit it was built from; "
                         "an upstream move would then be a mystery instead of a one-line diff",
                     )
+
+    def test_18_hand_written_counts_in_the_headers_must_match_the_data(self) -> None:
+        """The durable guard for this defect class: prose that rots when the data moves.
+
+        Three rounds running, the same finding kept arriving -- a header sentence
+        asserting a count, a slot name, a key set or a capability, true when written and
+        false after the computation changed.  From this round alone: item 6 printed a
+        2-element flipped list while ``provenance.flipped`` held seven; it claimed
+        ``czq[0]`` held ``CL_q`` in the same file that shipped ``CZ_Q``; it said "TWO
+        negations survive" while the same file's item 5 admitted a third; the module
+        docstring called a 0.249 % move "nothing measurable"; and this test module's own
+        docstring still described flow5's retired 7-of-25 runner.
+
+        The generator fix was to derive those numbers.  This test is what stops the next
+        one rotting: it PARSES the rendered header back out of the freshly built files and
+        checks each claim against the run's own data.  It does not re-derive the prose --
+        it checks the prose against ``len()``.
+
+        Cheap on purpose.  Four mechanical claims:
+
+        1. the flipped-list literal in item 6 equals ``provenance.flipped``;
+        2. the identity-negation lines name exactly ``identity_negated(run)``;
+        3. the "N OF THE m SLOTS ARE ABSENT" count equals ``len(provenance["missing"])``
+           and ``m`` equals the real schema size;
+        4. the module docstring's coverage table equals each run's filled count.
+        """
+        import re
+        import tempfile
+        from pathlib import Path as _Path
+
+        from aero_convert import solvers
+        from aero_convert.solvers import build_all, identity_negated, tornado_run
+
+        runs = {"tornado": tornado_run(), "datcom": self.runs["datcom"],
+                "avl": self.runs["avl"], "flow5": self.runs["flow5"]}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            build_all(_Path(tmp))
+            for model, run in runs.items():
+                name = "tornado.jsonc" if model == "tornado" else f"{model}.jsonc"
+                header = "\n".join(
+                    line for line in (_Path(tmp) / name).read_text().splitlines()
+                    if line.lstrip().startswith("//")
+                )
+
+                # (1) the WHOLE flipped list, in whichever of the two formats the
+                # header uses.  Tornado's item 6 prints it as a list literal; the
+                # cross-check files print it in item 7 as a comma-separated run.
+                with self.subTest(model=model, claim="header prints ALL of provenance.flipped"):
+                    expected = list(run.provenance["flipped"])
+                    literal = re.search(
+                        r"it is ALL of them:\s*\n//\s+(\[.*?\]|\(none\))", header)
+                    inline = re.search(
+                        r"the other side of zero: ([a-z_]+(?:, [a-z_]+)*)", header)
+                    self.assertTrue(
+                        literal or inline,
+                        f"{name}: the header prints no flipped list at all",
+                    )
+                    if literal:
+                        printed_list = (
+                            [] if literal.group(1) == "(none)"
+                            else json.loads(literal.group(1).replace("'", '"'))
+                        )
+                    else:
+                        printed_list = inline.group(1).split(", ")
+                    self.assertEqual(
+                        printed_list, expected,
+                        f"{name}: the header prints {printed_list}, "
+                        f"provenance.flipped is {expected}",
+                    )
+
+                # (2) every identity-negated slot, one per line
+                with self.subTest(model=model, claim="item 6 names every identity slot"):
+                    expected = {item["slot"] for item in identity_negated(run)}
+                    named = set(re.findall(
+                        r"^//\s+(?:cz|cx)\[(\d+)\] from ", header, re.M))
+                    named = {f"cz[{i}]" for i in named} if False else named
+                    named_slots = set(re.findall(
+                        r"^//\s+([a-z]+\[\d+\]) from ", header, re.M))
+                    self.assertEqual(
+                        named_slots, expected,
+                        f"{name}: item 6 lists {sorted(named_slots)} as the "
+                        f"identity negations, provenance.mapping says {sorted(expected)}",
+                    )
+
+                # (2b) The SAME fact by a second, independent path.  Claims (1)-(2) compare
+                # the header against the generator, so a bug INSIDE the generator's
+                # `identity_negated` would move both sides together and pass -- I checked,
+                # by dropping `cl0` from the predicate, and the guard stayed green.  So
+                # recompute the negated set straight from item 7's rendered slot table,
+                # which prints solver/mapped/written per slot: a slot is identity-negated
+                # when mapped == -solver and the table did not then flip it.  Two paths to
+                # one answer, so one being wrong is now a failure.
+                with self.subTest(model=model, claim="identity set agrees with item 7"):
+                    rows = re.findall(
+                        r"^//\s+(\S+\[\d+\])\s+\S+\s+\S+\s+solver .*? = "
+                        r"(-?[\d.eE+-]+) -> mapped (-?[\d.eE+-]+) -> written (-?[\d.eE+-]+)",
+                        header, re.M,
+                    )
+                    self.assertTrue(rows, f"{name}: item 7's slot table did not parse")
+                    from_table = set()
+                    for slot, solver_v, mapped_v, written_v in rows:
+                        solver_f, mapped_f = float(solver_v), float(mapped_v)
+                        if solver_f == 0.0:
+                            continue
+                        # Either the bare identity, or the identity plus DEG_TO_RAD for a
+                        # per-degree control row -- the second form was missing at first and
+                        # silently dropped every `cz[5]` from the comparison.
+                        # Item 7 prints six significant figures, so the DEG_TO_RAD form
+                        # only matches to ~5e-5 relative.  2e-4 is comfortably inside that
+                        # and still four orders of magnitude clear of the ~57x separation
+                        # between the two candidate scalings.
+                        negated = (
+                            abs(mapped_f + solver_f) <= 2e-4 * max(1.0, abs(solver_f))
+                            or abs(mapped_f + solver_f * DEG_TO_RAD)
+                            <= 2e-4 * max(1.0, abs(solver_f * DEG_TO_RAD))
+                        )
+                        # `written == mapped` means the invariant table did NOT then flip it,
+                        # which is what separates an identity from a table flip.
+                        if negated and written_v == mapped_v:
+                            from_table.add(slot)
+                    self.assertEqual(
+                        from_table, expected,
+                        f"{name}: item 7 implies the identity-negated set is "
+                        f"{sorted(from_table)}, item 6 says {sorted(expected)}",
+                    )
+
+                # (3) the absent-slot count and the schema total
+                with self.subTest(model=model, claim="absent count matches provenance.missing"):
+                    found = re.search(r"(\d+) OF THE (\d+) SLOTS ARE ABSENT", header)
+                    if found is None:
+                        continue  # a model that fills every slot states no absent count
+                    self.assertEqual(int(found.group(1)), len(run.provenance["missing"]))
+                    self.assertEqual(
+                        int(found.group(2)), len(solvers.ALL_DERIVATIVE_FIELDS),
+                        "the 'OF THE n SLOTS' total must be the real schema size",
+                    )
+
+        # (4) the module docstring's coverage table, against the runs
+        docstring = solvers.__doc__ or ""
+        table = dict(re.findall(r"^``(\w+)\.jsonc``\s+(\d+)\s", docstring, re.M))
+        self.assertEqual(
+            set(table), set(runs),
+            "the docstring coverage table must name all four models",
+        )
+        for model, run in runs.items():
+            with self.subTest(model=model, claim="docstring coverage count"):
+                produced = [
+                    field for field in solvers.ALL_DERIVATIVE_FIELDS
+                    if getattr(run.derivatives, field) is not None
+                ]
+                self.assertEqual(
+                    int(table[model]), len(produced),
+                    f"the docstring says {table[model]} of 25 for {model}, "
+                    f"the run fills {len(produced)}",
+                )
 
     def test_16_flow5_mesh_is_pinned_because_clb_flips_sign_at_ten_by_five(self) -> None:
         """FLOW5_MESH must stay ("10","10"): flow5's Clb changes SIGN across meshes.
@@ -1274,7 +1460,7 @@ class CrossCheckAdapterTest(unittest.TestCase):
     def test_15_static_and_control_derivatives_agree_across_solvers(self) -> None:
         """A shared cross-check on the DATCOM VT lift-slope units correction.
 
-        ``aid/lateral.py:571`` multiplies the DATCOM tail lift slope by
+        ``aid/lateral.py:570`` multiplies the DATCOM tail lift slope by
         ``pi/180`` in the wrong direction, which makes every vertical-tail
         contribution 57x too small -- ``Clb`` lands at -0.0031 where the
         sibling's own AVL gold says -0.0659.  Re-applying the per-radian factor
@@ -1293,7 +1479,7 @@ class CrossCheckAdapterTest(unittest.TestCase):
         # AID's uncorrected value is 57x smaller and nowhere near AVL.
         self.assertLess(
             aid_clb / avl_clb, 0.5,
-            f"aid/lateral.py:571's uncorrected Clb ({aid_clb}) should NOT agree with AVL "
+            f"aid/lateral.py:570's uncorrected Clb ({aid_clb}) should NOT agree with AVL "
             f"({avl_clb}); if it now does, the units correction has been undone",
         )
 
