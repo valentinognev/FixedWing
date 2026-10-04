@@ -1,5 +1,13 @@
 # Updates
 
+## 0.92.0 - Cessna 172 aero regenerated against AID e0d2b99
+- Rebuilt `data/planes/cessna172/` against AircraftIntuitiveDesign `e0d2b992003fe7c81682dabcf31777f187961228` (Merge branch `feature/frd-sign-convention`). `provenance.aid_src_commit` moved from `c273aa6`.
+- No coefficient changed.
+- `flow5` `provenance.beta_flat` gained `CY`, `Cz`, and `Cx` from `aid.solver_overlay.FLOW5_BETA_FLAT`. `geometry.jsonc` `raw_cross_checks.flow5.beta_flat` matches.
+- `flow5` `cm[1]` remains `-1.57333`/rad, outside the tornado magnitude band `-1.5 … -0.3`. Raw solver `Cma` is the same number and was not flipped. `provenance.invariant_band_note` already records the band as the outlier. Not adjusted.
+- `python/tests/test_plane_cessna172_json.py` pins schema, tornado magnitudes, cross-check signs, static margin, trim, modes, cross-model agreement, declared gaps, and the `run_plane.py` smoke.
+- README names `python/aero_convert/`, the Cessna `--model` selection, and the tornado run line.
+
 ## 0.91.0 - Cessna 172 aero headers: derive every count and slot name from the run
 - Header prose that stated a count, slot name, key set or capability is now computed from the run at build time. `item6` prints the whole `provenance.flipped` list and derives its sign-convention negations via `identity_negated`, instead of naming two slots and calling a 7-element list a 2-element one.
 - `provenance.cross_solver_disagreements` is derived from `SIGN_INVARIANTS`, so it covers every slot whose sign the table reverses rather than one hand-picked case.
