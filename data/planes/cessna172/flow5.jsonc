@@ -6,7 +6,7 @@
 //    aid.flow5_controls.flow5_controls, from the sibling package imported from ../USAF_DATCOM/AircraftIntuitiveDesign/Python/src,
 //    a path relative to this repository's root so the bytes do not depend on which
 //    mount point the repo is reached through; see provenance.aid_src.
-//    Sibling commit: c273aa6f0e7bb1672284404a540e9a1c9310dc32.  It is recorded
+//    Sibling commit: e0d2b992003fe7c81682dabcf31777f187961228.  It is recorded
 //    because an upstream commit has broken this converter twice, silently both times -- a rebuild
 //    that moves it should be a one-line diff in this field and nothing else.
 //    Mesh: 10 spanwise x 10 chordwise, read by write_flow5_deck as (ny, nx).  The deck
@@ -415,7 +415,7 @@
     "source": "../USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
     "aid_src": "../USAF_DATCOM/AircraftIntuitiveDesign/Python/src",
     "aid_src_from_env": false,
-    "aid_src_commit": "c273aa6f0e7bb1672284404a540e9a1c9310dc32",
+    "aid_src_commit": "e0d2b992003fe7c81682dabcf31777f187961228",
     "flight_condition": {
       "mach": 0.03,
       "alt_ft": 0.0,
@@ -937,6 +937,7 @@
     "beta_flat": {
       "keys": [
         "CXa",
+        "CY",
         "CYb",
         "CYp",
         "CYr",
@@ -947,6 +948,8 @@
         "Cnb",
         "Cnp",
         "Cnr",
+        "Cx",
+        "Cz",
         "XNP"
       ],
       "note": "flow5's StabDerivatives are frozen at beta = 0: panelanalysis.cpp's computeStabilityDerivatives and computeAngularDerivatives both hardcode `double beta(0.0)`, while CLa and Cma are polar OLS slopes that DO follow beta.  aid's FLOW5_BETA_FLAT names the frozen set and flow5_emitted_stab_derivatives() checks it against the C++ field list, so a 13th derivative would show up as a gap rather than silently claiming to have flown a sideslip",

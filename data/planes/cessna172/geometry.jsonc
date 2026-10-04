@@ -5,7 +5,7 @@
 //    Solver: Tornado, via the sibling package aid.tornado (imported from ../USAF_DATCOM/AircraftIntuitiveDesign/Python/src,
 //    a path relative to THIS repository's root so the bytes do not depend on which
 //    mount point the repo is reached through; see provenance.aid_src.
-//    Sibling commit: c273aa6f0e7bb1672284404a540e9a1c9310dc32.  It is recorded
+//    Sibling commit: e0d2b992003fe7c81682dabcf31777f187961228.  It is recorded
 //    because an upstream commit has broken this converter twice, silently both times -- a rebuild
 //    that moves it should be a one-line diff in this field and nothing else.
 //    Mesh: 10 chordwise x 5 spanwise (the AID batch default).  NP[0],
@@ -491,7 +491,7 @@
     "source": "../USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
     "aid_src": "../USAF_DATCOM/AircraftIntuitiveDesign/Python/src",
     "aid_src_from_env": false,
-    "aid_src_commit": "c273aa6f0e7bb1672284404a540e9a1c9310dc32",
+    "aid_src_commit": "e0d2b992003fe7c81682dabcf31777f187961228",
     "moment_reference": {
       "reference_point": [
         0.0,
@@ -1355,6 +1355,7 @@
       ],
       "beta_flat": [
         "CXa",
+        "CY",
         "CYb",
         "CYp",
         "CYr",
@@ -1365,6 +1366,8 @@
         "Cnb",
         "Cnp",
         "Cnr",
+        "Cx",
+        "Cz",
         "XNP"
       ]
     }
