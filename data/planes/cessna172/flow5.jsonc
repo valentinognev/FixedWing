@@ -3,27 +3,42 @@
 //
 // 1. SOLVER, MESH, FLIGHT CONDITION
 //    Solver: flow5, via aid.flow5_io.write_flow5_deck / run_flow5_native and
-//    aid.flow5_controls.flow5_controls, from the sibling package imported from /mnt/VirtualMachine/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Python/src.
+//    aid.flow5_controls.flow5_controls, from the sibling package imported from ../USAF_DATCOM/AircraftIntuitiveDesign/Python/src,
+//    a path relative to this repository's root so the bytes do not depend on which
+//    mount point the repo is reached through; see provenance.aid_src.
+//    Sibling commit: c273aa6f0e7bb1672284404a540e9a1c9310dc32.  It is recorded
+//    because an upstream commit has broken this converter twice, silently both times -- a rebuild
+//    that moves it should be a one-line diff in this field and nothing else.
 //    Mesh: 10 spanwise x 10 chordwise, read by write_flow5_deck as (ny, nx).  The deck
 //    carries WG, HT, VT and NP[0] ("Wing 2"), so NP[0] IS in this file even though it is
 //    not in avl.jsonc (AVL keeps at most three surfaces).
-//    THE RUNNER'S OUTPUT IS THE WHOLE OF WHAT THIS FILE CAN CONTAIN, and it is
-//    six numbers.  Measured from FLOW5/run/flow5_run.cpp: the deck's only
-//    condition key read is `polar.alpha_deg`, the analysis calls
-//    `PlaneTask::setComputeDerivatives(false)`, and `polar_to_json` serialises
-//    exactly alpha, CL, CD, Cm, CLa and Cma.  There is NO sideslip sweep, NO
-//    rate sweep, and no roll, yaw or side-force column anywhere in the output.
+//    The runner emits 26 keys and this file fills 21 of the 25 slots from them:
+//      CD, CDind, CDvis, CL, CLa, CXa, CY, CYb, CYp, CYr, CZa, Cl, Clb, Clp, Clr, Cm, Cma, Cn, Cnb, Cnp, Cnr, Cx, Cz, XNP, alpha, beta
+//    The frame is settled in ONE call, aid.flow5_io.run_flow5, which is
+//    to_frd('flow5', run_flow5_native(...)).  Hand-applying the sign map would be
+//    wrong in a way that is worth stating: flow5's per-point polar channels
+//    Cx/Cz/Cl/Cn ARE in its sign map with a -1 (raw Cz tracks raw CL, i.e. it is
+//    up-positive and is NOT a body-z coefficient), while its twelve
+//    StabDerivatives take NO entry because computeStabilityDerivatives projects
+//    them onto the stability axes.  Measured: CZa = -5.256228 while CLa = +5.169735,
+//    so CZa already carries this slot's sign.  Negating the derivative scalars would
+//    invert the lift slope.
+//    aid/flow5_controls' DEFAULT runner is the RAW one, so to_frd is injected as
+//    the runner here; without it the aileron Cl and Cn arrive with the wrong sign.
 //    Evaluated at alpha = 4 deg, the middle entry of AERO.ALSCHD, as aid/tornado_io.py::_build_state picks it.
 //    Flight condition: the deck is ENTIRELY SI -- sref_m2, cref_m, bref_m, cog_m and qinf_mps -- so
 //    qinf = 10.2073 m/s is the PHYSICAL speed and there is no unit slip on this path at
 //    all, unlike the 10.2073 AID labels ft/s in tornado.jsonc and avl.jsonc.
 //    Mach 0.03, altitude 0.0 ft, rho = 1.225056 kg/m^3.  The trimmed cruise speed the model
-//    actually flies at is 23.1111 m/s, a factor 2.264 higher, so this file's CLa
+//    actually flies at is 23.1114 m/s, a factor 2.264 higher, so this file's CLa
 //    and Cma describe a slower and therefore thinner wing than the one flown.
-//    That factor is 2.26 here and 7.43 in tornado.jsonc and avl.jsonc for one
-//    reason only: flow5's deck is SI, so its 10.2073 really is 10.2073 m/s, while
-//    the other two feed 10.2073 into a FEET frame, where it means 3.1112 m/s.
-//    flow5 has no rate slots at all, so the factor bites only its static set.
+//    That factor is 2.26 here and 7.43 in tornado.jsonc and
+//    avl.jsonc for one reason only: flow5's deck is SI, so its 10.2073 really is 10.2073 m/s,
+//    while the other two feed 10.2073 into a FEET frame, where it means 3.1112 m/s.
+//    The rate factor is 1 for three of the four rate slots this file does have,
+//    because flow5's StabDerivatives are per unit of p-hat / r-hat taken at the
+//    source speed and are NOT rescaled -- the same treatment as the other three
+//    files, for the same reason, and recorded the same way.
 //
 // 2. THE SOURCE PLANFORM IS A CESSNA 172 AT ROUGHLY 1/3 LINEAR SCALE
 //    span 12 ft against a real 36.1 ft, chord 2 ft against 4.89 ft, area 24 ft^2
@@ -59,11 +74,16 @@
 //    slot is the solver's own number x 57.29577951308232.
 //    Every array in this file is per radian and every length is SI.  numpy bridge: numpy.trapezoid present; no alias bound
 //    cx[0] -- the parasite drag slot, Cd0 in a drag build-up -- = 0.017219.
-//    Source: source WG.CD0 (NOT a flow5 output).  flow5's own CD at alpha = 0 is 0.00124344 with an
-//    induced part of 0.00139059, i.e. a parasite of -0.000147143 -- NEGATIVE, because the deck
-//    sets `viscous: false` and `thin: true`, so a thin lattice run has no profile drag at all.
-//    The source file's own DATCOM-computed WG.CD0 is used instead, exactly as it
-//    already is for tornado.jsonc, so all four files agree on it.
+//    Source: the source analysis file's own DATCOM-computed WG.CD0, the same value tornado.jsonc, datcom.jsonc and avl.jsonc all use, and it is NOT a flow5 output. flow5 now SPLITS
+//    its drag and the split is the measurement that settles this slot:
+//      CD(0)    = 0.00124344
+//      CDvis(0) = 0   <- identically 0.0 on EVERY alpha
+//      CDind(0) = 0.00124344   <- identically CD on every alpha
+//    because FLOW5/run/flow5_run.cpp calls `pPlPolar->setViscous(false)`: the deck
+//    asks for no viscous model, so flow5 reports ZERO profile drag and the whole of its CD
+//    is induced.  Neither channel is informative about parasite drag, so cx[0] is not taken from
+//    either.  The source file's own DATCOM-computed WG.CD0 is used instead, exactly as it already is
+//    for tornado.jsonc, so all four files agree on it.
 //
 // 5. THE MOMENT REFERENCE SHIFT
 //    NO MOMENT SHIFT WAS APPLIED, and that is verified rather than assumed.  write_flow5_deck puts
@@ -103,9 +123,9 @@
 //      NOT rescaled, as in tornado.jsonc. This solver quotes every rate
 //      derivative per p*b/(2V), q*cbar/(2V) or r*b/(2V) at the SOURCE
 //      Mach-0.03 speed V = 10.2073 m/s, while f16/aero_morelli.py forms phat
-//      = p*b_m/(2*V) at the trimmed cruise V = 23.1111 m/s. Restoring the
+//      = p*b_m/(2*V) at the trimmed cruise V = 23.1114 m/s. Restoring the
 //      solver's physical dC/dq would mean multiplying the nine per-hat slots
-//      by V_trim/V_source = 2.26416, because czq[0]*cbar/(2*V_trim) must
+//      by V_trim/V_source = 2.26419, because czq[0]*cbar/(2*V_trim) must
 //      equal CL_q*cbar/(2*V_source); the model's rate-damping terms are that
 //      much weaker than the solver implies. Note the plan writes that factor
 //      as AS_source/V_trim, which is the INVERSE of the direction that
@@ -115,44 +135,68 @@
 //    and rudder side force per radian of CONTROL DEFLECTION, which no
 //    flight-condition speed touches.
 //
-//    EIGHTEEN OF THE TWENTY-FIVE SLOTS ARE ABSENT, and every one is declared in
-//    provenance.missing with its reason rather than guessed:
-//      produced: cd0, cl0, cl_alpha, cl_de, cm0, cm_alpha, cm_de
-//      absent:   cd_q, cl_beta, cl_da, cl_dr, cl_p, cl_q, cl_r, cm_q, cn_beta, cn_da, cn_dr, cn_p, cn_r, cy_beta, cy_da, cy_dr, cy_p, cy_r
+//    4 OF THE 25 SLOTS ARE ABSENT -- zeroed and declared
+//    in provenance.missing with a reason rather than guessed.  Both lists below are
+//    GENERATED from the run's own coverage block, so they cannot go stale against
+//    the slot table:
+//      produced (21): cd0, cl0, cl_alpha, cl_beta, cl_da, cl_de, cl_dr, cl_p, cl_r, cm0, cm_alpha, cm_de, cn_beta, cn_da, cn_dr, cn_p, cn_r, cy_beta, cy_dr, cy_p, cy_r
+//      absent   (4): cd_q, cl_q, cm_q, cy_da
+//      cmq[0]    cm_q    ZEROED AND DECLARED -- no value exists: pitch-rate derivative of Cm: flow5's library DOES compute CXq / CZq / Cmq, but FLOW5/run/flow5_run.cpp's stab_derivative_fields() does not forward them, so they never reach the JSON.  No q-derivative of any kind is available
+//      cxq[0]    cd_q    ZEROED AND DECLARED -- no value exists: pitch-rate derivative of the axial force: flow5's library DOES compute CXq / CZq / Cmq, but FLOW5/run/flow5_run.cpp's stab_derivative_fields() does not forward them, so they never reach the JSON.  No q-derivative of any kind is available
+//      cy[1]     cy_da   ZEROED AND DECLARED -- no value exists: aileron side force: aid/flow5_controls' _KEEP table asks the aileron for Cl and Cn only, and does not ask for CY at all, so no aileron side-force coefficient is computed
+//      czq[0]    cl_q    ZEROED AND DECLARED -- no value exists: pitch-rate derivative of roll: flow5's library DOES compute CXq / CZq / Cmq, but FLOW5/run/flow5_run.cpp's stab_derivative_fields() does not forward them, so they never reach the JSON.  No q-derivative of any kind is available
+//      the slots whose sign the invariant table reversed, so the solver's own sign sits on
+//      the other side of zero: cl_da, cl_dr, cn_dr, cn_p.  Every one is in the slot table above with state `flipped`.
 //    This is flow5's real capability, measured, not a shortfall of this adapter:
-//    its runner emits six numbers.  flow5 is a LONGITUDINAL cross-check on the
-//    lift slope, the pitching slope, the two intercepts, the elevator and the
-//    parasite drag -- it is not a 6-DOF data set and must not be flown as one.
+//    its runner emits 26 keys over the alpha sweep (CD, CDind, CDvis, CL, CLa, CXa, CY, CYb, CYp, CYr, CZa, Cl, Clb, Clp, Clr, Cm, Cma, Cn, Cnb, Cnp, Cnr, Cx, Cz, XNP, alpha, beta),
+//    and of those only CL, CD, Cm, CLa and Cma are longitudinal coefficients the
+//    schema has a slot for.  flow5 is a LONGITUDINAL cross-check on the lift
+//    slope, the pitching slope, the two intercepts, the elevator and the parasite
+//    drag -- it is not a 6-DOF data set and must not be flown as one.
 //    CD_alpha is not representable in this schema (cx has no CD*alpha term) and is 0.0.
+//    cd_de is not a FIELD at all: flow5 does produce an elevator drag derivative, but this
+//    schema has no slot for it in any of the 19 arrays, so it maps to nothing.  It is NOT
+//    carried in this file; the note at the end of item 7 says where the build put it.
+//    One magnitude sits outside the plan's band and is RECORDED rather than forced: cm[1] = -1.573326
+//    /rad is 4.9 % below the plan's -1.5 ... -0.3 pitched-moment-slope band, which that band was
+//    estimated from (tornado.jsonc ships -1.1927).  The sign and the static margin are both
+//    correct and the band is the outlier here, not the coefficient.  Task 5's
+//    invariant suite is where magnitudes are asserted, so this excursion is
+//    declared here rather than forced into the band.
 //
 // 7. PER-SLOT PROVENANCE (all 19 arrays; real solver output vs zeroed)
-//   cz[1]     cl_alpha   normalised     solver flow5 polar CLa (OLS over its own alpha rows, per radian) = 5.16974 -> mapped -5.16974 -> written -5.16974
-//   cm[1]     cm_alpha   normalised     solver flow5 polar Cma (OLS over its own alpha rows, per radian) = -1.57333 -> mapped -1.57333 -> written -1.57333
-//   cz[0]     cl0        normalised     solver flow5 polar CL at alpha = 0 deg = 0.131536 -> mapped -0.131536 -> written -0.131536
-//   cm[0]     cm0        not-normalised solver flow5 polar Cm at alpha = 0 deg = 0.000273421 -> mapped 0.000273421 -> written 0.000273421
+//   cz[1]     cl_alpha   normalised     solver flow5 CZa (StabDerivative, already stability-axis) = -5.25623 -> mapped -5.25623 -> written -5.25623
+//   cm[1]     cm_alpha   normalised     solver flow5 Cma = -1.57333 -> mapped -1.57333 -> written -1.57333
+//   cz[0]     cl0        normalised     solver flow5 Cz at alpha = 0 deg = -0.131536 -> mapped -0.131536 -> written -0.131536
+//   cm[0]     cm0        not-normalised solver flow5 Cm at alpha = 0 deg = 0.000273421 -> mapped 0.000273421 -> written 0.000273421
 //   cx[0]     cd0        normalised     NOT solver output -- cd0 <- source WG.CD0 (NOT a flow5 output) -> mapped -0.017219 -> written -0.017219
+//   cl[0]     cl_beta    normalised     solver flow5 Clb (StabDerivative, already stability-axis) = -0.0530087 -> mapped -0.0530087 -> written -0.0530087
+//   cy[0]     cy_beta    normalised     solver flow5 CYb (StabDerivative, already stability-axis) = -0.410706 -> mapped -0.410706 -> written -0.410706
+//   cn[0]     cn_beta    normalised     solver flow5 Cnb (StabDerivative, already stability-axis) = 0.168534 -> mapped 0.168534 -> written 0.168534
+//   cyp[0]    cy_p       normalised     solver flow5 CYp (StabDerivative, already stability-axis) = -0.207291 -> mapped -0.207291 -> written -0.207291
+//   cyr[0]    cy_r       normalised     solver flow5 CYr (StabDerivative, already stability-axis) = 0.410264 -> mapped 0.410264 -> written 0.410264
+//   clp[0]    cl_p       normalised     solver flow5 Clp (StabDerivative, already stability-axis) = -0.53849 -> mapped -0.53849 -> written -0.53849
+//   clr[0]    cl_r       normalised     solver flow5 Clr (StabDerivative, already stability-axis) = 0.0267396 -> mapped 0.0267396 -> written 0.0267396
+//   cnp[0]    cn_p       flipped        solver flow5 Cnp (StabDerivative, already stability-axis) = 0.0403024 -> mapped 0.0403024 -> written -0.0403024
+//   cnr[0]    cn_r       normalised     solver flow5 Cnr (StabDerivative, already stability-axis) = -0.206016 -> mapped -0.206016 -> written -0.206016
+//   clda[0]   cl_da      flipped        solver aid.flow5_controls[aileron].Cl = 0.00559177 -> mapped 0.320385 -> written -0.320385
+//   cnda[0]   cn_da      normalised     solver aid.flow5_controls[aileron].Cn = -0.000603929 -> mapped -0.0346026 -> written -0.0346026
 //   cz[5]     cl_de      normalised     solver aid.flow5_controls[elevator].CL = 0.0106313 -> mapped -0.609126 -> written -0.609126
 //   cm[2]     cm_de      normalised     solver aid.flow5_controls[elevator].Cm = -0.0320606 -> mapped -1.83694 -> written -1.83694
-//   cl[0]     cl_beta    missing        ABSENT -- flow5 polar / aid.flow5_controls (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
-//   cy[0]     cy_beta    missing        ABSENT -- flow5 polar / aid.flow5_controls (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
-//   cn[0]     cn_beta    missing        ABSENT -- flow5 polar / aid.flow5_controls (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
+//   cldr[0]   cl_dr      flipped        solver aid.flow5_controls[rudder].Cl = -0.000557344 -> mapped -0.0319334 -> written 0.0319334
+//   cy[2]     cy_dr      normalised     solver aid.flow5_controls[rudder].CY = 0.00508355 -> mapped 0.291266 -> written 0.291266
+//   cndr[0]   cn_dr      flipped        solver aid.flow5_controls[rudder].Cn = 0.00275685 -> mapped 0.157956 -> written -0.157956
 //   czq[0]    cl_q       missing        ABSENT -- flow5 polar / aid.flow5_controls (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
 //   cmq[0]    cm_q       missing        ABSENT -- flow5 polar / aid.flow5_controls (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
-//   cyp[0]    cy_p       missing        ABSENT -- flow5 polar / aid.flow5_controls (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
-//   cyr[0]    cy_r       missing        ABSENT -- flow5 polar / aid.flow5_controls (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
-//   clp[0]    cl_p       missing        ABSENT -- flow5 polar / aid.flow5_controls (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
-//   clr[0]    cl_r       missing        ABSENT -- flow5 polar / aid.flow5_controls (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
-//   cnp[0]    cn_p       missing        ABSENT -- flow5 polar / aid.flow5_controls (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
-//   cnr[0]    cn_r       missing        ABSENT -- flow5 polar / aid.flow5_controls (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
 //   cxq[0]    cd_q       missing        ABSENT -- flow5 polar / aid.flow5_controls (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
-//   clda[0]   cl_da      missing        ABSENT -- flow5 polar / aid.flow5_controls (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
 //   cy[1]     cy_da      missing        ABSENT -- flow5 polar / aid.flow5_controls (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
-//   cnda[0]   cn_da      missing        ABSENT -- flow5 polar / aid.flow5_controls (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
-//   cldr[0]   cl_dr      missing        ABSENT -- flow5 polar / aid.flow5_controls (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
-//   cy[2]     cy_dr      missing        ABSENT -- flow5 polar / aid.flow5_controls (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
-//   cndr[0]   cn_dr      missing        ABSENT -- flow5 polar / aid.flow5_controls (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
 //   every slot in plane.groups.nonlinear_index is exactly 0.0; CD_alpha is not
 //   representable in this schema (cx has no CD*alpha term) and is zeroed and declared
+//    THE REST OF THIS SOLVER'S RAW, UNCONVERTED OUTPUT IS IN geometry.jsonc, under raw_cross_checks.flow5
+//    -- the Fortran's own for006 table and AID's pre-correction handbook rows for
+//    DATCOM, the per-alpha .st rows for AVL, the deck and the polar for flow5.
+//    A model file's provenance.mapping carries only the one raw number behind each
+//    slot, so that block is what makes the rest re-derivable without re-running.
 //
 // 8. HOW TO REGENERATE THIS FILE
 //    cd python && python3 scripts/build_cessna172_aero.py
@@ -173,16 +217,16 @@
     "izz": 87.38079411548159,
     "ixz": 0.0,
     "he": 0.0,
-    "t_max_n": 1730.9459916141534,
+    "t_max_n": 1730.9242762246229,
     "tau_s": 1.0,
-    "v_ref_mps": 28.88885271766924
+    "v_ref_mps": 28.889195973885275
   },
   "initial": {
-    "vt_mps": 23.111082174135394,
-    "alpha_rad": 0.03622481479983981,
+    "vt_mps": 23.11135677910822,
+    "alpha_rad": 0.03556304374644851,
     "beta_rad": 0.0,
     "phi_rad": 0.0,
-    "theta_rad": 0.03622481479983981,
+    "theta_rad": 0.03556304374644851,
     "psi_rad": 0.0,
     "p_rad_s": 0.0,
     "q_rad_s": 0.0,
@@ -190,11 +234,11 @@
     "pn_m": 0.0,
     "pe_m": 0.0,
     "alt_m": 100.0,
-    "power": 0.1923522564158014
+    "power": 0.19099800991303445
   },
   "controls": {
-    "throttle": 0.1923522564158014,
-    "elevator_rad": -0.03087747532418507,
+    "throttle": 0.19099800991303445,
+    "elevator_rad": -0.030310672666398874,
     "aileron_rad": 0.0,
     "rudder_rad": 0.0
   },
@@ -216,25 +260,25 @@
       0.0
     ],
     "cy": [
+      -0.41070604616019024,
       0.0,
-      0.0,
-      0.0
+      0.2912660354441824
     ],
     "cyp": [
-      0.0,
+      -0.20729059212631326,
       0.0,
       0.0,
       0.0
     ],
     "cyr": [
-      0.0,
+      0.4102636045841654,
       0.0,
       0.0,
       0.0
     ],
     "cz": [
       -0.13153556577751602,
-      -5.169735416175694,
+      -5.2562276473919,
       0.0,
       0.0,
       0.0,
@@ -248,7 +292,7 @@
       0.0
     ],
     "cl": [
-      0.0,
+      -0.053008695558360824,
       0.0,
       0.0,
       0.0,
@@ -258,20 +302,20 @@
       0.0
     ],
     "clp": [
-      0.0,
+      -0.5384902543943747,
       0.0,
       0.0,
       0.0
     ],
     "clr": [
-      0.0,
+      0.02673956552942886,
       0.0,
       0.0,
       0.0,
       0.0
     ],
     "clda": [
-      0.0,
+      -0.3203847568149587,
       0.0,
       0.0,
       0.0,
@@ -280,7 +324,7 @@
       0.0
     ],
     "cldr": [
-      0.0,
+      0.03193344162865741,
       0.0,
       0.0,
       0.0,
@@ -307,7 +351,7 @@
       0.0
     ],
     "cn": [
-      0.0,
+      0.1685338139166461,
       0.0,
       0.0,
       0.0,
@@ -316,19 +360,19 @@
       0.0
     ],
     "cnp": [
-      0.0,
+      -0.04030244694167647,
       0.0,
       0.0,
       0.0,
       0.0
     ],
     "cnr": [
-      0.0,
+      -0.20601583863404388,
       0.0,
       0.0
     ],
     "cnda": [
-      0.0,
+      -0.034602570142019486,
       0.0,
       0.0,
       0.0,
@@ -340,7 +384,7 @@
       0.0
     ],
     "cndr": [
-      0.0,
+      -0.15795562792465156,
       0.0,
       0.0,
       0.0,
@@ -350,13 +394,18 @@
   },
   "provenance": {
     "solver": "flow5",
-    "solver_version": "flow5 via aid.flow5_io.write_flow5_deck / run_flow5_native and aid.flow5_controls.flow5_controls",
-    "mesh": [
-      "10",
-      "10"
-    ],
-    "source": "/mnt/VirtualMachine/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
-    "aid_src": "/mnt/VirtualMachine/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Python/src",
+    "solver_version": "flow5 via aid.flow5_io.run_flow5 (to_frd) and aid.flow5_controls.flow5_controls with to_frd injected as the runner",
+    "mesh": {
+      "value": [
+        "10",
+        "10"
+      ],
+      "why_pinned": "flow5's Clb is MESH-DEPENDENT and the sibling records it: -0.0736 at ('5','3'), +0.0018 at ('10','5'), -0.0530 at ('10','10'), -0.0593 at ('20','10'), against AVL's -0.059 and Tornado's -0.054.  At ('10','5') it goes POSITIVE and |Clb| is ~30x too small, which reads as a sign flip rather than a convergence failure.  ('10','10') is the sibling's own default and the only one of the four that agrees with AVL, so it is pinned by test_16_flow5_mesh_is_pinned because the hazard is a silent sign inversion, not a precision loss"
+    },
+    "source": "../USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
+    "aid_src": "../USAF_DATCOM/AircraftIntuitiveDesign/Python/src",
+    "aid_src_from_env": false,
+    "aid_src_commit": "c273aa6f0e7bb1672284404a540e9a1c9310dc32",
     "flight_condition": {
       "mach": 0.03,
       "alt_ft": 0.0,
@@ -366,12 +415,12 @@
       "betha_rad": 0.0,
       "rho_kg_m3": 1.2250558830000002,
       "v_source_mps": 10.20734548754484,
-      "v_trim_mps": 23.111082174135394,
-      "speed_ratio_v_trim_over_v_source": 2.2641618432858857,
+      "v_trim_mps": 23.11135677910822,
+      "speed_ratio_v_trim_over_v_source": 2.2641887459681906,
       "a_sound_ftps": 1116.288876590643,
       "v_true_mps": 10.20734548754484,
       "speed_unit_note": "AID's drivers hand over `mach * atm['a'] / 3.28084` = 10.207345 and label it ft/s (Tornado, AVL), which is why v_source_mps is that number x 0.3048.  The same expression in SI -- which is what flow5's deck actually used -- is the physical speed 10.2073 m/s at a sound speed of 1116.2889 ft/s.  Both readings are recorded and neither is reconciled away",
-      "rate_derivative_note": "NOT rescaled, as in tornado.jsonc.  This solver quotes every rate derivative per p*b/(2V), q*cbar/(2V) or r*b/(2V) at the SOURCE Mach-0.03 speed V = 10.2073 m/s, while f16/aero_morelli.py forms phat = p*b_m/(2*V) at the trimmed cruise V = 23.1111 m/s.  Restoring the solver's physical dC/dq would mean multiplying the nine per-hat slots by V_trim/V_source = 2.26416, because czq[0]*cbar/(2*V_trim) must equal CL_q*cbar/(2*V_source); the model's rate-damping terms are that much weaker than the solver implies.  Note the plan writes that factor as AS_source/V_trim, which is the INVERSE of the direction that restores dC/dq; nothing is rescaled here either way, so the question is only ever a note."
+      "rate_derivative_note": "NOT rescaled, as in tornado.jsonc.  This solver quotes every rate derivative per p*b/(2V), q*cbar/(2V) or r*b/(2V) at the SOURCE Mach-0.03 speed V = 10.2073 m/s, while f16/aero_morelli.py forms phat = p*b_m/(2*V) at the trimmed cruise V = 23.1114 m/s.  Restoring the solver's physical dC/dq would mean multiplying the nine per-hat slots by V_trim/V_source = 2.26419, because czq[0]*cbar/(2*V_trim) must equal CL_q*cbar/(2*V_source); the model's rate-damping terms are that much weaker than the solver implies.  Note the plan writes that factor as AS_source/V_trim, which is the INVERSE of the direction that restores dC/dq; nothing is rescaled here either way, so the question is only ever a note."
     },
     "moment_reference": {
       "solver_station_ft": 2.939999905920003,
@@ -380,10 +429,10 @@
       "dx_m": 0.0,
       "dy_m": 0.0,
       "dz_m": 0.0,
-      "note": "flow5 reports every moment about AERO.XCG, read back from its own input and checked against the source; dx = dy = dz = 0, so no moment shift is applied"
+      "note": "flow5 reports every moment about AERO.XCG, and the station was read back out of the input the SOLVER was given rather than out of the same in-memory value, then compared with the source; dx = dy = dz = 0, so no moment shift is applied"
     },
     "sign_convention": {
-      "solver_axes": "flow5: its deck's cog_m is x forward, y right, z DOWN and its polar is up-positive lift with nose-up-positive Cm -- identical to plane/dynamics.py, so this adapter applies no axis mapping and no moment shift",
+      "solver_axes": "flow5 after to_frd: its per-point polar channels Cx/Cz/Cl/Cn take a -1 and its twelve StabDerivatives take none, because they are already stability-axis -- so the adapter contains no frame mapping at all and no moment shift",
       "dynamics_axes": "x forward, y right, z down (plane/dynamics.py)",
       "cz": "cz = -CL (body z down); this is the load-bearing identity and it is why cz[1] is negative for a stable aircraft",
       "authority": "data/planes/linear/morelli.json is the sign-convention authority where it disagrees with data/planes/f16/morelli.json: it wins cm[1] (-0.8 against +0.0466) and cnp[0] (-0.03 against +0.0268) and loses cnda[0] (+0.01 against -0.0335).  Its cz[1] = -4.5 AGREES with cz = -CL and is correct, not a defect",
@@ -430,51 +479,51 @@
     "trim": {
       "target_cruise_cl": 0.3,
       "cl0": 0.13153556577751602,
-      "cl_alpha": 5.169735416175694,
-      "alpha_trim_rad": 0.03622481479983981,
-      "theta_trim_rad": 0.03622481479983981,
-      "elevator_rad": -0.03087747532418507,
-      "cruise_mps": 23.111082174135394,
-      "qbar_pa": 324.0519293558285,
+      "cl_alpha": 5.2562276473919,
+      "alpha_trim_rad": 0.03556304374644851,
+      "theta_trim_rad": 0.03556304374644851,
+      "elevator_rad": -0.030310672666398874,
+      "cruise_mps": 23.11135677910822,
+      "qbar_pa": 324.05963014623296,
       "rho_kg_m3": 1.2134001482844625,
       "alt_m": 100.0,
       "weight_n": 711.7078170999999,
       "cd0": -0.017218979436844056,
-      "cm_at_trim": 4.843482143135347e-10,
-      "power": 0.1923522564158014,
-      "v_ref_mps": 28.88885271766924,
+      "cm_at_trim": 4.754999380351954e-10,
+      "power": 0.19099800991303445,
+      "v_ref_mps": 28.889195973885275,
       "thrust_scale": 0.19999999999999996,
-      "t_max_n": 1730.9459916141534,
-      "thrust_at_trim_n": 66.59027344417383,
+      "t_max_n": 1730.9242762246229,
+      "thrust_at_trim_n": 66.12061841381248,
       "cl_at_trim": 0.3,
-      "residual_max_abs": 3.3048558542089957e-16,
+      "residual_max_abs": 3.0750491472249926e-16,
       "fallback": false
     },
     "zeroed_slots": {
       "nonlinear": "every slot in plane.groups.nonlinear_index is exactly 0.0",
       "CD_alpha": "cx has no CD*alpha term in this schema, so CD_alpha is 0.0 and is declared rather than approximated",
-      "flap": "the Morelli schema has no flap slot; the handbook/AVL/flow5 flap rows are kept in geometry.jsonc as raw output and mapped to nothing"
+      "flap": "the Morelli schema has no flap slot, so the handbook's flap row maps to nothing.  It is NOT carried in this file; provenance.raw_output_location says where the build put it, and provenance.control_rows holds it"
     },
     "mapping": [
       {
         "field": "cl_alpha",
         "slot": "cz[1]",
-        "tornado_key": "flow5 polar CLa (OLS over its own alpha rows, per radian)",
-        "solver_value": 5.169735416175694,
-        "mapped_value": -5.169735416175694,
-        "conversion": "cz = -CL_alpha; flow5's deck is SI and its OLS slope is per radian, so the only conversion is the cz = -CL identity",
+        "tornado_key": "flow5 CZa (StabDerivative, already stability-axis)",
+        "solver_value": -5.2562276473919,
+        "mapped_value": -5.2562276473919,
+        "conversion": "read directly: CZa is one of the twelve StabDerivatives, which take NO sign-map entry because computeStabilityDerivatives projects onto the stability axes, and it is already the body-z alpha slope with z DOWN.  Measured corroboration: CLa = +5.169735 while CZa = -5.256228, so CZa already carries this slot's sign and no negation applies",
         "role": "slope",
-        "value": -5.169735416175694,
+        "value": -5.2562276473919,
         "state": "normalised",
         "solver_input": "solver"
       },
       {
         "field": "cm_alpha",
         "slot": "cm[1]",
-        "tornado_key": "flow5 polar Cma (OLS over its own alpha rows, per radian)",
+        "tornado_key": "flow5 Cma",
         "solver_value": -1.5733256708165417,
         "mapped_value": -1.5733256708165417,
-        "conversion": "nose-up positive already; the deck puts cog_m at the CG so no shift applies",
+        "conversion": "read directly; nose-up positive already, and cog_m puts the polar at the CG so no moment shift applies",
         "role": "slope",
         "value": -1.5733256708165417,
         "state": "normalised",
@@ -483,10 +532,10 @@
       {
         "field": "cl0",
         "slot": "cz[0]",
-        "tornado_key": "flow5 polar CL at alpha = 0 deg",
-        "solver_value": 0.13153556577751602,
+        "tornado_key": "flow5 Cz at alpha = 0 deg",
+        "solver_value": -0.13153556577751602,
         "mapped_value": -0.13153556577751602,
-        "conversion": "cz = -CL; the deck's own alpha = 0 row IS the intercept",
+        "conversion": "read directly: Cz is the BODY-z normal force and is the per-point polar channel flow5's sign map DOES flip with -1, so after to_frd it is already the body-z coefficient this slot means.  The alpha = 0 row IS the intercept",
         "role": "intercept",
         "value": -0.13153556577751602,
         "state": "normalised",
@@ -495,10 +544,10 @@
       {
         "field": "cm0",
         "slot": "cm[0]",
-        "tornado_key": "flow5 polar Cm at alpha = 0 deg",
+        "tornado_key": "flow5 Cm at alpha = 0 deg",
         "solver_value": 0.0002734207791160791,
         "mapped_value": 0.0002734207791160791,
-        "conversion": "the deck's own alpha = 0 row; Cm0's sign is tail rigging, not a derivable convention, so it is never sign-normalised",
+        "conversion": "the alpha = 0 row; Cm0's sign is tail rigging, not a derivable convention, so it is never sign-normalised",
         "role": "intercept",
         "value": 0.0002734207791160791,
         "state": "not-normalised",
@@ -510,11 +559,143 @@
         "tornado_key": "cd0 <- source WG.CD0 (NOT a flow5 output)",
         "solver_value": null,
         "mapped_value": -0.017218979436844056,
-        "conversion": "parasite drag as a positive magnitude, then cx = -(parasite); flow5's own CD(0) - K*CL(0)^2 is negative because the deck sets viscous = false and thin = true, so a lattice run has no profile drag to take",
+        "conversion": "parasite drag as a positive magnitude, then cx = -(parasite); NOT a flow5 output",
         "role": "intercept",
         "value": -0.017218979436844056,
         "state": "normalised",
         "solver_input": "source file"
+      },
+      {
+        "field": "cl_beta",
+        "slot": "cl[0]",
+        "tornado_key": "flow5 Clb (StabDerivative, already stability-axis)",
+        "solver_value": -0.053008695558360824,
+        "mapped_value": -0.053008695558360824,
+        "conversion": "read directly: roll due to sideslip; Clb is one of the twelve StabDerivatives and takes NO sign-map entry",
+        "role": "slope",
+        "value": -0.053008695558360824,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cy_beta",
+        "slot": "cy[0]",
+        "tornado_key": "flow5 CYb (StabDerivative, already stability-axis)",
+        "solver_value": -0.41070604616019024,
+        "mapped_value": -0.41070604616019024,
+        "conversion": "read directly: side force due to sideslip; CYb is one of the twelve StabDerivatives and takes NO sign-map entry",
+        "role": "slope",
+        "value": -0.41070604616019024,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cn_beta",
+        "slot": "cn[0]",
+        "tornado_key": "flow5 Cnb (StabDerivative, already stability-axis)",
+        "solver_value": 0.1685338139166461,
+        "mapped_value": 0.1685338139166461,
+        "conversion": "read directly: yaw due to sideslip; Cnb is one of the twelve StabDerivatives and takes NO sign-map entry",
+        "role": "slope",
+        "value": 0.1685338139166461,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cy_p",
+        "slot": "cyp[0]",
+        "tornado_key": "flow5 CYp (StabDerivative, already stability-axis)",
+        "solver_value": -0.20729059212631326,
+        "mapped_value": -0.20729059212631326,
+        "conversion": "read directly: side force, roll rate; CYp is one of the twelve StabDerivatives and takes NO sign-map entry",
+        "role": "slope",
+        "value": -0.20729059212631326,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cy_r",
+        "slot": "cyr[0]",
+        "tornado_key": "flow5 CYr (StabDerivative, already stability-axis)",
+        "solver_value": 0.4102636045841654,
+        "mapped_value": 0.4102636045841654,
+        "conversion": "read directly: side force, yaw rate; CYr is one of the twelve StabDerivatives and takes NO sign-map entry",
+        "role": "slope",
+        "value": 0.4102636045841654,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cl_p",
+        "slot": "clp[0]",
+        "tornado_key": "flow5 Clp (StabDerivative, already stability-axis)",
+        "solver_value": -0.5384902543943747,
+        "mapped_value": -0.5384902543943747,
+        "conversion": "read directly: roll due to roll rate; Clp is one of the twelve StabDerivatives and takes NO sign-map entry",
+        "role": "slope",
+        "value": -0.5384902543943747,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cl_r",
+        "slot": "clr[0]",
+        "tornado_key": "flow5 Clr (StabDerivative, already stability-axis)",
+        "solver_value": 0.02673956552942886,
+        "mapped_value": 0.02673956552942886,
+        "conversion": "read directly: roll due to yaw rate; Clr is one of the twelve StabDerivatives and takes NO sign-map entry",
+        "role": "slope",
+        "value": 0.02673956552942886,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cn_p",
+        "slot": "cnp[0]",
+        "tornado_key": "flow5 Cnp (StabDerivative, already stability-axis)",
+        "solver_value": 0.04030244694167647,
+        "mapped_value": 0.04030244694167647,
+        "conversion": "read directly: yaw due to roll rate; Cnp is one of the twelve StabDerivatives and takes NO sign-map entry",
+        "role": "slope",
+        "value": -0.04030244694167647,
+        "state": "flipped",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cn_r",
+        "slot": "cnr[0]",
+        "tornado_key": "flow5 Cnr (StabDerivative, already stability-axis)",
+        "solver_value": -0.20601583863404388,
+        "mapped_value": -0.20601583863404388,
+        "conversion": "read directly: yaw due to yaw rate; Cnr is one of the twelve StabDerivatives and takes NO sign-map entry",
+        "role": "slope",
+        "value": -0.20601583863404388,
+        "state": "normalised",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cl_da",
+        "slot": "clda[0]",
+        "tornado_key": "aid.flow5_controls[aileron].Cl",
+        "solver_value": 0.00559176887962237,
+        "mapped_value": 0.3203847568149587,
+        "conversion": "per degree x 57.29577951308232: aid.flow5_controls central-differences two decks at delta +- aid.control_deriv.H_DEG = +-1 DEGREE.  The row is already Forward-Right-Down because to_frd is injected as the runner, so it is read directly; no identity and no frame conversion apply",
+        "role": "slope",
+        "value": -0.3203847568149587,
+        "state": "flipped",
+        "solver_input": "solver"
+      },
+      {
+        "field": "cn_da",
+        "slot": "cnda[0]",
+        "tornado_key": "aid.flow5_controls[aileron].Cn",
+        "solver_value": -0.0006039287786305219,
+        "mapped_value": -0.034602570142019486,
+        "conversion": "per degree x 57.29577951308232: aid.flow5_controls central-differences two decks at delta +- aid.control_deriv.H_DEG = +-1 DEGREE.  The row is already Forward-Right-Down because to_frd is injected as the runner, so it is read directly; no identity and no frame conversion apply",
+        "role": "slope",
+        "value": -0.034602570142019486,
+        "state": "normalised",
+        "solver_input": "solver"
       },
       {
         "field": "cl_de",
@@ -522,7 +703,7 @@
         "tornado_key": "aid.flow5_controls[elevator].CL",
         "solver_value": 0.010631254688146213,
         "mapped_value": -0.6091260245594482,
-        "conversion": "per degree x 57.29577951308232: aid.flow5_controls central-differences two decks at delta +- aid.control_deriv.H_DEG = +-1 DEG",
+        "conversion": "per degree x 57.29577951308232: aid.flow5_controls central-differences two decks at delta +- aid.control_deriv.H_DEG = +-1 DEGREE.  The row is already Forward-Right-Down because to_frd is injected as the runner, so it is read directly.  The one negation that survives is the plane/dynamics.py identity cz = -CL, the same one that gives cz[1] its sign",
         "role": "slope",
         "value": -0.6091260245594482,
         "state": "normalised",
@@ -534,47 +715,47 @@
         "tornado_key": "aid.flow5_controls[elevator].Cm",
         "solver_value": -0.0320606179413116,
         "mapped_value": -1.8369380966185607,
-        "conversion": "per degree x 57.29577951308232: aid.flow5_controls central-differences two decks at delta +- aid.control_deriv.H_DEG = +-1 DEG",
+        "conversion": "per degree x 57.29577951308232: aid.flow5_controls central-differences two decks at delta +- aid.control_deriv.H_DEG = +-1 DEGREE.  The row is already Forward-Right-Down because to_frd is injected as the runner, so it is read directly; no identity and no frame conversion apply",
         "role": "slope",
         "value": -1.8369380966185607,
         "state": "normalised",
         "solver_input": "solver"
       },
       {
-        "field": "cl_beta",
-        "slot": "cl[0]",
-        "tornado_key": "flow5 polar / aid.flow5_controls",
-        "solver_value": null,
-        "mapped_value": null,
-        "conversion": "not produced by this solver",
-        "role": "absent",
-        "value": null,
-        "state": "missing",
-        "solver_input": "none"
+        "field": "cl_dr",
+        "slot": "cldr[0]",
+        "tornado_key": "aid.flow5_controls[rudder].Cl",
+        "solver_value": -0.0005573436979134923,
+        "mapped_value": -0.03193344162865741,
+        "conversion": "per degree x 57.29577951308232: aid.flow5_controls central-differences two decks at delta +- aid.control_deriv.H_DEG = +-1 DEGREE.  The row is already Forward-Right-Down because to_frd is injected as the runner, so it is read directly; no identity and no frame conversion apply",
+        "role": "slope",
+        "value": 0.03193344162865741,
+        "state": "flipped",
+        "solver_input": "solver"
       },
       {
-        "field": "cy_beta",
-        "slot": "cy[0]",
-        "tornado_key": "flow5 polar / aid.flow5_controls",
-        "solver_value": null,
-        "mapped_value": null,
-        "conversion": "not produced by this solver",
-        "role": "absent",
-        "value": null,
-        "state": "missing",
-        "solver_input": "none"
+        "field": "cy_dr",
+        "slot": "cy[2]",
+        "tornado_key": "aid.flow5_controls[rudder].CY",
+        "solver_value": 0.005083551317731487,
+        "mapped_value": 0.2912660354441824,
+        "conversion": "per degree x 57.29577951308232: aid.flow5_controls central-differences two decks at delta +- aid.control_deriv.H_DEG = +-1 DEGREE.  The row is already Forward-Right-Down because to_frd is injected as the runner, so it is read directly; no identity and no frame conversion apply",
+        "role": "slope",
+        "value": 0.2912660354441824,
+        "state": "normalised",
+        "solver_input": "solver"
       },
       {
-        "field": "cn_beta",
-        "slot": "cn[0]",
-        "tornado_key": "flow5 polar / aid.flow5_controls",
-        "solver_value": null,
-        "mapped_value": null,
-        "conversion": "not produced by this solver",
-        "role": "absent",
-        "value": null,
-        "state": "missing",
-        "solver_input": "none"
+        "field": "cn_dr",
+        "slot": "cndr[0]",
+        "tornado_key": "aid.flow5_controls[rudder].Cn",
+        "solver_value": 0.0027568457793402676,
+        "mapped_value": 0.15795562792465156,
+        "conversion": "per degree x 57.29577951308232: aid.flow5_controls central-differences two decks at delta +- aid.control_deriv.H_DEG = +-1 DEGREE.  The row is already Forward-Right-Down because to_frd is injected as the runner, so it is read directly; no identity and no frame conversion apply",
+        "role": "slope",
+        "value": -0.15795562792465156,
+        "state": "flipped",
+        "solver_input": "solver"
       },
       {
         "field": "cl_q",
@@ -601,78 +782,6 @@
         "solver_input": "none"
       },
       {
-        "field": "cy_p",
-        "slot": "cyp[0]",
-        "tornado_key": "flow5 polar / aid.flow5_controls",
-        "solver_value": null,
-        "mapped_value": null,
-        "conversion": "not produced by this solver",
-        "role": "absent",
-        "value": null,
-        "state": "missing",
-        "solver_input": "none"
-      },
-      {
-        "field": "cy_r",
-        "slot": "cyr[0]",
-        "tornado_key": "flow5 polar / aid.flow5_controls",
-        "solver_value": null,
-        "mapped_value": null,
-        "conversion": "not produced by this solver",
-        "role": "absent",
-        "value": null,
-        "state": "missing",
-        "solver_input": "none"
-      },
-      {
-        "field": "cl_p",
-        "slot": "clp[0]",
-        "tornado_key": "flow5 polar / aid.flow5_controls",
-        "solver_value": null,
-        "mapped_value": null,
-        "conversion": "not produced by this solver",
-        "role": "absent",
-        "value": null,
-        "state": "missing",
-        "solver_input": "none"
-      },
-      {
-        "field": "cl_r",
-        "slot": "clr[0]",
-        "tornado_key": "flow5 polar / aid.flow5_controls",
-        "solver_value": null,
-        "mapped_value": null,
-        "conversion": "not produced by this solver",
-        "role": "absent",
-        "value": null,
-        "state": "missing",
-        "solver_input": "none"
-      },
-      {
-        "field": "cn_p",
-        "slot": "cnp[0]",
-        "tornado_key": "flow5 polar / aid.flow5_controls",
-        "solver_value": null,
-        "mapped_value": null,
-        "conversion": "not produced by this solver",
-        "role": "absent",
-        "value": null,
-        "state": "missing",
-        "solver_input": "none"
-      },
-      {
-        "field": "cn_r",
-        "slot": "cnr[0]",
-        "tornado_key": "flow5 polar / aid.flow5_controls",
-        "solver_value": null,
-        "mapped_value": null,
-        "conversion": "not produced by this solver",
-        "role": "absent",
-        "value": null,
-        "state": "missing",
-        "solver_input": "none"
-      },
-      {
         "field": "cd_q",
         "slot": "cxq[0]",
         "tornado_key": "flow5 polar / aid.flow5_controls",
@@ -685,68 +794,8 @@
         "solver_input": "none"
       },
       {
-        "field": "cl_da",
-        "slot": "clda[0]",
-        "tornado_key": "flow5 polar / aid.flow5_controls",
-        "solver_value": null,
-        "mapped_value": null,
-        "conversion": "not produced by this solver",
-        "role": "absent",
-        "value": null,
-        "state": "missing",
-        "solver_input": "none"
-      },
-      {
         "field": "cy_da",
         "slot": "cy[1]",
-        "tornado_key": "flow5 polar / aid.flow5_controls",
-        "solver_value": null,
-        "mapped_value": null,
-        "conversion": "not produced by this solver",
-        "role": "absent",
-        "value": null,
-        "state": "missing",
-        "solver_input": "none"
-      },
-      {
-        "field": "cn_da",
-        "slot": "cnda[0]",
-        "tornado_key": "flow5 polar / aid.flow5_controls",
-        "solver_value": null,
-        "mapped_value": null,
-        "conversion": "not produced by this solver",
-        "role": "absent",
-        "value": null,
-        "state": "missing",
-        "solver_input": "none"
-      },
-      {
-        "field": "cl_dr",
-        "slot": "cldr[0]",
-        "tornado_key": "flow5 polar / aid.flow5_controls",
-        "solver_value": null,
-        "mapped_value": null,
-        "conversion": "not produced by this solver",
-        "role": "absent",
-        "value": null,
-        "state": "missing",
-        "solver_input": "none"
-      },
-      {
-        "field": "cy_dr",
-        "slot": "cy[2]",
-        "tornado_key": "flow5 polar / aid.flow5_controls",
-        "solver_value": null,
-        "mapped_value": null,
-        "conversion": "not produced by this solver",
-        "role": "absent",
-        "value": null,
-        "state": "missing",
-        "solver_input": "none"
-      },
-      {
-        "field": "cn_dr",
-        "slot": "cndr[0]",
         "tornado_key": "flow5 polar / aid.flow5_controls",
         "solver_value": null,
         "mapped_value": null,
@@ -757,118 +806,39 @@
         "solver_input": "none"
       }
     ],
-    "flipped": [],
+    "flipped": [
+      "cl_da",
+      "cl_dr",
+      "cn_dr",
+      "cn_p"
+    ],
     "not_normalised": [
       "cm0"
     ],
     "missing": [
       {
-        "field": "cl_beta",
-        "slot": "cl[0]",
-        "solver_key": "flow5 polar / aid.flow5_controls",
-        "reason": "roll due to sideslip: flow5's runner (FLOW5/run/flow5_run.cpp) reads only polar.alpha_deg, calls setComputeDerivatives(false) and serialises only alpha, CL, CD, Cm, CLa and Cma -- there is no roll due to sideslip anywhere in its output"
-      },
-      {
-        "field": "cy_beta",
-        "slot": "cy[0]",
-        "solver_key": "flow5 polar / aid.flow5_controls",
-        "reason": "side force due to sideslip: flow5's runner (FLOW5/run/flow5_run.cpp) reads only polar.alpha_deg, calls setComputeDerivatives(false) and serialises only alpha, CL, CD, Cm, CLa and Cma -- there is no side force due to sideslip anywhere in its output"
-      },
-      {
-        "field": "cn_beta",
-        "slot": "cn[0]",
-        "solver_key": "flow5 polar / aid.flow5_controls",
-        "reason": "yaw due to sideslip: flow5's runner (FLOW5/run/flow5_run.cpp) reads only polar.alpha_deg, calls setComputeDerivatives(false) and serialises only alpha, CL, CD, Cm, CLa and Cma -- there is no yaw due to sideslip anywhere in its output"
-      },
-      {
         "field": "cl_q",
         "slot": "czq[0]",
         "solver_key": "flow5 polar / aid.flow5_controls",
-        "reason": "roll rate: flow5's runner (FLOW5/run/flow5_run.cpp) reads only polar.alpha_deg, calls setComputeDerivatives(false) and serialises only alpha, CL, CD, Cm, CLa and Cma -- there is no roll rate anywhere in its output"
+        "reason": "pitch-rate derivative of roll: flow5's library DOES compute CXq / CZq / Cmq, but FLOW5/run/flow5_run.cpp's stab_derivative_fields() does not forward them, so they never reach the JSON.  No q-derivative of any kind is available"
       },
       {
         "field": "cm_q",
         "slot": "cmq[0]",
         "solver_key": "flow5 polar / aid.flow5_controls",
-        "reason": "pitch rate: flow5's runner (FLOW5/run/flow5_run.cpp) reads only polar.alpha_deg, calls setComputeDerivatives(false) and serialises only alpha, CL, CD, Cm, CLa and Cma -- there is no pitch rate anywhere in its output"
-      },
-      {
-        "field": "cy_p",
-        "slot": "cyp[0]",
-        "solver_key": "flow5 polar / aid.flow5_controls",
-        "reason": "side force, roll rate: flow5's runner (FLOW5/run/flow5_run.cpp) reads only polar.alpha_deg, calls setComputeDerivatives(false) and serialises only alpha, CL, CD, Cm, CLa and Cma -- there is no side force, roll rate anywhere in its output"
-      },
-      {
-        "field": "cy_r",
-        "slot": "cyr[0]",
-        "solver_key": "flow5 polar / aid.flow5_controls",
-        "reason": "side force, yaw rate: flow5's runner (FLOW5/run/flow5_run.cpp) reads only polar.alpha_deg, calls setComputeDerivatives(false) and serialises only alpha, CL, CD, Cm, CLa and Cma -- there is no side force, yaw rate anywhere in its output"
-      },
-      {
-        "field": "cl_p",
-        "slot": "clp[0]",
-        "solver_key": "flow5 polar / aid.flow5_controls",
-        "reason": "roll due to roll rate: flow5's runner (FLOW5/run/flow5_run.cpp) reads only polar.alpha_deg, calls setComputeDerivatives(false) and serialises only alpha, CL, CD, Cm, CLa and Cma -- there is no roll due to roll rate anywhere in its output"
-      },
-      {
-        "field": "cl_r",
-        "slot": "clr[0]",
-        "solver_key": "flow5 polar / aid.flow5_controls",
-        "reason": "roll due to yaw rate: flow5's runner (FLOW5/run/flow5_run.cpp) reads only polar.alpha_deg, calls setComputeDerivatives(false) and serialises only alpha, CL, CD, Cm, CLa and Cma -- there is no roll due to yaw rate anywhere in its output"
-      },
-      {
-        "field": "cn_p",
-        "slot": "cnp[0]",
-        "solver_key": "flow5 polar / aid.flow5_controls",
-        "reason": "yaw due to roll rate: flow5's runner (FLOW5/run/flow5_run.cpp) reads only polar.alpha_deg, calls setComputeDerivatives(false) and serialises only alpha, CL, CD, Cm, CLa and Cma -- there is no yaw due to roll rate anywhere in its output"
-      },
-      {
-        "field": "cn_r",
-        "slot": "cnr[0]",
-        "solver_key": "flow5 polar / aid.flow5_controls",
-        "reason": "yaw due to yaw rate: flow5's runner (FLOW5/run/flow5_run.cpp) reads only polar.alpha_deg, calls setComputeDerivatives(false) and serialises only alpha, CL, CD, Cm, CLa and Cma -- there is no yaw due to yaw rate anywhere in its output"
+        "reason": "pitch-rate derivative of Cm: flow5's library DOES compute CXq / CZq / Cmq, but FLOW5/run/flow5_run.cpp's stab_derivative_fields() does not forward them, so they never reach the JSON.  No q-derivative of any kind is available"
       },
       {
         "field": "cd_q",
         "slot": "cxq[0]",
         "solver_key": "flow5 polar / aid.flow5_controls",
-        "reason": "axial force due to pitch rate: flow5's runner (FLOW5/run/flow5_run.cpp) reads only polar.alpha_deg, calls setComputeDerivatives(false) and serialises only alpha, CL, CD, Cm, CLa and Cma -- there is no axial force due to pitch rate anywhere in its output"
-      },
-      {
-        "field": "cl_da",
-        "slot": "clda[0]",
-        "solver_key": "flow5 polar / aid.flow5_controls",
-        "reason": "aileron roll: flow5's runner (FLOW5/run/flow5_run.cpp) reads only polar.alpha_deg, calls setComputeDerivatives(false) and serialises only alpha, CL, CD, Cm, CLa and Cma -- there is no aileron roll anywhere in its output"
+        "reason": "pitch-rate derivative of the axial force: flow5's library DOES compute CXq / CZq / Cmq, but FLOW5/run/flow5_run.cpp's stab_derivative_fields() does not forward them, so they never reach the JSON.  No q-derivative of any kind is available"
       },
       {
         "field": "cy_da",
         "slot": "cy[1]",
         "solver_key": "flow5 polar / aid.flow5_controls",
-        "reason": "aileron side force: flow5's runner (FLOW5/run/flow5_run.cpp) reads only polar.alpha_deg, calls setComputeDerivatives(false) and serialises only alpha, CL, CD, Cm, CLa and Cma -- there is no aileron side force anywhere in its output"
-      },
-      {
-        "field": "cn_da",
-        "slot": "cnda[0]",
-        "solver_key": "flow5 polar / aid.flow5_controls",
-        "reason": "aileron yaw: flow5's runner (FLOW5/run/flow5_run.cpp) reads only polar.alpha_deg, calls setComputeDerivatives(false) and serialises only alpha, CL, CD, Cm, CLa and Cma -- there is no aileron yaw anywhere in its output"
-      },
-      {
-        "field": "cl_dr",
-        "slot": "cldr[0]",
-        "solver_key": "flow5 polar / aid.flow5_controls",
-        "reason": "rudder roll: flow5's runner (FLOW5/run/flow5_run.cpp) reads only polar.alpha_deg, calls setComputeDerivatives(false) and serialises only alpha, CL, CD, Cm, CLa and Cma -- there is no rudder roll anywhere in its output"
-      },
-      {
-        "field": "cy_dr",
-        "slot": "cy[2]",
-        "solver_key": "flow5 polar / aid.flow5_controls",
-        "reason": "rudder side force: flow5's runner (FLOW5/run/flow5_run.cpp) reads only polar.alpha_deg, calls setComputeDerivatives(false) and serialises only alpha, CL, CD, Cm, CLa and Cma -- there is no rudder side force anywhere in its output"
-      },
-      {
-        "field": "cn_dr",
-        "slot": "cndr[0]",
-        "solver_key": "flow5 polar / aid.flow5_controls",
-        "reason": "rudder yaw: flow5's runner (FLOW5/run/flow5_run.cpp) reads only polar.alpha_deg, calls setComputeDerivatives(false) and serialises only alpha, CL, CD, Cm, CLa and Cma -- there is no rudder yaw anywhere in its output"
+        "reason": "aileron side force: aid/flow5_controls' _KEEP table asks the aileron for Cl and Cn only, and does not ask for CY at all, so no aileron side-force coefficient is computed"
       }
     ],
     "numpy_bridge": "numpy.trapezoid present; no alias bound",
@@ -894,8 +864,8 @@
         "CD": null,
         "Cm": null,
         "CY": null,
-        "Cl": null,
-        "Cn": null
+        "Cl": 0.00559176887962237,
+        "Cn": -0.0006039287786305219
       },
       "elevator": {
         "surface": "elevator",
@@ -917,9 +887,9 @@
         "CL": null,
         "CD": null,
         "Cm": null,
-        "CY": null,
-        "Cl": null,
-        "Cn": null
+        "CY": 0.005083551317731487,
+        "Cl": -0.0005573436979134923,
+        "Cn": 0.0027568457793402676
       }
     },
     "coverage": {
@@ -927,44 +897,71 @@
         "cd0",
         "cl0",
         "cl_alpha",
-        "cl_de",
-        "cm0",
-        "cm_alpha",
-        "cm_de"
-      ],
-      "absent": [
-        "cd_q",
         "cl_beta",
         "cl_da",
+        "cl_de",
         "cl_dr",
         "cl_p",
-        "cl_q",
         "cl_r",
-        "cm_q",
+        "cm0",
+        "cm_alpha",
+        "cm_de",
         "cn_beta",
         "cn_da",
         "cn_dr",
         "cn_p",
         "cn_r",
         "cy_beta",
-        "cy_da",
         "cy_dr",
         "cy_p",
         "cy_r"
       ],
-      "why": "flow5 is a steady thin-lattice polar code whose runner emits six numbers; it is a longitudinal cross-check, not a 6-DOF data set",
-      "not_a_field": {
-        "cd_de": "flow5 DOES produce an elevator drag derivative -- aid.flow5_controls keeps ('CL', 'CD', 'Cm') for the elevator -- but this schema has no cd_de slot in any of the 19 arrays, so it maps to nothing and is recorded in geometry.jsonc as raw output instead"
-      },
-      "invariant_band_note": "cm[1] = -1.573326/rad is 4.9 % BELOW the plan's pitched-moment slope band of -1.5 ... -0.3 /rad, which that band was estimated from (tornado.jsonc ships -1.1927).  The sign and the static margin are both correct and the band is the outlier here, not the coefficient; it is recorded rather than forced"
+      "absent": [
+        "cd_q",
+        "cl_q",
+        "cm_q",
+        "cy_da"
+      ],
+      "why": "flow5 emits 26 keys: the six longitudinal polar channels, the twelve StabDerivatives, CLa/Cma, a CDvis/CDind split and XNP.  The four absent slots are the three q-derivatives the runner does not forward and the aileron side force its control helper does not ask for"
+    },
+    "beta_flat": {
+      "keys": [
+        "CXa",
+        "CYb",
+        "CYp",
+        "CYr",
+        "CZa",
+        "Clb",
+        "Clp",
+        "Clr",
+        "Cnb",
+        "Cnp",
+        "Cnr",
+        "XNP"
+      ],
+      "note": "flow5's StabDerivatives are frozen at beta = 0: panelanalysis.cpp's computeStabilityDerivatives and computeAngularDerivatives both hardcode `double beta(0.0)`, while CLa and Cma are polar OLS slopes that DO follow beta.  aid's FLOW5_BETA_FLAT names the frozen set and flow5_emitted_stab_derivatives() checks it against the C++ field list, so a 13th derivative would show up as a gap rather than silently claiming to have flown a sideslip",
+      "harmless_here": "we fly beta = 0, so no channel in this file is being read at a condition it did not fly at"
+    },
+    "drag_split": {
+      "CD_at_alpha0": 0.0012434428735832157,
+      "CDvis_at_alpha0": 0.0,
+      "CDind_at_alpha0": 0.0012434428735832157,
+      "note": "NOT informative about parasite drag: flow5_run.cpp calls setViscous(false), so CDvis is identically 0.0 on every alpha and CDind is identically CD -- the whole of flow5's drag is induced.  This is why cx[0] is NOT taken from either channel"
     },
     "cd0": {
+      "source": "the source analysis file's own DATCOM-computed WG.CD0, the same value tornado.jsonc, datcom.jsonc and avl.jsonc all use",
       "value": 0.017218979436844056,
-      "source": "source WG.CD0 (NOT a flow5 output)",
-      "flow5_CD_at_alpha0": 0.0012434428735832157,
-      "induced_part": 0.001390586164559534,
-      "flow5_parasite": -0.00014714329097631831,
-      "note": "flow5's own parasite drag is NEGATIVE (-1.5e-04): the deck sets viscous = false and thin = true, so the polar carries induced drag only.  The source file's own DATCOM-computed WG.CD0 is used instead, as it already is for tornado.jsonc, so all four files agree on it"
-    }
+      "source_WG_CD0": 0.017218979436844056,
+      "note": "cx[0] is a POSITIVE parasite-drag magnitude in Morelli's sign convention (the collector applies the cx = -CD0 identity), and it is NOT a flow5 output.  flow5's own CDvis/CDind split cannot supply it; see provenance.drag_split.  Recorded here because cross_check_header's item 4 reads provenance['cd0']['value'] and ['source'] for every model, and flow5's absence of it raised KeyError during the file write"
+    },
+    "not_a_field": {
+      "cd_de": "flow5 DOES produce an elevator drag derivative -- aid.flow5_controls keeps ('CL', 'CD', 'Cm') for the elevator -- but this schema has no cd_de slot in any of the 19 arrays, so it maps to nothing.  It is NOT carried in this file; see provenance.raw_output_location for where the build put it"
+    },
+    "cross_solver_disagreements": {
+      "cn_p": "flow5's Cnp is POSITIVE (+0.0403) where this table wants cnp[0] < 0, and Tornado, DATCOM and AVL all report it negative.  The sign is established -- roll and yaw damping have one sign and data/planes/linear/morelli.json is the named authority -- so normalise_sign flips it mechanically and provenance.flipped records it.  It is recorded here as a CROSS-SOLVER DISAGREEMENT rather than routine normalisation, because three solvers agree and one does not",
+      "cz_5": "flow5's elevator CL is positive per degree where this table wants cz[5] < 0, which is the same `cz = -CL` identity that gives cz[1] its sign and is applied to every solver equally; the flip recorded in provenance.flipped is that identity plus the table"
+    },
+    "invariant_band_note": "cm[1] = -1.573326/rad is 4.9 % BELOW the plan's pitched-moment slope band of -1.5 ... -0.3 /rad, which that band was estimated from (tornado.jsonc ships -1.1927).  The sign and the static margin are both correct and the band is the outlier here, not the coefficient; it is recorded rather than forced, and Task 5's suite is where magnitudes are asserted",
+    "raw_output_location": "geometry.jsonc, under raw_cross_checks.flow5"
   }
 }

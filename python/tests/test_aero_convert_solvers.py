@@ -75,10 +75,53 @@ CROSS_STATIC_AND_CONTROL = (
     "cl_da", "cl_de", "cm_de",
 )
 
-# flow5 can produce four of those eight.  The other four are absent because the
-# runner has no sideslip sweep and no lateral coefficients at all, and that is
-# measured from FLOW5/run/flow5_run.cpp, not assumed.
-FLOW5_ABSENT = ("cl_beta", "cy_beta", "cn_beta", "cl_da")
+# flow5's four genuinely absent slots, measured against its 26 emitted keys rather
+# than assumed: its library computes CXq/CZq/Cmq but FLOW5/run/flow5_run.cpp's
+# stab_derivative_fields() does not forward them, and aid/flow5_controls' _KEEP
+# table asks the aileron for Cl and Cn only and never for CY.
+FLOW5_ABSENT = ("cl_q", "cm_q", "cd_q", "cy_da")
+
+# The slots flow5 gained when its runner began emitting the twelve
+# StabDerivatives and the lateral control rows.  Named so that a regression which
+# silently stops reading one of them is a named failure, not just a coverage count.
+FLOW5_NEWLY_PRODUCED = (
+    "cl_beta", "cy_beta", "cn_beta", "cy_p", "cy_r", "cl_p", "cl_r",
+    "cn_p", "cn_r", "cl_da", "cn_da", "cl_dr", "cy_dr", "cn_dr",
+)
+
+# flow5's Clb against four meshes, as the sibling records it.  At ("10","5") it goes
+# POSITIVE and |Clb| is ~30x too small, which reads as a silent sign inversion
+# rather than as a convergence failure -- that is why FLOW5_MESH is pinned by a
+# test instead of left to a comment.  AVL's own Clb is -0.045756 and Tornado's
+# -0.053721, so ("10","10") is the only one of the four meshes in family.
+FLOW5_CLB_BY_MESH = {
+    ("5", "3"): -0.0736,
+    ("10", "5"): 0.0018,
+    ("10", "10"): -0.0530,
+    ("20", "10"): -0.0593,
+}
+
+def slot_of(field: str) -> tuple[str, int]:
+    """Which ``coefficients`` array and index a derivative field lands in.
+
+    Derived from ``morelli.SLOT_MAP`` -- the same table ``to_morelli`` writes
+    through -- rather than hand-maintained here.  An earlier hand-written copy in
+    this file got ``cl_beta`` wrong (it is ``cl[0]``, not ``cl[1]``) and had no
+    entry at all for the control fields, which are not array-leading: ``cl_da``
+    lives in ``clda[0]``, not ``cl[0]``.
+    """
+    from aero_convert.morelli import SLOT_MAP
+
+    for array, slots in SLOT_MAP.items():
+        for index, name in slots:
+            if name == field:
+                return array, index
+    raise KeyError(f"{field!r} is in no SLOT_MAP entry")
+
+
+# The six rate-derivative columns Tornado's test_14 checks slot by slot.
+SLOT_OF = {field: slot_of(field) for field in
+           ("cl_p", "cl_r", "cy_p", "cy_r", "cn_p", "cn_r")}
 
 # Every DerivativeSet field, so the coverage test can state it exhaustively.
 ALL_FIELDS = tuple(SIGN_INVARIANTS) + ("cm0",)
@@ -113,6 +156,30 @@ class TornadoAdapterTest(unittest.TestCase):
         coefficients, missing = to_morelli(self.solver_run.derivatives)
         self.assertEqual(missing, [], f"slots zeroed because the solver missed them: {missing}")
         return coefficients
+
+    @classmethod
+    def avl_run(cls) -> object:
+        """AVL, used only as the natively-F-R-D yardstick in ``test_14``.
+
+        ``aid/axes.py``'s AVL entry is ``{}``, so AVL's coefficients need no
+        conversion at all and are already in ``plane/dynamics.py``'s frame.  That
+        makes them the one honest reference against which Tornado's frame claim can
+        be checked without appealing to our own invariant table.
+        """
+        if getattr(cls, "_avl", None) is None:
+            from aero_convert.solvers import avl_run as _avl_run
+
+            cls._avl = _avl_run()
+        return cls._avl
+
+    def avl_coefficients(self) -> dict[str, object]:
+        run = self.avl_run()
+        coefficients, _missing = to_morelli(run.derivatives)
+        return {**coefficients, "st_alpha_rows": run.raw.get("st_alpha_rows", {})}
+
+    def avl_alpha_index(self) -> int:
+        """Which ``.st`` alpha row AVL's rate derivatives come from."""
+        return int(self.avl_run().raw["alpha_index"])
 
     def test_1_required_slots_are_present(self) -> None:
         """Test 1: none of the 19 named slots is ``None``."""
@@ -281,23 +348,32 @@ class TornadoAdapterTest(unittest.TestCase):
                 s_ref=geometry.s_ref_m2, b_ref=geometry.b_ref_m, c_ref=geometry.c_ref_m,
             )[4]
 
-        cm_from_cz = shifted(-raw["CZ_a"])
+        # The shift argument is the BODY-z force slope.  Under the sibling's
+        # Forward-Right-D boundary ``CZ_a`` already IS that body-z coefficient, so it
+        # is read directly -- the pre-F-R-D ``-raw["CZ_a"]`` here was the old frame
+        # conversion, and the new ``cz[1] = -CL_a`` slot identity does NOT apply to
+        # the shift argument.  CL_a is still the wrong number to shift with, because
+        # CL and CZ part company wherever the axial force is non-zero.
+        cm_from_cz = shifted(raw["CZ_a"])
         cm_from_cl = shifted(-raw["CL_a"])
-        self.assertNotAlmostEqual(cm_from_cz, cm_from_cl, places=3)
+        self.assertNotAlmostEqual(
+            cm_from_cz, cm_from_cl, places=3,
+            msg="CZ_a and CL_a must differ enough for this test to mean anything",
+        )
         self.assertAlmostEqual(
             self.coefficients()["cm"][1], cm_from_cz, places=12,
-            msg="cm[1] must be the shift of Cm_a with cz = -CZ_a",
+            msg="cm[1] must be the shift of Cm_a with cz = +CZ_a (already body-z)",
         )
         # and the q slope likewise
         self.assertAlmostEqual(
             self.coefficients()["cmq"][0],
             shift_moments_to_cg(
-                -raw["CZ_Q"], 0.0, 0.0, 0.0, raw["Cm_Q"], 0.0,
+                raw["CZ_Q"], 0.0, 0.0, 0.0, raw["Cm_Q"], 0.0,
                 dx=geometry.dx_m, dy=geometry.dy_m, dz=geometry.dz_m,
                 s_ref=geometry.s_ref_m2, b_ref=geometry.b_ref_m, c_ref=geometry.c_ref_m,
             )[4],
             places=12,
-            msg="cmq[0] must be the shift of Cm_Q with cz = -CZ_Q",
+            msg="cmq[0] must be the shift of Cm_Q with cz = +CZ_Q (already body-z)",
         )
 
     def test_12_mapping_separates_the_solver_value_from_the_mapped_one(self) -> None:
@@ -306,11 +382,21 @@ class TornadoAdapterTest(unittest.TestCase):
         # (field, frame sign, per-degree?) -- the static fields are already per
         # radian, so only the frame sign separates them from the solver's number;
         # the control rows are per degree and must carry DEG_TO_RAD as well.
+        #
+        # Under the sibling's Forward-Right-D boundary the frame sign is +1 for
+        # EVERY field except the two `cz = -CL` identities, and that is the whole
+        # point of the re-base.  `cl_alpha`, `cl0` and `cl_de` keep -1 because their
+        # negation is the plane/dynamics.py identity (its body +z axis points down),
+        # NOT a frame conversion.  Everything else -- `cl_q`, `cl_beta`, `cy_beta`,
+        # `cy_p`, and all six control rows -- is read straight out of coeff_create.
+        # This used to assert -1 for nine of these; the frame conversion it was
+        # checking for is now the sibling's job, in aid/axes.py.
         for field, frame_sign, per_degree in (
-            ("cl_alpha", -1.0, False), ("cl_q", -1.0, False), ("cl_beta", -1.0, False),
+            ("cl_alpha", -1.0, False), ("cl_q", 1.0, False), ("cl_beta", 1.0, False),
             ("cy_p", 1.0, False), ("cy_beta", 1.0, False),
-            ("cl_da", -1.0, True), ("cn_da", -1.0, True), ("cy_da", 1.0, True),
-            ("cl_de", -1.0, True), ("cl_dr", -1.0, True),
+            ("cl_da", 1.0, True), ("cn_da", 1.0, True), ("cy_da", 1.0, True),
+            ("cl_de", -1.0, True), ("cl_dr", 1.0, True), ("cy_dr", 1.0, True),
+            ("cn_dr", 1.0, True),
         ):
             with self.subTest(field=field):
                 entry = entries[field]
@@ -321,6 +407,23 @@ class TornadoAdapterTest(unittest.TestCase):
                     entry["mapped_value"], expected, places=12,
                     msg=f"{field}: the mapped value must be the solver value with the "
                         f"documented frame sign{' and DEG_TO_RAD' if per_degree else ''}",
+                )
+
+        # An INDEPENDENT leg, so this is not merely a restatement of the table above:
+        # for every field the adapter reads without a shift, the number provenance
+        # calls "mapped" must be the number the file actually ships, after the
+        # invariant table.  Provenance and the written array cannot drift apart, and
+        # a reinstated negation would have to be fixed in both places to pass.
+        shipped = self.coefficients()
+        for field in ("cl_q", "cl_beta", "cy_beta", "cy_p", "cl_da", "cy_da",
+                      "cn_da", "cl_de", "cl_dr", "cy_dr", "cn_dr"):
+            with self.subTest(field=field, leg="provenance agrees with the shipped array"):
+                array, index = slot_of(field)
+                self.assertAlmostEqual(
+                    shipped[array][index],
+                    normalise_sign(field, entries[field]["mapped_value"])[0],
+                    places=12,
+                    msg=f"{field}: provenance.mapped_value and the shipped slot disagree",
                 )
 
         # cd0 is the one slot whose number is not a solver output, and it says so.
@@ -340,77 +443,136 @@ class TornadoAdapterTest(unittest.TestCase):
             self.solver_run.trim["cm_at_trim"], 0.0, places=9,
         )
 
-    def test_14_pr_column_flip_changes_no_written_coefficient(self) -> None:
-        """The P/R component-sense defect is immaterial, and that is pinned here.
+    def test_14_pr_columns_are_already_frd_and_the_shift_is_what_makes_two_of_them_material(self) -> None:
+        """The old P/R component-sense "defect" is GONE -- but not uniformly, and
+        the old test's reason for calling it immaterial was wrong.
 
-        The amended plan records that Tornado's P and R columns come back
-        component-sense inverted independently of the axis mapping.  Negating
-        those six solver values -- and, with them, the force coefficients their
-        yaw shift consumes -- must leave every written coefficient untouched,
-        because normalise_sign is the final authority.  If a future change ever
-        relies on the P/R signs, this fails.
+        The previous version of this test asserted that negating Tornado's P and R
+        columns end to end changed no written coefficient, i.e. that the
+        component-sense inversion was immaterial.  ``aid/tornado/coeff.py:247`` now
+        returns ``to_frd("tornado", out)``, so those six columns arrive already
+        Forward-Right-Down -- the frame AVL is natively in (``aid/axes.py``'s AVL
+        entry is ``{}``) and the frame ``plane/dynamics.py`` flies in.
+
+        Measured, the six slots split into two groups, and the split is the whole
+        point:
+
+        * Four are UNSHIFTED and IMMATERIAL under ``normalise_sign``.  The table pins
+          their sign from the Morelli invariant, so ``normalise_sign(field, -raw)``
+          and ``normalise_sign(field, raw)`` land on the same number.  A negation
+          there really is invisible -- and for these four that is fine, because the
+          frame claim is not what establishes their sign; the invariant table is.
+        * Two are MATERIAL: ``cn_p`` and ``cn_r``.  They are not bare solver values
+          but CG-shift outputs, and ``shift_moments_to_cg`` MIXES ``CY_P``/``CY_R``
+          into ``Cn`` before ``normalise_sign`` ever runs.  So negating ``Cn_P`` or
+          ``Cn_R`` does not merely flip a sign the table can undo -- it changes the
+          shifted magnitude, and no table undoes that.  These two ARE worth getting
+          right, and the old code negated them before shifting.
+
+        So this test pins the partition itself rather than asserting a blanket
+        immateriality that is false for two of the six, and it pins the shipped value
+        of the material pair against the shift of the RAW F-R-D column.  If someone
+        reinstates a ``-1`` on ``Cn_P``/``Cn_R``, both this and ``test_15``'s shift
+        accounting move.
         """
-        from aero_convert.units import shift_moments_to_cg
-
         raw = self.solver_run.raw
         geometry = self.solver_run.geometry
         shipped = self.coefficients()
 
-        def shift(cz: float, cy: float, cm: float, cn: float) -> tuple[float, float]:
-            out = shift_moments_to_cg(
-                cz, 0.0, cy, 0.0, cm, cn,
-                dx=geometry.dx_m, dy=geometry.dy_m, dz=geometry.dz_m,
-                s_ref=geometry.s_ref_m2, b_ref=geometry.b_ref_m, c_ref=geometry.c_ref_m,
-            )
-            return out[4], out[5]
+        def shifted_cn(cy_rate: float, cn_rate: float) -> float:
+            """The CG shift's contribution to ``Cn_p``/``Cn_r`` from the yaw rates."""
+            from aero_convert.units import shift_moments_to_cg
 
-        # (a) as shipped, (b) with the P and R columns negated end to end.
-        variants = {}
-        for label, flip in (("shipped", 1.0), ("pr_flipped", -1.0)):
-            cy_p = flip * raw["CY_P"]
-            cy_r = flip * raw["CY_R"]
-            cm_alpha, _ = shift(-raw["CZ_a"], 0.0, raw["Cm_a"], 0.0)
-            cm_q, _ = shift(-raw["CZ_Q"], 0.0, raw["Cm_Q"], 0.0)
-            _, cn_beta = shift(0.0, raw["CY_b"], 0.0, -raw["Cn_b"])
-            _, cn_p = shift(0.0, cy_p, 0.0, -flip * raw["Cn_P"])
-            _, cn_r = shift(0.0, cy_r, 0.0, -flip * raw["Cn_R"])
-            variants[label] = {
-                "cl[0]": -flip * raw["Cl_b"],
-                "cy[0]": raw["CY_b"],
-                "clp[0]": -flip * raw["Cl_P"],
-                "clr[0]": -flip * raw["Cl_R"],
-                "cyp[0]": cy_p,
-                "cyr[0]": cy_r,
-                "cnp[0]": cn_p,
-                "cnr[0]": cn_r,
-                "cn[0]": cn_beta,
-                "cm[1]": cm_alpha,
-                "cmq[0]": cm_q,
-            }
-        fields = {
-            "cl[0]": "cl_beta", "cy[0]": "cy_beta", "clp[0]": "cl_p", "clr[0]": "cl_r",
-            "cyp[0]": "cy_p", "cyr[0]": "cy_r", "cnp[0]": "cn_p", "cnr[0]": "cn_r",
-            "cn[0]": "cn_beta", "cm[1]": "cm_alpha", "cmq[0]": "cm_q",
-        }
-        for slot, mapped in variants["pr_flipped"].items():
-            with self.subTest(slot=slot):
-                array, index = slot.split("[")
-                index = int(index.rstrip("]"))
-                expected = normalise_sign(fields[slot], mapped)[0]
-                self.assertAlmostEqual(expected, shipped[array][index], places=12)
+            return shift_moments_to_cg(
+                0.0, 0.0, cy_rate, 0.0, 0.0, cn_rate,
+                dx=geometry.dx_m, dy=geometry.dy_m, dz=geometry.dz_m,
+                s_ref=geometry.s_ref_m2, b_ref=geometry.b_ref_m,
+                c_ref=geometry.c_ref_m,
+            )[5]
+
+        unshifted = {"cl_p": "Cl_P", "cl_r": "Cl_R", "cy_p": "CY_P", "cy_r": "CY_R"}
+        shifted = {"cn_p": ("CY_P", "Cn_P"), "cn_r": ("CY_R", "Cn_R")}
+
+        # The partition, measured rather than assumed.
+        material = set()
+        for field, raw_key in unshifted.items():
+            _array, _position = SLOT_OF[field]
+            value = float(raw[raw_key])
+            if normalise_sign(field, -value)[0] != normalise_sign(field, value)[0]:
+                material.add(field)
+            with self.subTest(field=field, leg="unshifted, table-pinned"):
                 self.assertAlmostEqual(
-                    normalise_sign(fields[slot], variants["shipped"][slot])[0],
-                    shipped[array][index], places=12,
+                    shipped[_array][_position], value, places=12,
+                    msg=f"{field} is not a CG-shift output; it must be the raw F-R-D value",
+                )
+        for field, (cy_key, cn_key) in shifted.items():
+            array, position = SLOT_OF[field]
+            good = shifted_cn(float(raw[cy_key]), float(raw[cn_key]))
+            bad = shifted_cn(float(raw[cy_key]), -float(raw[cn_key]))
+            if normalise_sign(field, good)[0] != normalise_sign(field, bad)[0]:
+                material.add(field)
+            with self.subTest(field=field, leg="material: shift consumes the F-R-D Cn"):
+                self.assertAlmostEqual(
+                    shipped[array][position], normalise_sign(field, good)[0], places=12,
+                    msg=f"{field}: the CG shift must consume the un-negated Cn column",
+                )
+        self.assertEqual(
+            material, {"cn_p", "cn_r"},
+            "only the two CG-shifted yaw-rate slots are material; if this set changed, "
+            "the sign of every other P/R column is table-pinned rather than frame-derived",
+        )
+
+        # And the material pair must not reproduce if the negation comes back.
+        for field, (cy_key, cn_key) in shifted.items():
+            array, position = SLOT_OF[field]
+            with self.subTest(field=field, leg="material: negation would be visible"):
+                wrong = shifted_cn(float(raw[cy_key]), -float(raw[cn_key]))
+                self.assertNotAlmostEqual(
+                    shipped[array][position], normalise_sign(field, wrong)[0], places=6,
+                    msg=f"shift(-{cn_key}) reproduced the shipped {field}; the negation is back",
                 )
 
-    def test_15_dropping_the_shift_moves_exactly_seven_slots(self) -> None:
+        # Cross-solver sign agreement, compared like-for-like: shipped to shipped.
+        # Not shipped to AVL's raw ``.st`` row, because AVL's own ``Cnp`` crosses zero
+        # across its alpha sweep (+0.0707 at -4 deg, +0.0071 at +4 deg, -0.0598 at
+        # +12 deg) and AVL therefore table-flips ``cn_p`` too.
+        avl = to_morelli(self.avl_run().derivatives)[0]
+        for field in (*unshifted, *shifted):
+            with self.subTest(field=field, leg="sign agrees with AVL"):
+                array, position = SLOT_OF[field]
+                ours = float(shipped[array][position])
+                theirs = float(avl[array][position])
+                self.assertNotEqual(ours, 0.0)
+                self.assertNotEqual(theirs, 0.0)
+                self.assertEqual(
+                    ours > 0.0, theirs > 0.0,
+                    f"{field}: Tornado {ours:+.6g} vs AVL {theirs:+.6g} disagree in sign, "
+                    "so one of them is not in the shared F-R-D frame",
+                )
+
+    def test_15_dropping_the_shift_moves_exactly_the_seven_shifted_slots(self) -> None:
         """The other half of the materiality claim: the SHIFT is not immaterial.
 
-        The P/R sign dispute changes nothing (test_14), but discarding the CG shift
-        as well is a different hypothesis and moves exactly the seven slots the
-        shift touches -- cm[0], cm[1], cm[2], cmq[0], cn[0], cnp[0], cnr[0].  This
-        pins the boundary between the two claims, so "the sign dispute is
-        immaterial" can never be read as "the moment reference is".
+        ``test_14`` shows the P/R column signs are frame-material only where the CG
+        shift mixes them.  Discarding the shift altogether is a different hypothesis
+        again, and it moves the seven slots the shift touches: ``cm[0]``, ``cm[1]``,
+        ``cm[2]``, ``cmq[0]``, ``cn[0]``, ``cnp[0]``, ``cnr[0]``.  Pinning the
+        boundary means "the sign question is narrow" can never be read as "the moment
+        reference is arbitrary".
+
+        This was the second inherited gap in the re-base: the case table still built
+        every shifted argument from the OLD negated columns (``-raw["CZ_a"]``,
+        ``-raw["CZ_Q"]``, ``-raw["Cn_b"]``, ``-raw["Cn_P"]``, ``-raw["Cn_R"]``), so it
+        asserted a mapping the adapter stopped using and failed against correct code.
+        Every argument is now the Forward-Right-D column, read directly.
+
+        The distinction that matters and is easy to lose: the SLOT and the SHIFT
+        ARGUMENT are still deliberately different numbers.  ``cz[1]`` ships the
+        wind-axis ``-CL_a`` (the ``cz = -CL`` identity derived from the flight model),
+        but the shift consumes the body-z ``CZ_a``, because the shift's algebra
+        contains a body-z force.  They differ by 0.34 % here.  Likewise ``cz[5]``
+        ships ``-CL_de`` while the shift takes the reconstructed body-z
+        ``cz_de = -(cos_a * cl_de + sin_a * cd_de)``.
         """
         from aero_convert.units import shift_moments_to_cg
 
@@ -437,27 +599,33 @@ class TornadoAdapterTest(unittest.TestCase):
         cm_de = float(elevator["Cm"]) * DEG_TO_RAD
 
         cases = {
-            "cm[1]": ("cm_alpha", shift(-raw["CZ_a"], 0.0, raw["Cm_a"], 0.0)[0], raw["Cm_a"]),
-            "cm[0]": ("cm0", shift(-raw["CL_at_alpha0"], 0.0, raw["Cm_at_alpha0"], 0.0)[0],
+            # slot: (field, shifted value the file must ship, same value unshifted)
+            "cm[1]": ("cm_alpha", shift(float(raw["CZ_a"]), 0.0, raw["Cm_a"], 0.0)[0],
+                      raw["Cm_a"]),
+            "cm[0]": ("cm0", shift(-float(raw["CL_at_alpha0"]), 0.0, raw["Cm_at_alpha0"], 0.0)[0],
                       raw["Cm_at_alpha0"]),
-            "cmq[0]": ("cm_q", shift(-raw["CZ_Q"], 0.0, raw["Cm_Q"], 0.0)[0], raw["Cm_Q"]),
+            "cmq[0]": ("cm_q", shift(float(raw["CZ_Q"]), 0.0, raw["Cm_Q"], 0.0)[0],
+                       raw["Cm_Q"]),
             "cm[2]": ("cm_de", shift(cz_de, 0.0, cm_de, 0.0)[0], cm_de),
-            "cn[0]": ("cn_beta", shift(0.0, raw["CY_b"], 0.0, -raw["Cn_b"])[1], -raw["Cn_b"]),
-            "cnp[0]": ("cn_p", shift(0.0, raw["CY_P"], 0.0, -raw["Cn_P"])[1], -raw["Cn_P"]),
-            "cnr[0]": ("cn_r", shift(0.0, raw["CY_R"], 0.0, -raw["Cn_R"])[1], -raw["Cn_R"]),
+            "cn[0]": ("cn_beta", shift(0.0, raw["CY_b"], 0.0, raw["Cn_b"])[1], raw["Cn_b"]),
+            "cnp[0]": ("cn_p", shift(0.0, raw["CY_P"], 0.0, raw["Cn_P"])[1], raw["Cn_P"]),
+            "cnr[0]": ("cn_r", shift(0.0, raw["CY_R"], 0.0, raw["Cn_R"])[1], raw["Cn_R"]),
         }
         moved = set()
         for slot, (field, mapped, unshifted) in cases.items():
-            with self.subTest(slot=slot):
+            with self.subTest(slot=slot, claim="ships the shifted value"):
                 array, index = slot.split("[")
                 index = int(index.rstrip("]"))
                 self.assertAlmostEqual(
                     normalise_sign(field, mapped)[0], shipped[array][index], places=12,
                     msg=f"{slot} must be the CG-shifted value the file ships",
                 )
-                if normalise_sign(field, mapped)[0] != normalise_sign(field, unshifted)[0]:
-                    moved.add(slot)
-        self.assertEqual(moved, set(cases), "exactly the seven shifted slots must move")
+            if normalise_sign(field, mapped)[0] != normalise_sign(field, unshifted)[0]:
+                moved.add(slot)
+        self.assertEqual(
+            moved, set(cases),
+            "all seven CG-shifted slots must actually move when the shift is dropped",
+        )
 
     def test_9_trimmed_aircraft_is_positive_where_it_must_be(self) -> None:
         """plane/aircraft.py's _POSITIVE_KEYS: nothing may be zero or negative."""
@@ -513,30 +681,44 @@ class CrossCheckAdapterTest(unittest.TestCase):
                     self.assertIsNotNone(value, f"{model} did not produce {field}")
                     self.assertTrue(math.isfinite(float(value)), f"{field} = {value!r}")
 
-    def test_1b_flow5_produces_only_what_its_runner_emits(self) -> None:
-        """Plan Task 4 RED 1, corrected for what flow5 can actually do.
+    def test_1b_flow5_produces_twenty_one_of_the_twenty_five(self) -> None:
+        """flow5's coverage, measured against its 26 emitted keys rather than assumed.
 
-        ``FLOW5/run/flow5_run.cpp`` sweeps ``polar.alpha_deg`` only, hardcodes
-        ``setComputeDerivatives(false)``, and serialises ``CL``, ``CD`` and
-        ``Cm`` alone -- so flow5 has no sideslip row, no rate row and no roll or
-        yaw coefficient to difference.  The four slots the plan's RED 1 names
-        must therefore be ``None`` and declared, and the four it can produce
-        must be real.
+        Its runner now emits the six longitudinal polar channels, the twelve
+        ``StabDerivatives`` (``CZa``, ``CXa``, ``CYb``, ``CYp``, ``CYr``, ``Clb``,
+        ``Clp``, ``Clr``, ``Cnb``, ``Cnp``, ``Cnr``, ``XNP``), ``CLa``/``Cma``, a
+        ``CDvis``/``CDind`` split, the body ``Cx``/``Cz``/``Cl``/``Cn`` point
+        channels and the alpha/beta schedules.  So it fills 21 of the 25 slots,
+        including every sideslip and every roll/yaw-rate derivative.
+
+        The four it cannot fill are named in ``FLOW5_ABSENT`` with their reasons in
+        ``provenance.missing``.  They are ``None`` and DECLARED rather than written
+        as zeros, so a slot that is honestly empty can never be read as a
+        measurement -- which matters here, because three of them are q-derivatives
+        the library computes and the runner declines to forward.
         """
-        derivatives = self.runs["flow5"].derivatives
-        for field in ("cl_alpha", "cm_alpha", "cl_de", "cm_de"):
-            with self.subTest(field=field):
+        run = self.runs["flow5"]
+        derivatives = run.derivatives
+        declared = {entry["field"] for entry in run.provenance["missing"]}
+        absent = sorted(f for f in ALL_FIELDS if getattr(derivatives, f) is None)
+        produced = sorted(f for f in ALL_FIELDS if getattr(derivatives, f) is not None)
+        self.assertEqual(len(produced), 21, f"flow5 produced {produced}")
+        self.assertEqual(absent, sorted(FLOW5_ABSENT))
+        self.assertEqual(set(absent), declared, "every absent slot must be declared")
+        self.assertEqual(
+            set(run.provenance["coverage"]["produced"]), set(produced),
+            "provenance.coverage must agree with the derivative set it describes",
+        )
+        self.assertEqual(set(run.provenance["coverage"]["absent"]), set(absent))
+        for field in FLOW5_NEWLY_PRODUCED:
+            with self.subTest(field=field, claim="newly produced"):
                 value = getattr(derivatives, field)
-                self.assertIsNotNone(value, f"flow5 did not produce {field}")
-                self.assertTrue(math.isfinite(float(value)), f"{field} = {value!r}")
-        for field in FLOW5_ABSENT:
-            with self.subTest(field=field):
-                self.assertIsNone(
-                    getattr(derivatives, field),
-                    f"flow5 has no {field}; a value here would be invented",
+                self.assertIsNotNone(
+                    value,
+                    f"flow5 emits {field}; a None here means the adapter stopped reading it",
                 )
-                declared = {entry["field"] for entry in self.runs["flow5"].provenance["missing"]}
-                self.assertIn(field, declared, f"{field} must be declared in provenance.missing")
+                self.assertTrue(math.isfinite(float(value)))
+                self.assertNotEqual(float(value), 0.0)
 
     def test_2_every_filled_slot_satisfies_its_invariant(self) -> None:
         """Plan Task 4 RED 2, narrowed to the SIGN column, over every field produced.
@@ -576,13 +758,30 @@ class CrossCheckAdapterTest(unittest.TestCase):
                     else:
                         self.assertLess(value, 0.0, f"{model} {field} must be < 0, got {value!r}")
 
-    def test_3_flow5_has_no_rate_derivatives(self) -> None:
-        """Plan Task 4 RED 3: a steady panel code has no rate rows at all."""
-        derivatives = self.runs["flow5"].derivatives
-        for field in ("cl_q", "cm_q", "cy_p", "cy_r", "cl_p", "cl_r", "cn_p",
-                      "cn_r", "cd_q"):
-            with self.subTest(field=field):
+    def test_3_flow5_has_no_pitch_rate_derivatives(self) -> None:
+        """flow5 has p- and r-rate derivatives now, but still NO q-derivative.
+
+        Its twelve StabDerivatives include ``CYp``, ``CYr``, ``Clp``, ``Clr``,
+        ``Cnp`` and ``Cnr`` -- the roll-rate and yaw-rate columns.  It has no
+        pitch-rate column at all: the library computes ``CXq``/``CZq``/``Cmq`` and
+        ``FLOW5/run/flow5_run.cpp`` simply does not forward them, which the
+        sibling's own record notes.  So the three q-slots stay ``None`` and
+        declared, and this pins that they are honestly empty rather than merely
+        unwritten -- while the six p/r slots must be real, because a regression
+        that lost them would otherwise look identical from coverage alone.
+        """
+        run = self.runs["flow5"]
+        derivatives = run.derivatives
+        declared = {e["field"] for e in run.provenance["missing"]}
+        for field in ("cl_q", "cm_q", "cd_q"):
+            with self.subTest(field=field, claim="absent"):
                 self.assertIsNone(getattr(derivatives, field))
+                self.assertIn(field, declared)
+        for field in ("cy_p", "cy_r", "cl_p", "cl_r", "cn_p", "cn_r"):
+            with self.subTest(field=field, claim="present"):
+                value = getattr(derivatives, field)
+                self.assertIsNotNone(value, f"flow5 emits {field}")
+                self.assertNotEqual(float(value), 0.0)
 
     def test_4_datcom_has_no_cn_da_or_cy_da(self) -> None:
         """Plan Task 4 RED 4: AID's 0.1 placeholders must not reach the file.
@@ -864,7 +1063,10 @@ class CrossCheckAdapterTest(unittest.TestCase):
                      ("cm_de", "elevator", "Cm"), ("cl_dr", "rudder", "Cl"),
                      ("cy_dr", "rudder", "CY"), ("cn_dr", "rudder", "Cn"),
                      ("cy_da", "aileron", "CY"), ("cn_da", "aileron", "Cn"))),
-            ("flow5", (("cl_de", "elevator", "CL"), ("cm_de", "elevator", "Cm"))),
+            ("flow5", (("cl_da", "aileron", "Cl"), ("cn_da", "aileron", "Cn"),
+                        ("cl_dr", "rudder", "Cl"), ("cn_dr", "rudder", "Cn"),
+                        ("cy_dr", "rudder", "CY"), ("cl_de", "elevator", "CL"),
+                        ("cm_de", "elevator", "Cm"))),
         ):
             entries = {e["field"]: e for e in self.runs[model].provenance["mapping"]}
             rows = self.runs[model].provenance["control_rows"]
@@ -877,6 +1079,175 @@ class CrossCheckAdapterTest(unittest.TestCase):
                         abs(float(entries[field]["mapped_value"])), expected, places=12,
                         msg=f"{model} {field} must be |{per_degree}| x {DEG_TO_RAD}",
                     )
+
+    def test_13b_control_slots_cannot_detect_a_frame_error_so_dont_pretend_they_can(self) -> None:
+        """A control slot's SHIPPED sign is pinned by the table, not by the frame.
+
+        This started life as "flow5's control signs must match AVL's", on the theory
+        that AVL -- whose ``aid/axes.py`` entry is ``{}``, so natively Forward-Right-Down
+        -- would catch a double ``to_frd`` on flow5's rows.  It does not, and the
+        injection test is why: negating flow5's ``Cl``, ``Cn`` and ``CL`` control rows
+        a second time leaves every shipped coefficient IDENTICAL.
+
+        The reason is structural, and it is the same masking that made the old
+        ``test_14`` wrong.  Negating a control row preserves its magnitude, and
+        ``normalise_sign`` then pins the sign from the Morelli invariant -- so the
+        shipped file cannot distinguish the two.  A sign-only assertion here is
+        therefore vacuous, which is precisely the I4 defect: a test that cannot fail
+        is worse than no test, because it reads like coverage.
+
+        So this asserts the finding instead of hiding it, and it makes the limit
+        explicit for whoever writes the next frame guard:
+
+        1. For every control slot, ``normalise_sign`` provably returns the same value
+           for the row and for its negation -- the masking is demonstrated, not
+           assumed.
+        2. Therefore the ONLY places a Tornado/flow5 frame error is detectable in the
+           shipped file are where the CG shift MIXES columns and changes a magnitude,
+           which ``test_14`` shows is ``cn_p`` and ``cn_r``.
+        3. The AVL sign agreement is still asserted -- it is a genuine cross-solver
+           consistency check on the invariant table itself, and Task 5 wants it -- but
+           it is labelled as that, not as a frame guard.
+        """
+        masked = []
+        rows = self.runs["flow5"].provenance["control_rows"]
+        for field in ("cl_da", "cn_da", "cl_dr", "cy_dr", "cn_dr", "cl_de", "cm_de"):
+            entries = {e["field"]: e for e in self.runs["flow5"].provenance["mapping"]}
+            mapped = float(entries[field]["mapped_value"])
+            with self.subTest(field=field):
+                self.assertNotEqual(mapped, 0.0)
+                if normalise_sign(field, -mapped)[0] == normalise_sign(field, mapped)[0]:
+                    masked.append(field)
+                else:
+                    self.fail(
+                        f"{field} is frame-sensitive after all: normalise_sign does not "
+                        "pin its sign, so this test's premise is wrong and the slot needs "
+                        "its own frame guard",
+                    )
+        self.assertEqual(
+            masked, ["cl_da", "cn_da", "cl_dr", "cy_dr", "cn_dr", "cl_de", "cm_de"],
+            "every flow5 control slot is expected to be sign-pinned by the table; if this "
+            "set shrinks, a control slot has become frame-sensitive and needs its own guard",
+        )
+
+        # (3) The genuine cross-solver check, on the invariant table rather than frames.
+        for field in ("cl_da", "cl_de", "cm_de", "cl_dr", "cy_dr", "cn_dr",
+                      "cy_da", "cn_da"):
+            array, index = slot_of(field)
+            avl_value = float(self.coefficients("avl")[array][index])
+            self.assertNotEqual(avl_value, 0.0)
+            for model in ("flow5", "datcom"):
+                value = getattr(self.runs[model].derivatives, field)
+                if value is None:
+                    continue  # DATCOM has no cn_da/cy_da; declared absent by test_4.
+                with self.subTest(model=model, field=field, check="table vs AVL"):
+                    self.assertNotEqual(float(value), 0.0)
+                    self.assertEqual(
+                        float(value) > 0.0, avl_value > 0.0,
+                        f"{model} {field}={float(value):+.6g} vs AVL "
+                        f"{avl_value:+.6g}: the invariant table and AVL disagree, which "
+                        "is a table question for Task 5, not a frame question",
+                    )
+
+    def test_17_every_written_file_records_the_sibling_commit_it_was_built_from(self) -> None:
+        """Part 7: ``aid_src_commit`` in all five files, checked against real git.
+
+        This project has been broken by an upstream commit TWICE, both times
+        silently, both times found only by a failing test.  So every generated file
+        records the sibling's HEAD, and the expectation here is INDEPENDENT: this test
+        shells out to ``git rev-parse HEAD`` in the sibling itself rather than calling
+        the adapter's own ``_aid_commit()``.  A test that asserted
+        ``provenance["aid_src_commit"] == _aid_commit()`` would pass even if
+        ``_aid_commit`` were broken, which is the same blindness as I4.
+
+        The sibling is only ever READ.  This test does not write to it, does not
+        vendor it, and adds no requirements entry for it.
+        """
+        import json
+        import subprocess
+        import tempfile
+        from pathlib import Path as _Path
+
+        from aero_convert.solvers import aid_src, geometry_block, write_model
+        from aero_convert.solvers import write_all, tornado_run
+
+        sibling = aid_src()
+        head = subprocess.run(
+            ["git", "-C", str(sibling), "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        self.assertEqual(len(head), 40, f"not a full SHA: {head!r}")
+        self.assertEqual(
+            subprocess.run(["git", "-C", str(sibling), "status", "--porcelain"],
+                           capture_output=True, text=True, check=True).stdout, "",
+            "the sibling must be clean; a dirty tree would make the commit a lie",
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = _Path(tmp)
+            write_all(tornado_run(), out)
+            for model in ("datcom", "avl", "flow5"):
+                write_model(self.runs[model], out)
+
+            def provenance_of(name: str) -> dict:
+                text = (out / name).read_text()
+                body = "\n".join(
+                    line for line in text.splitlines()
+                    if not line.lstrip().startswith("//")
+                )
+                return json.loads(body)["provenance"]
+
+            for name in ("tornado.jsonc", "geometry.jsonc", "datcom.jsonc",
+                         "avl.jsonc", "flow5.jsonc"):
+                with self.subTest(file=name):
+                    recorded = provenance_of(name).get("aid_src_commit")
+                    self.assertEqual(
+                        recorded, head,
+                        f"{name} does not record the sibling commit it was built from; "
+                        "an upstream move would then be a mystery instead of a one-line diff",
+                    )
+
+    def test_16_flow5_mesh_is_pinned_because_clb_flips_sign_at_ten_by_five(self) -> None:
+        """FLOW5_MESH must stay ("10","10"): flow5's Clb changes SIGN across meshes.
+
+        Part 4 of the fix brief.  The sibling records flow5's ``Clb`` as strongly
+        mesh-dependent -- -0.0736 at ("5","3"), **+0.0018** at ("10","5"),
+        -0.0530 at ("10","10"), -0.0593 at ("20","10").  The positive, 30x-small
+        value at ("10","5") is not a convergence wobble, it reads as a silent sign
+        inversion, and a sideslip derivative that flips sign with a mesh constant
+        would sail through a sign-only invariant table while being badly wrong.
+
+        So the mesh is pinned by a test.  Three assertions, in increasing strength:
+        the constant itself; that the shipped Clb is in family with AVL's and
+        Tornado's; and that it is nowhere near the ("10","5") trap, i.e. that the
+        pin would actually notice if someone changed the mesh to the bad one.
+        """
+        from aero_convert.solvers import FLOW5_MESH
+
+        self.assertEqual(
+            FLOW5_MESH, ("10", "10"),
+            "flow5's Clb is mesh-dependent and inverts at ('10','5'); the mesh is a "
+            "physics constant now, not a formatting choice",
+        )
+        array, index = slot_of("cl_beta")
+        clb = float(self.coefficients("flow5")[array][index])
+        self.assertAlmostEqual(clb, FLOW5_CLB_BY_MESH[("10", "10")], places=3)
+        # In family with the other solvers.  Tornado is checked in its own test
+        # class; here the yardstick is AVL, which needs no conversion at all.
+        for model in ("avl", "datcom"):
+            with self.subTest(model=model, comparison="sideslip stability sign"):
+                other = float(self.coefficients(model)[array][index])
+                self.assertEqual(other > 0.0, clb > 0.0,
+                                 f"flow5 Clb={clb:+.6g} vs {model} {other:+.6g}")
+        # And emphatically not the inverted mesh's value.
+        trap = FLOW5_CLB_BY_MESH[("10", "5")]
+        self.assertGreater(trap, 0.0, "the recorded bad-mesh Clb must be positive")
+        self.assertLess(clb, 0.0)
+        self.assertGreater(
+            abs(clb - trap), 0.02,
+            f"flow5 Clb={clb:+.6g} is too close to the ('10','5') trap {trap:+.6g}; "
+            "if the mesh changed, this must fail loudly",
+        )
 
     def test_14_datcom_rates_are_not_the_broken_handbook_numbers(self) -> None:
         """The 57x ``_per_rad`` defect must not survive into the DATCOM rates.

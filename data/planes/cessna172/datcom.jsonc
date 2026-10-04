@@ -64,10 +64,17 @@
 //          -0.798610.  The DATCOM Section 7 formulae are therefore
 //          recomputed in this converter with the factor applied by hand, and the
 //          uncorrected numbers are kept in provenance.handbook_cross_check.
-//      (2) aid/lateral.py:571 ends its tail lift-slope formula with `vt_a * pi/180`.
-//          That formula returns the units of the `k = a0/(2*pi)` it was fed and AID feeds it
-//          VT.a0 = 6.8396 DEGREES, so the result is already per degree and the pi/180 makes it
-//          57.3x too small.  Every quantity linear in that slope is corrected: CYb, Cnb,
+//      (2) aid/lateral.py:571 ends its tail lift-slope formula with `vt_a * pi/180`,
+//          which is the wrong conversion in the wrong direction.  The formula's
+//          `k` comes from aid/lateral.py:565, which reads HT['a0'] -- NOT
+//          VT.a0, which appears nowhere in the sibling tree -- and
+//          apply_handbook rewrites that to 6.8396 PER RADIAN, so
+//          k = a0/(2*pi) = 1.0886/rad and the formula answers
+//          3.5004 PER RADIAN -- 51 per cent of the 2-D
+//          6.8396/rad, the reduction a fin of AR ~ 1.8 must show, where a
+//          per-degree reading would imply about 200/rad.  The trailing pi/180
+//          then divides a per-radian number by 180 and stores 0.0610931, so
+//          every quantity linear in that slope is 57.3x too small and is corrected: CYb, Cnb,
 //          Clb and the three Section 7 rate terms that use it.  The evidence that
 //          the correction is the right one: AID's Clb is -0.003091, a factor 21.7 below
 //          the sibling's own AVL gold Clb = -0.065868 for the same planform (measured), while
@@ -83,12 +90,19 @@
 //    i.e. a parasite of 0.0226207, 1.310x the handbook build-up; both are recorded.
 //
 // 5. THE MOMENT REFERENCE SHIFT
-//    NO MOMENT SHIFT WAS APPLIED, and that is verified rather than assumed.  The Fortran's $SYNTHS card carries
-//    XCG = 2.94 ft, which is the station this converter read back out of
-//    its own card file and compared against AERO.XCG = 2.94 ft; AID's handbook pass takes the same station
-//    for the VT arms (hp = VT.Z + VT.ymac - AERO.ZCG, lp = VT.X + VT.xmac +
-//    VT.cbar/4 - AERO.XCG).  dx = dy = dz = 0, so every moment here is already about the CG and
-//    cm[1], cm[0], cm[2], cmq[0], cn[0], cnp[0], cnr[0] are used as they stand.  Contrast
+//    NO MOMENT SHIFT WAS APPLIED, and that is VERIFIED, not assumed: the station
+//    is read back out of what the Fortran itself wrote, not out of the same
+//    in-memory value it was given.
+//    aid/datcom_io.py's write_synths puts XCG={aero['XCG']} on the $SYNTHS namelist, so for005.dat
+//    carries $SYNTHS XCG = 2.94 ft and the Fortran ECHOES that namelist back into
+//    datcom.out, 2 time(s), all 2.94 ft.  That echo is the number compared against
+//    AERO.XCG = 2.94 ft; a disagreement between the card
+//    and the echo, an echo that disagrees with itself, or a MISSING echo each raise, so this check
+//    cannot pass by comparing AERO.XCG with itself.  Both lists are in provenance.moment_reference.
+//    AID's handbook pass takes the same station for the VT arms
+//    (hp = VT.Z + VT.ymac - AERO.ZCG, lp = VT.X + VT.xmac + VT.cbar/4 - AERO.XCG).
+//    dx = dy = dz = 0, so every moment here is already about the CG and cm[1],
+//    cm[0], cm[2], cmq[0], cn[0], cnp[0], cnr[0] are used as they stand.  Contrast
 //    tornado.jsonc, whose ref_point is 2.94 ft AHEAD of the CG and is corrected by dx = -0.896112 m.
 //
 // 6. SIGN CONVENTION
@@ -133,14 +147,13 @@
 //    and rudder side force per radian of CONTROL DEFLECTION, which no
 //    flight-condition speed touches.
 //
-//    THREE SLOTS ARE GENUINELY ABSENT and are declared, not guessed:
-//      cy[1]   cy_da -- aid/handbook_controls.py has no aileron side-force column at all and
-//          aid/lateral.py:616's Clda is a hardcoded 0.1 placeholder
-//      cnda[0] cn_da -- aid/lateral.py:616's Cnda is a hardcoded 0.1 placeholder and
-//          aid/handbook_controls.py omits aileron yaw entirely
-//      cxq[0]  cd_q  -- DATCOM Section 7 has NO axial rate derivative at all and
-//          aid/longitudinal_dynamic.py hardcodes cxq = 0.0, which records the
-//          absence of a formula rather than a computed zero
+//    3 SLOTS ARE GENUINELY ABSENT -- zeroed and declared, with the reason generated from
+//    provenance.missing so this list cannot go stale against the slot table below:
+//      cnda[0]   cn_da   ZEROED AND DECLARED -- no value exists: aid/handbook_controls.py has no aileron yaw column at all, and aid/lateral.py:616's Clda/Cnda = 0.1 is a hardcoded placeholder, not a computation; using it would put a fabricated number in a coefficient array
+//      cxq[0]    cd_q    ZEROED AND DECLARED -- no value exists: DATCOM's Section 7 formulae carry no axial rate derivative at all and aid/longitudinal_dynamic.py hardcodes cxq = 0.0, which records the absence of a formula rather than a computed value
+//      cy[1]     cy_da   ZEROED AND DECLARED -- no value exists: aid/handbook_controls.py has no aileron side force column at all, and aid/lateral.py:616's Clda/Cnda = 0.1 is a hardcoded placeholder, not a computation; using it would put a fabricated number in a coefficient array
+//      the slots whose sign the invariant table reversed, so the solver's own sign sits on
+//      the other side of zero: cl_da, cl_de, cn_beta, cy_p.  Every one is in the slot table above with state `flipped`.
 //    Every other slot is real output.  CD_alpha is not representable in this
 //    schema (cx has no CD*alpha term) and is 0.0 and declared.
 //
@@ -172,6 +185,11 @@
 //   cy[1]     cy_da      missing        ABSENT -- aid.handbook_controls[aileron].CY (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
 //   every slot in plane.groups.nonlinear_index is exactly 0.0; CD_alpha is not
 //   representable in this schema (cx has no CD*alpha term) and is zeroed and declared
+//    THE REST OF THIS SOLVER'S RAW, UNCONVERTED OUTPUT IS IN geometry.jsonc, under raw_cross_checks.datcom
+//    -- the Fortran's own for006 table and AID's pre-correction handbook rows for
+//    DATCOM, the per-alpha .st rows for AVL, the deck and the polar for flow5.
+//    A model file's provenance.mapping carries only the one raw number behind each
+//    slot, so that block is what makes the rest re-derivable without re-running.
 //
 // 8. HOW TO REGENERATE THIS FILE
 //    cd python && python3 scripts/build_cessna172_aero.py
@@ -374,8 +392,10 @@
       "none",
       "none"
     ],
-    "source": "/mnt/VirtualMachine/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
-    "aid_src": "/mnt/VirtualMachine/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Python/src",
+    "source": "../USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
+    "aid_src": "../USAF_DATCOM/AircraftIntuitiveDesign/Python/src",
+    "aid_src_from_env": false,
+    "aid_src_commit": "c273aa6f0e7bb1672284404a540e9a1c9310dc32",
     "flight_condition": {
       "mach": 0.03,
       "alt_ft": 0.0,
@@ -410,7 +430,16 @@
       "dx_m": 0.0,
       "dy_m": 0.0,
       "dz_m": 0.0,
-      "note": "DATCOM reports every moment about AERO.XCG, read back from its own input and checked against the source; dx = dy = dz = 0, so no moment shift is applied"
+      "note": "DATCOM reports every moment about AERO.XCG, and the station was read back out of the input the SOLVER was given rather than out of the same in-memory value, then compared with the source; dx = dy = dz = 0, so no moment shift is applied",
+      "for005_synths_xcg": [
+        2.94
+      ],
+      "fortran_echo_synths_xcg": [
+        2.94,
+        2.94
+      ],
+      "card_line": "the Fortran echoes its $SYNTHS namelist back into datcom.out; $SYNTHS XCG is the station its moments are taken about",
+      "source": "the Fortran's own echo of $SYNTHS XCG in datcom.out"
     },
     "sign_convention": {
       "solver_axes": "DATCOM: x forward, y right, z DOWN, positive Cm nose up, positive Cl roll right, positive Cn yaw right -- identical to plane/dynamics.py, so this adapter applies no axis mapping at all",
@@ -483,7 +512,7 @@
     "zeroed_slots": {
       "nonlinear": "every slot in plane.groups.nonlinear_index is exactly 0.0",
       "CD_alpha": "cx has no CD*alpha term in this schema, so CD_alpha is 0.0 and is declared rather than approximated",
-      "flap": "the Morelli schema has no flap slot; the handbook/AVL/flow5 flap rows are kept in geometry.jsonc as raw output and mapped to nothing"
+      "flap": "the Morelli schema has no flap slot, so the handbook's flap row maps to nothing.  It is NOT carried in this file; provenance.raw_output_location says where the build put it, and provenance.control_rows holds it"
     },
     "mapping": [
       {
@@ -552,7 +581,7 @@
         "tornado_key": "aid.lateral.lateral_static.Clb",
         "solver_value": -0.003090622882802272,
         "mapped_value": -0.06896624615490778,
-        "conversion": "AID's value with its own vertical-tail term re-evaluated using the tail's lift slope x 57.29577951308232: aid/lateral.py:571 multiplies that slope by pi/180 in the WRONG direction, so AID's Clb = -0.00309062 is 57.3x too small in its tail part (AID's Clb = -0.003091 against the sibling's own AVL gold Clb = -0.065868, and against AVL's alpha = 4 deg row -0.045756 this adapter writes -0.068966)",
+        "conversion": "AID's value with its own vertical-tail term re-evaluated using the tail's lift slope x 57.29577951308232.  aid/lateral.py:571 divides that PER RADIAN slope by pi/180, so AID's Clb = -0.00309062 has a tail part 57.3x too small (AID's Clb = -0.003091 against the sibling's own AVL gold Clb = -0.065868, and against AVL's alpha = 4 deg row -0.045756 this adapter writes -0.068966)",
         "role": "slope",
         "value": -0.06896624615490778,
         "state": "normalised",
@@ -564,7 +593,7 @@
         "tornado_key": "aid.lateral.lateral_static.CYb",
         "solver_value": -0.009326495800599612,
         "mapped_value": -0.6082444104218907,
-        "conversion": "AID's value with its own vertical-tail term re-evaluated using the tail's lift slope x 57.29577951308232: aid/lateral.py:571 multiplies that slope by pi/180 in the WRONG direction, so AID's CYb = -0.0093265 is 57.3x too small in its tail part (AID's Clb = -0.003091 against the sibling's own AVL gold Clb = -0.065868, and against AVL's alpha = 4 deg row -0.045756 this adapter writes -0.068966)",
+        "conversion": "AID's value with its own vertical-tail term re-evaluated using the tail's lift slope x 57.29577951308232.  aid/lateral.py:571 divides that PER RADIAN slope by pi/180, so AID's CYb = -0.0093265 has a tail part 57.3x too small (AID's Clb = -0.003091 against the sibling's own AVL gold Clb = -0.065868, and against AVL's alpha = 4 deg row -0.045756 this adapter writes -0.068966)",
         "role": "slope",
         "value": -0.6082444104218907,
         "state": "normalised",
@@ -576,7 +605,7 @@
         "tornado_key": "aid.lateral.lateral_static.Cnb",
         "solver_value": 0.0036194771593376467,
         "mapped_value": -0.2482385665675611,
-        "conversion": "AID's value with its own vertical-tail term re-evaluated using the tail's lift slope x 57.29577951308232: aid/lateral.py:571 multiplies that slope by pi/180 in the WRONG direction, so AID's Cnb = 0.00361948 is 57.3x too small in its tail part (AID's Clb = -0.003091 against the sibling's own AVL gold Clb = -0.065868, and against AVL's alpha = 4 deg row -0.045756 this adapter writes -0.068966)",
+        "conversion": "AID's value with its own vertical-tail term re-evaluated using the tail's lift slope x 57.29577951308232.  aid/lateral.py:571 divides that PER RADIAN slope by pi/180, so AID's Cnb = 0.00361948 has a tail part 57.3x too small (AID's Clb = -0.003091 against the sibling's own AVL gold Clb = -0.065868, and against AVL's alpha = 4 deg row -0.045756 this adapter writes -0.068966)",
         "role": "slope",
         "value": 0.2482385665675611,
         "state": "flipped",
@@ -839,7 +868,11 @@
         "cyb_wb": 0.001312275343551812,
         "vt_a_as_reported": 0.06109307940241697,
         "vt_a_per_rad": 3.500375607216114,
-        "units_factor": 57.29577951308232
+        "units_factor": 57.29577951308232,
+        "units_factor_meaning": "aid/lateral.py:571 divided a PER RADIAN slope by pi/180, so this multiplies it back by DEG_TO_RAD.  It is the numerical reciprocal of that division, not a per-degree-to-per-radian conversion",
+        "ht_a0_per_radian_as_read": 6.839621084719293,
+        "helmbold_k_per_radian": 1.0885595045086265,
+        "mechanism": "aid/lateral.py:565 reads HT['a0'] (rewritten by apply_handbook to 6.8396 PER RADIAN), so k = a0/(2*pi) = 1.0886/rad and the tail slope formula returns 3.5004 PER RADIAN -- 51 per cent of the 2-D 6.8396/rad, the reduction a fin of AR ~ 1.8 must show.  aid/lateral.py:571 then multiplies that by pi/180, which is the defect"
       },
       "aid_longitudinal_dynamic_CLq": 0.10385094497457285,
       "aid_lateral_dynamic_Clp": -0.013938374449244277,
@@ -906,6 +939,7 @@
         "Cl": 0.0004999837862371692,
         "Cn": -0.001911555929827281
       }
-    }
+    },
+    "raw_output_location": "geometry.jsonc, under raw_cross_checks.datcom"
   }
 }

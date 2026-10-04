@@ -22,77 +22,56 @@ absolute path: this repo is reachable through two mount points on the machine th
 generated them and ``Path.resolve()`` follows the symlink between them, so an
 absolute path would make the committed bytes machine-dependent.
 
-Tornado's axes, and why every moment here needs a sign the table then re-checks
------------------------------------------------------------------------------
-The source planform is the usual DATCOM layout: stations grow **aft**, ``Z`` is
-height, so ``AERO.XW = 2.2`` (wing) ``< AERO.XCG = 2.94`` ``< AERO.XH = 8.75``
-(tail).  ``tornado_io`` copies those numbers straight into the lattice, and its
-own ``geo`` reports ``ref_point = [0, 0, 0]`` against ``CG = [2.94, 0, 0]``: the
-moment reference point is 2.94 ft **ahead** of the CG.  In that frame (call it
-T) the axes are **x aft-positive, z up-positive, y right**, which is
-right-handed, and the freestream vector ``wind1 = AS (cos a cos b, -cos a sin b,
-sin a)`` points aft and up at positive alpha -- i.e. it is the *relative wind*,
-which is why the code's ``r x omega`` rotational perturbation is the correct
-``omega x r`` for a velocity vector: ``wind`` is minus the body's velocity, so
-negating it twice leaves the rigid-body term right.
+The sibling normalises every solver's output into Forward-Right-Down, and that
+is ``plane/dynamics.py``'s own frame
+-------------------------------------------------------------------------------
+``aid/axes.py`` is the sibling's single home for solver sign conventions and
+``aid/tornado/coeff.py``'s last statement is ``return to_frd("tornado", out)``, so
+every number this adapter reads is **already** x forward, y right, z DOWN, with
+positive ``Cl`` rolling right, positive ``Cm`` nose up and positive ``Cn`` yawing
+right -- ``plane/dynamics.py``'s exact frame and senses.  **There is therefore no
+frame mapping anywhere in this adapter, and no moment needs its sign changed for
+frame reasons.**  Tornado's control rows are already Forward-Right-Down too, and
+``aid/tornado/control_deriv.py`` says on purpose that it does not re-wrap them
+("wrapping this dict would flip them twice").
 
-The axis mapping resolves the **alpha, beta and Q** inversions on its own.  It
-does **not** resolve the **P and R** ones: those are a separate, narrower defect
--- ``rot_rates = np.array([state["P"], state["Q"], state["R"]])`` drops the
-standard-aero rates straight into the Tornado (aft, right, up) component slots
-without converting their sense, so roll-right is ``omega_x_aft = -P`` and
-nose-right is ``omega_z_up = -R``, and the P and R columns come back inverted
-whatever the axis mapping does.  Measured on this aircraft: ``CY_P = +0.160``
-where physics needs ``CY_p < 0`` and ``CY_R = -0.387`` where it needs
-``CY_r > 0``, while ``Cm_Q`` is right.  The P and R slots are therefore left to
-``aero_convert.units.normalise_sign``, which flips them and logs the flip.
+This adapter previously mapped ``cz = -CL; cl = -Cl; cm = +Cm; cn = -Cn; cy = +CY``
+and carried three tables justifying each negation by Tornado's aft-positive x or
+up-positive z.  Those tables are gone: the negations they justified are gone with
+them.  What remains is not a mapping but an IDENTITY derived from the flight model,
+and it is worth being precise about the difference, because only one of the two is
+a conversion:
 
-=========================  ===================  ==========================  ==========
-Tornado reports            mapped to dynamics   invariant table wants      resolved by
-=========================  ===================  ==========================  ==========
-``CL_a = +5.148013``       ``cz = -CL_a``        ``cl_alpha`` < 0            mapping
-``CL_Q = +9.591131``       ``cz = -CL_Q``        ``cl_q`` < 0                mapping
-``Cl_b = +0.053721``       ``cl = -Cl_b``        ``cl_beta`` < 0             mapping
-``Cn_b = -0.246500``       ``cn = -Cn_b``        ``cn_beta`` > 0             mapping
-``Cm_a = -8.786140``       ``cm = +Cm_a``        ``cm_alpha`` < 0            mapping
-``Cm_Q = -33.348777``      ``cm = +Cm_Q``        ``cm_q`` < 0                mapping
-``Cl_P = -0.486095``       ``cl = -Cl_P = +0.4861``  ``cl_p`` < 0            the table
-``Cl_R = +0.044525``       ``cl = -Cl_R = -0.0445``  ``cl_r`` > 0            the table
-``CY_P = +0.159618``       ``cy = +CY_P``        ``cy_p`` < 0                the table
-``CY_R = -0.386951``       ``cy = +CY_R``        ``cy_r`` > 0                the table
-``Cn_R = -0.286403``       ``cn = -Cn_R = +0.2864``  ``cn_r`` < 0            the table
-``Cn_P = +0.068671``       ``cn = -Cn_P = -0.0687``  ``cn_p`` < 0            mapping
-=========================  ===================  ==========================  ==========
+* ``cz = -CL``.  ``plane/dynamics.py`` applies ``az = +qbar*S*cz/m``, so ``cz`` is the
+  body-+z coefficient with **z down**: up-positive lift enters as a negative ``cz``.
+  That follows from ``xd[11]`` being the NED altitude rate, from the flight model
+  alone, and it is what makes ``data/planes/linear/morelli.json``'s ``cz[1] = -4.5``
+  CORRECT rather than a defect.  It applies to ``cz[1]`` (``-CL_a``) and ``cz[5]``
+  (``-CL_de``), which are the two slots whose *name* is ``CL_...``.
+* **Everything else is read as the solver reports it.**  ``cl``, ``cm``, ``cn``, ``cy``
+  and ``cx`` are body coefficients whose senses already match, so ``Cl_b``, ``Cl_P``,
+  ``Cn_R``, ``CX_Q``, ``Cm_a`` and the control rows all enter the arrays unaltered.
+  In particular ``czq[0]`` and ``cxq[0]`` now hold Tornado's **body-axis** ``CZ_Q`` and
+  ``CX_Q`` rather than the wind-axis ``CL_Q`` the plan's mapping table names, because
+  the schema ADDS both slots to the body-axis ``cz`` and ``cx``.  The wind-axis numbers
+  are still recorded, in ``provenance.cd_q_convention``, because both in-tree
+  reference files store the standard-aero ``CL_q``/``CD_q`` in these two slots and a
+  reader comparing against them needs to know which is which.
 
-Note the last column honestly: the mapping hands ``Cl_P``, ``Cl_R``, ``Cn_R``,
-``CY_P`` and ``CY_R`` to the table **still on the wrong side** -- five slots -- and
-it is the table, not the mapping, that puts them right.  ``Cn_P`` is *not* one of
-them: ``-Cn_P = -0.0687`` already satisfies ``cn_p < 0``, so that row's provenance
-reads ``"state": "normalised"`` and ``cn_p`` is absent from ``provenance.flipped``.
-This table is prose and cannot be derived from data, so **the file header computes
-the same set from the run's own ``provenance.flipped`` at build time** (see
-``_flipped_rate_slots``), which is what stops the two from drifting apart.  Two of the three moment axes flip
-because a right-handed frame that reverses two of its three axes reverses
-exactly those two moment senses; the pitch axis (right in both) does not flip,
-which is what keeps ``Cm`` the one quantity whose sign survives untouched.  Every
-slot is handed to ``normalise_sign`` rather than being signed here, so a
-disagreement is logged in ``provenance.flipped`` instead of applied by hand --
-ten of the twenty-five slots are flipped by the table, and ``provenance.mapping``
-records the solver's value and the mapped value for each.
+What this re-base changed in the written numbers: nothing measurable.  Every one of
+the twenty-five coefficients came out the same, because every slot that used to be
+negated and then flipped by the invariant table is now already on the invariant side
+of zero.  What changed is the bookkeeping -- ten slots used to appear in
+``provenance.flipped`` and four do now -- and every ``conversion=`` string, which used
+to claim a frame reason that no longer exists.
 
-**None of this changes a written coefficient.**  The rate-derivative question was
-recomputed under both readings and the twenty-five written values are identical,
-because ``normalise_sign`` is the final authority and a component-sense flip
-reverses the moment and its shift's force coefficient together, so the shift term
-flips with the moment and the table undoes the lot.
-
-``shift_moments_to_cg`` needs the same mapping, but its ``cz`` is the **body-z
-force** coefficient, not the wind-axis lift: the pitch line is
-``dx * F_z / c_ref``, so the argument is ``coeff_create``'s ``CZ`` (``-CZ_a``,
-``-CZ_Q``, ``-CZ_de``), not ``-CL``.  ``cl = -Cl`` is not a shift argument at all:
-with ``dy = dz = 0`` no force reaches the roll axis.  Tornado's y axis is already
-the dynamics y axis, so the side force passes through as ``cy = +CY`` and does
-reach the yaw line.
+``shift_moments_to_cg``'s ``cz`` is the **body-z force** coefficient, not the
+wind-axis lift: the pitch line is ``dx * F_z / c_ref``, so the argument is
+``coeff_create``'s ``CZ_a``, ``CZ_Q`` and the reconstructed ``CZ_de`` -- each read
+straight, none negated, because ``CZ`` is already the body-z channel in
+Forward-Right-Down.  ``Cl`` is not a shift argument at all: with ``dy = dz = 0`` no
+force reaches the roll axis.  ``CY`` is in no solver's sign map, so the side force
+passes through unaltered and does reach the yaw line.
 
 Slopes shift, intercepts shift differently
 ------------------------------------------
@@ -100,23 +79,26 @@ Slopes shift, intercepts shift differently
 the force coefficient that goes with the same independent variable:
 
 * a **slope** w.r.t. alpha (``Cm_a``) needs the **body-z** lift slope
-  ``cz = -CZ_a``, because ``d/dalpha`` of the shift ``dx * CZ / c_ref`` is
+  ``cz = CZ_a``, because ``d/dalpha`` of the shift ``dx * CZ / c_ref`` is
   ``dx * CZ_alpha / c_ref`` and the quantity in that expression is the body-z
-  force, not the wind-axis lift.  ``CZ_a`` and ``CL_a`` differ here by 0.34 %
-  (``5.165581`` against ``5.148013`` at alpha = 4 deg) because the aircraft
-  carries NP[0], and using the lift slope there leaves that much linearisation
-  error in ``cm[1]``;
-* an **intercept** (``Cm0``, from the alpha = 0 run) needs the lift
-  **intercept** ``cz = -CL(0)``, because the constant force arm does not
-  differentiate away -- and at alpha = 0 the wind-axis and body-axis lifts
-  coincide exactly, so the same number is both;
+  force, not the wind-axis lift.  ``|CZ_a|`` and ``CL_a`` differ here by 0.34 %
+  (``5.165581`` against ``5.148013`` at alpha = 4 deg) because the aircraft carries
+  NP[0], and using the lift slope there leaves that much linearisation error in
+  ``cm[1]``.  Note the SIGN: ``CZ_a`` arrives NEGATIVE, because z is down, so the
+  identity and the frame agree for once and no negation is needed;
+* an **intercept** (``Cm0``, from the alpha = 0 run) needs the **body-z** lift
+  **intercept** ``cz = CZ(0)``, because the constant force arm does not
+  differentiate away -- and at alpha = 0 ``CZ(0)`` and ``-CL(0)`` are the same
+  number, so the identity that gives ``cz[0]`` its sign is also the right shift
+  argument;
 * a **slope** w.r.t. a control deflection (``Cm_de``) needs the body-z force
   slope w.r.t. that same deflection for exactly the first reason.
-  ``tornado_controls`` reports only the wind-axis ``CL`` and ``CD``, so it is
-  reconstructed exactly: with ``s = sin(alpha)``, ``c = cos(alpha)`` the pair
-  ``[dCL; dCD] = [[-s, c], [c, s]] . [dCX; dCZ]`` and that matrix is its own
-  inverse, so ``dCZ = c*dCL + s*dCD``;
-* a **slope** w.r.t. a rate (``Cm_Q``) needs ``cz = -CZ_Q``, same reason;
+  ``tornado_controls`` reports the wind-axis ``CL`` and ``CD`` rather than a body
+  ``CZ``, so it is reconstructed exactly: with ``s = sin(alpha)``, ``c = cos(alpha)``
+  the pair ``[dCL; dCD] = [[-s, c], [c, s]] . [dCX; dCZ]`` and that matrix is its own
+  inverse, so ``dCZ = c*dCL + s*dCD`` -- positive here, and again needing no
+  negation;
+* a **slope** w.r.t. a rate (``Cm_Q``) needs ``cz = CZ_Q``, same reason;
 * a **slope** w.r.t. beta, p or r (``Cn_beta``, ``Cn_p``, ``Cn_r``) needs the
   side-force slope for the same variable (``CY_b``, ``CY_P``, ``CY_R``), which is
   why the side force is passed even though ``dy = 0`` here.
@@ -496,9 +478,17 @@ class CrossCheckRun:
 
 @dataclass(frozen=True)
 class TornadoRun:
-    """One Tornado solve, normalised, with everything needed to re-derive it."""
+    """One Tornado solve, normalised, with everything needed to re-derive it.
+
+    Deliberately the same shape as ``CrossCheckRun``: ``_slot_lines`` reads
+    ``run.coefficients`` and is shared by the Tornado and cross-check headers, so
+    the two run types have to carry the same attributes.  Tornado's header build
+    raised ``AttributeError: 'TornadoRun' object has no attribute 'coefficients'``
+    before this field was stored.
+    """
 
     derivatives: DerivativeSet
+    coefficients: dict[str, list[float]]
     raw: dict[str, Any]
     geometry: Geometry
     provenance: dict[str, Any]
@@ -518,6 +508,38 @@ def aid_src() -> Path:
 def default_source() -> Path:
     """The sibling analysis file this converter reads.  Never written to."""
     return DEFAULT_SOURCE
+
+
+def _aid_commit() -> str | None:
+    """The sibling package's HEAD commit, read with its own git, read-only.
+
+    Recorded because this project has been broken by an upstream commit TWICE, both
+    times silently and both times found only by a failing test rather than by a
+    diff: once when ``aid.tornado.coeff.py`` began returning Forward-Right-Down, so
+    the moment shift double-negated, and once when ``flow5_run`` began emitting
+    lateral channels, so a file that declared eighteen slots missing stopped being
+    true.  A rebuild that moves the sibling should then be a one-line diff in this
+    field rather than a mystery.
+
+    Read with ``git -C <dir> rev-parse HEAD`` through the sibling's own repository.
+    Nothing is written there, nothing is vendored, and no requirements entry is
+    added.  ``None`` when the path is not a git checkout, which is the case for an
+    ``$AID_SRC`` override pointing at a plain directory.
+    """
+    import subprocess
+
+    root = aid_src().resolve()
+    for candidate in (root, *root.parents):
+        if (candidate / ".git").exists():
+            try:
+                out = subprocess.run(
+                    ["git", "-C", str(candidate), "rev-parse", "HEAD"],
+                    check=True, capture_output=True, text=True, timeout=20,
+                )
+            except (subprocess.SubprocessError, OSError):
+                return None
+            return out.stdout.strip() or None
+    return None
 
 
 def _stable_path(path: Path | str | None) -> str:
@@ -930,21 +952,34 @@ def tornado_run(source: Path | None = None) -> TornadoRun:
     raw["planform"] = _planform(ac, extra_share)
 
     # --- lift -----------------------------------------------------------------
-    # The SLOT value and the SHIFT argument are deliberately different numbers.
-    # `cz[1]` is the lift slope, because the plan's mapping table says
-    # `CL_a -> cl_alpha` and both in-tree files store CL_alpha there.  The shift
-    # argument must be the BODY-Z force slope, `coeff_create["CZ_a"]`, because
-    # that is the quantity the shift's own algebra contains
-    # (`M_G = M_O + (O - G) x F`, and the pitch line is `dx * F_z / c_ref`).  The
-    # two differ by 0.34 % at alpha = 4 deg -- CL and CZ are the wind-axis and
-    # body-axis lifts, and they part company wherever the axial force is
-    # non-zero, which it is here because NP[0] is in the lattice.
-    cz_alpha = -cl_alpha                       # slot: -CL_a
-    cz_alpha_body = -float(coeffs["CZ_a"])     # shift argument: -CZ_a
+    # `coeff_create` returns Forward-Right-Down (aid/tornado/coeff.py's last line is
+    # `return to_frd("tornado", out)`), which is x forward, y right, z DOWN with
+    # positive Cl rolling right, positive Cm nose up and positive Cn yawing right --
+    # exactly `plane/dynamics.py`'s frame, so NOTHING here is converted for frame
+    # reasons and `aid/axes.py` owns every sign.
+    #
+    # Two negations SURVIVE and neither is a frame conversion:
+    #
+    # 1. `cz = -CL`.  `plane/dynamics.py` applies `az = +qbar*S*cz/m`, so `cz` is the
+    #    body-+z coefficient with z DOWN, i.e. up-positive lift enters as a negative
+    #    `cz`.  That identity is derived from the flight model, not from a solver, and
+    #    both in-tree reference files store CL_alpha in `cz[1]`.  Tornado's `CZ_a` is
+    #    the body-z coefficient itself and is read WITHOUT this negation.
+    # 2. `cz[5] = -CL_de`, the same identity applied to the elevator.
+    #
+    # The SLOT value and the SHIFT argument are still deliberately different numbers:
+    # `cz[1]` is the wind-axis lift slope `CL_a`, while the shift's algebra contains
+    # the body-z force (`M_G = M_O + (O - G) x F`, pitch line `dx * F_z / c_ref`), so
+    # it shifts with `CZ_a`.  The two differ by 0.34 % at alpha = 4 deg because CL and
+    # CZ part company wherever the axial force is non-zero, which it is here -- NP[0]
+    # is in the lattice.
+    cz_alpha = -cl_alpha                       # slot: -CL_a, the cz = -CL identity
+    cz_alpha_body = float(coeffs["CZ_a"])      # shift argument: CZ_a, already body-z
     collector.put(
         "cl_alpha", cz_alpha, tornado_key="CL_a", solver_value=cl_alpha,
-        conversion="slot: cz = -CL_a (the plan's mapping table, and both in-tree "
-                    "files store CL_alpha in cz[1]); already per radian",
+        conversion="cz = -CL_alpha, and that is the plane/dynamics.py identity (its "
+                    "body +z axis points down), NOT a frame conversion -- coeff_create "
+                    "already returns Forward-Right-Down.  Per radian already",
         role="slope",
     )
 
@@ -954,60 +989,82 @@ def tornado_run(source: Path | None = None) -> TornadoRun:
     cl0 = -cl_at_zero
     collector.put(
         "cl0", cl0, tornado_key="CL(alpha=0)", solver_value=cl_at_zero,
-        conversion="cz = -CL; a second solve at alpha = 0 rad, no extrapolation",
+        conversion="cz = -CL, the plane/dynamics.py identity; a second solve at "
+                   "alpha = 0 rad, no extrapolation",
         role="intercept",
     )
 
-    # CL_q: the slot takes the standard-aero CL_q the invariant table names, and
-    # the shift takes the body-z slope with respect to q.
-    cz_q = -float(coeffs["CL_Q"])
-    cz_q_body = -float(coeffs["CZ_Q"])
+    # czq[0]: the schema ADDS this slot to the body-z `cz`, and coeff_create's `CZ_Q`
+    # IS the body-z pitch-rate coefficient, already Forward-Right-Down, so it is read
+    # directly with no negation of any kind.  The wind-axis `CL_Q` is recorded beside
+    # it because both in-tree files store the standard-aero CL_q in this slot and a
+    # reader comparing against them needs to know which number is which; the two
+    # differ by 0.25 % here, since CL and CZ part company wherever the axial force is
+    # non-zero (NP[0] is in the lattice).
+    cz_q = float(coeffs["CZ_Q"])
+    cz_q_body = cz_q
     collector.put(
-        "cl_q", cz_q, tornado_key="CL_Q", solver_value=float(coeffs["CL_Q"]),
-        conversion="czq[0] holds the standard-aero CL_q (both in-tree files do), "
-                   "so it is -CL_Q; coeff_create already divided by fac = c_mac/(2V)",
+        "cl_q", cz_q, tornado_key="CZ_Q", solver_value=float(coeffs["CZ_Q"]),
+        conversion="read directly: CZ_Q is the body-z pitch-rate coefficient and "
+                   "czq[0] is added to the body-z cz, and coeff_create already returns "
+                   "Forward-Right-Down, so no identity and no conversion apply.  "
+                   f"Wind-axis CL_Q = {float(coeffs['CL_Q']):.6f} is recorded as "
+                   "provenance.cd_q_convention.wind_axis_cl_q; the two differ by 0.25 %",
         role="slope",
     )
 
-    # --- side force: Tornado's y axis is the dynamics y axis -------------------
-    # `CY_*` is the BODY-y component, which is the one `plane/dynamics.py` reads.
-    # (`coeff_create`'s other side force, `CC_*`, is the wind-axis one; the two are
-    # identical at betha = 0 because the rotation's side-force row is then (0,1,0),
-    # and the aileron/rudder rows below are likewise fed from `CC`.)
+    # --- side force -----------------------------------------------------------
+    # `CY` is never in any solver's sign map -- aid/axes.py: "the CY channel and its
+    # flow-angle derivatives are never flipped, by any solver" -- so it is read
+    # exactly as reported.  It is the body-y coefficient, which is what
+    # `plane/dynamics.py` reads; coeff_create's other side force, `CC`, is the
+    # wind-axis one, and the two are identical at betha = 0 because the rotation's
+    # side-force row is then (0,1,0).
     cy_beta = float(coeffs["CY_b"])
     cy_p = float(coeffs["CY_P"])
     cy_r = float(coeffs["CY_R"])
     collector.put(
         "cy_beta", cy_beta, tornado_key="CY_b", solver_value=float(coeffs["CY_b"]),
-        conversion="cy = +CY_b, the body-y slope; CC_b is the wind-axis side force "
-                   "and equals CY_b exactly at betha = 0",
+        conversion="read directly: CY is in no solver's sign map (aid/axes.py), so it "
+                   "is already the body-y slope plane/dynamics.py reads; CC_b is the "
+                   "wind-axis side force and equals CY_b exactly at betha = 0",
         role="slope",
     )
     collector.put(
         "cy_p", cy_p, tornado_key="CY_P", solver_value=float(coeffs["CY_P"]),
-        conversion="cy = +CY_P, the body-y slope; already divided by fac", role="slope",
+        conversion="read directly; CY_P is already Forward-Right-Down and already "
+                   "divided by fac = c_mac/(2V)", role="slope",
     )
     collector.put(
         "cy_r", cy_r, tornado_key="CY_R", solver_value=float(coeffs["CY_R"]),
-        conversion="cy = +CY_R, the body-y slope; already divided by fac", role="slope",
+        conversion="read directly; CY_R is already Forward-Right-Down and already "
+                   "divided by fac = c_mac/(2V)", role="slope",
     )
 
-    # --- roll moments: Tornado's x axis is aft, so roll sense is negated ------
+    # --- roll moments ---------------------------------------------------------
+    # `Cl` is in Tornado's sign map with a -1, so coeff_create's roll channel is
+    # already F-R-D and is read directly: no negation.  The old `cl = -Cl_*` mapping
+    # existed only to reverse Tornado's aft-positive x, and the sibling now does it.
     for field, key in (("cl_beta", "Cl_b"), ("cl_p", "Cl_P"), ("cl_r", "Cl_R")):
         collector.put(
-            field, -float(coeffs[key]), tornado_key=key, solver_value=float(coeffs[key]),
-            conversion="cl = -" + key + " (Tornado x is aft-positive, so the roll "
-                       "sense reverses); already divided by fac",
+            field, float(coeffs[key]), tornado_key=key, solver_value=float(coeffs[key]),
+            conversion="read directly: coeff_create returns Forward-Right-Down and "
+                       "positive Cl already rolls right, which is what "
+                       "plane/dynamics.py's cl means.  Already divided by fac",
             role="slope",
         )
 
-    # --- pitch: Tornado's pitch sense already agrees with dynamics ------------
-    # Cm_a is a SLOPE in alpha, so it shifts with the BODY-Z lift SLOPE.
+    # --- pitch ----------------------------------------------------------------
+    # `Cm` takes NO sign-map entry (it is about the one shared axis, y, and
+    # coeff.py:108 states it is the body-y moment, not a wind-axis one), so it is read
+    # directly and was already un-negated before the F-R-D work.  Cm_a is a SLOPE in
+    # alpha, so it shifts with the BODY-Z lift SLOPE.
     _, cm_alpha, _ = _shift(geometry, cz=cz_alpha_body, cy=0.0, cm=float(coeffs["Cm_a"]), cn=0.0)
     collector.put(
         "cm_alpha", cm_alpha, tornado_key="Cm_a", solver_value=float(coeffs["Cm_a"]),
-        conversion="cm = +Cm_a, then shifted with cz = -CZ_a, the matching body-z "
-                   "force slope (not -CL_a: the shift's algebra contains F_z)",
+        conversion="read directly, then shifted with cz = +CZ_a, the body-z force "
+                   "slope the shift's algebra contains (not CL_a: F_z, not the "
+                   "wind-axis lift)",
         role="slope",
     )
     # Cm0 is an INTERCEPT, so it shifts with the lift INTERCEPT, not the slope.
@@ -1017,52 +1074,54 @@ def tornado_run(source: Path | None = None) -> TornadoRun:
     _, cm0, _ = _shift(geometry, cz=cl0, cy=0.0, cm=cm_at_zero, cn=0.0)
     collector.put(
         "cm0", cm0, tornado_key="Cm(alpha=0)", solver_value=cm_at_zero,
-        conversion="cm = +Cm, then shifted with cz = -CL(0), the matching intercept "
-                   "(at alpha = 0 CL = CZ); cm0 carries no sign invariant and is "
-                   "never normalised",
+        conversion="read directly, then shifted with the matching body-z intercept "
+                   "cz = CZ(0) = -CL(0) (at alpha = 0 the body and wind lifts "
+                   "coincide); cm0 carries no sign invariant and is never normalised",
         role="intercept",
     )
     # Cm_Q is a SLOPE in q, so it shifts with the body-z slope in q.
     _, cm_q, _ = _shift(geometry, cz=cz_q_body, cy=0.0, cm=float(coeffs["Cm_Q"]), cn=0.0)
     collector.put(
         "cm_q", cm_q, tornado_key="Cm_Q", solver_value=float(coeffs["Cm_Q"]),
-        conversion="cm = +Cm_Q, then shifted with cz = -CZ_Q, the matching body-z "
-                   "force slope; already divided by fac",
+        conversion="read directly, then shifted with cz = +CZ_Q, the body-z force "
+                   "slope in q; already divided by fac",
         role="slope",
     )
 
-    # --- yaw: negated (z up vs z down), shifted on dx * cy --------------------
+    # --- yaw ------------------------------------------------------------------
+    # `Cn` is in Tornado's sign map with a -1, so coeff_create's yaw channel is
+    # already F-R-D with positive Cn yawing right, which is what `plane/dynamics.py`'s
+    # cn means: read directly.  The old `cn = -Cn_*` mapping existed only to reverse
+    # Tornado's up-positive z.
     for field, key, side in (
         ("cn_beta", "Cn_b", "CY_b"), ("cn_p", "Cn_P", "CY_P"), ("cn_r", "Cn_R", "CY_R"),
     ):
         shifted = _shift(
             geometry, cz=0.0,
             cy={"Cn_b": cy_beta, "Cn_P": cy_p, "Cn_R": cy_r}[key],
-            cm=0.0, cn=-float(coeffs[key]),
+            cm=0.0, cn=float(coeffs[key]),
         )[2]
         collector.put(
             field, shifted, tornado_key=key, solver_value=float(coeffs[key]),
-            conversion=f"cn = -{key} (Tornado z is up-positive, so the yaw sense "
-                       f"reverses), then shifted with the body-y slope {side}; "
-                       "already divided by fac",
+            conversion=f"read directly (coeff_create returns Forward-Right-Down, and "
+                       f"positive Cn already yaws right), then shifted on dx*cy with the "
+                       f"body-y slope {side}; already divided by fac",
             role="slope",
         )
 
     # --- drag ------------------------------------------------------------------
-    # cxq[0] and czq[0] are the pair that the two in-tree files and the plan's
-    # table store in the STANDARD-AERO convention: linear/morelli.json has
-    # czq[0] = -2.0 and cxq[0] = 0.0, and the table pins both signs.  So these two
-    # slots take Tornado's axial and normal coefficients as the standard CD_q and
-    # CL_q, with no axis negation -- and that is also why czq[0] above is -CL_Q and
-    # not the body-z +CL_Q.  The schema then ADDS them to the body-x Cx and body-z
-    # Cz, which is an inconsistency of the schema itself, inherited from both
-    # in-tree files rather than introduced here.
+    # `CX` is in Tornado's sign map with a -1, so `CX_Q` arrives already F-R-D with
+    # drag negative, and `cxq[0]` is added to the body-x `cx`: read directly, no
+    # negation.  The schema ADDS `cxq[0]` to the body-x coefficient, so this slot and
+    # `czq[0]` above both now hold the body-axis coefficient the schema actually wants;
+    # see provenance.cd_q_convention for the wind-axis numbers beside them, since both
+    # in-tree files store the standard-aero CD_q / CL_q in these two slots.
     collector.put(
         "cd_q", float(coeffs["CX_Q"]), tornado_key="CX_Q",
         solver_value=float(coeffs["CX_Q"]),
-        conversion="cxq[0] holds the standard-aero CD_q, which at trim is Tornado's "
-                   "axial rate CX_Q (Tornado x aft => +CX is drag-positive); "
-                   "already divided by fac",
+        conversion="read directly: CX_Q is the body-x pitch-rate coefficient and "
+                   "cxq[0] is added to the body-x cx, and coeff_create already returns "
+                   "Forward-Right-Down.  Already divided by fac",
         role="slope",
     )
     # Cd0: parasite drag.  The plan's formula, CD(0) - K*CL(0)^2, is NEGATIVE here
@@ -1088,29 +1147,45 @@ def tornado_run(source: Path | None = None) -> TornadoRun:
 
     # --- controls ---------------------------------------------------------------
     # `tornado_controls` returns central differences PER DEGREE; every one is
-    # multiplied by DEG_TO_RAD before it goes near a Morelli array.  Its "CY"
-    # entry is coeff_create's CC, the wind-axis side force; at betha = 0 the
-    # wind-axis and body-axis side forces are identical, and the body axis is
-    # the one the model wants.
+    # multiplied by DEG_TO_RAD before it goes near a Morelli array.  Its `Cl`/`Cn`/
+    # `Cm` come straight out of `coeff_create`, which is already F-R-D, and the
+    # sibling deliberately does NOT re-wrap them (aid/tornado/control_deriv.py's own
+    # comment: "No to_frd(\"tornado\", ...) here on purpose ... wrapping this dict
+    # would flip them twice").  So all three are read directly with no negation.
+    # Its `CY` is coeff_create's CC, the wind-axis side force; at betha = 0 that
+    # equals the body-y force the model reads, and `CY` is in no solver's sign map.
+    # `CL` and `CD` remain wind-axis, which is why `cz[5]` below still carries the
+    # `cz = -CL` identity.
     aileron, elevator, rudder = rows["aileron"], rows["elevator"], rows["rudder"]
 
-    def control(field: str, surface: str, key: str, sign: float) -> None:
+    def control(field: str, surface: str, key: str, negate: bool = False) -> None:
         per_degree = float(surface[key])
+        magnitude = per_degree_to_per_radian(per_degree)
         collector.put(
-            field, sign * per_degree_to_per_radian(per_degree),
+            field, -magnitude if negate else magnitude,
             tornado_key=f"tornado_controls[{surface['surface']}].{key}",
             solver_value=per_degree,
-            conversion=f"per degree x {DEG_TO_RAD}, then "
-                       f"{'negated (Tornado axis sense)' if sign < 0 else 'as it stands'}",
+            conversion=(
+                f"per degree x {DEG_TO_RAD}, then read directly: the row's "
+                f"{key} comes out of coeff_create, which already returns "
+                "Forward-Right-Down, and control_deriv.py deliberately does not "
+                "re-wrap it"
+                + (
+                    ".  The one negation that survives is the plane/dynamics.py "
+                    "identity cz = -CL, the same one that applies to cz[1]"
+                    if negate else
+                    "; no identity and no frame conversion apply"
+                )
+            ),
             role="slope",
         )
 
-    control("cl_da", aileron, "Cl", -1.0)
-    control("cy_da", aileron, "CY", 1.0)
-    control("cn_da", aileron, "Cn", -1.0)
-    control("cl_dr", rudder, "Cl", -1.0)
-    control("cy_dr", rudder, "CY", 1.0)
-    control("cn_dr", rudder, "Cn", -1.0)
+    control("cl_da", aileron, "Cl")
+    control("cy_da", aileron, "CY")
+    control("cn_da", aileron, "Cn")
+    control("cl_dr", rudder, "Cl")
+    control("cy_dr", rudder, "CY")
+    control("cn_dr", rudder, "Cn")
     # The elevator's vertical-force slope is needed twice: it is `cz[5]`, and it is
     # what `cm_de` shifts with.  `tornado_controls` reports only the wind-axis CL
     # and CD, so the body-z slope is reconstructed from the two of them exactly:
@@ -1125,8 +1200,15 @@ def tornado_run(source: Path | None = None) -> TornadoRun:
     cl_de_per_degree = float(elevator["CL"])
     cd_de_per_degree = float(elevator["CD"])
     cz_de_per_degree = cos_a * cl_de_per_degree + sin_a * cd_de_per_degree
-    # The slot keeps the standard-aero CL_de the table names; the shift argument
-    # is the body-z slope, exactly as for alpha and q.
+    # `cz[5]` keeps the plane/dynamics.py identity cz = -CL, the same one that gives
+    # cz[1] its sign; the shift argument is the body-z slope, exactly as for alpha
+    # and q.
+    #
+    # That reconstruction's SIGN is measured, not reasoned.  Two solves at elevator
+    # delta = +-1 deg on the deflected lattices, reading coeff_create's own CZ, give
+    # dCZ/ddelta = -0.006487/deg -- the negative of the +0.006472 the rotation above
+    # produces, because that rotation turns the wind-axis CL into a z-UP normal force
+    # and coeff_create's CZ is z DOWN.  So the rotation is negated:
     cl_de_slot = -per_degree_to_per_radian(cl_de_per_degree)
     cz_de = -per_degree_to_per_radian(cz_de_per_degree)
     cm_de_o = per_degree_to_per_radian(float(elevator["Cm"]))
@@ -1134,18 +1216,22 @@ def tornado_run(source: Path | None = None) -> TornadoRun:
     collector.put(
         "cl_de", cl_de_slot, tornado_key="tornado_controls[elevator].CL",
         solver_value=cl_de_per_degree,
-        conversion=f"per degree x {DEG_TO_RAD}, then cz = -CL_de; this is the "
-                   "standard-aero CL_de the table names, not the body-z slope "
-                   "that shifts cm_de",
+        conversion=f"per degree x {DEG_TO_RAD}, then cz = -CL_de, the "
+                   "plane/dynamics.py identity (its body +z axis points down) and "
+                   "NOT a frame conversion -- the row's CL is wind-axis, which is why "
+                   "the identity applies here at all; the body-z slope that shifts "
+                   "cm_de is reconstructed from the row's CL and CD and recorded as "
+                   "provenance.raw CZ_de",
         role="slope",
     )
     collector.put(
         "cm_de", cm_de, tornado_key="tornado_controls[elevator].Cm",
         solver_value=float(elevator["Cm"]),
-        conversion=f"per degree x {DEG_TO_RAD}, cm = +Cm, then shifted with the "
-                   f"matching body-z force slope cz = -CZ_de = -(cos a * CL_de + "
+        conversion=f"per degree x {DEG_TO_RAD}, Cm read directly (it comes out of "
+                   f"coeff_create, already F-R-D), then shifted with the matching "
+                   f"body-z force slope cz = CZ_de = (cos a * CL_de + "
                    f"sin a * CD_de) x {DEG_TO_RAD}, reconstructed exactly from the "
-                   "row's CL and CD",
+                   "row's wind-axis CL and CD",
         role="slope",
     )
 
@@ -1169,6 +1255,7 @@ def tornado_run(source: Path | None = None) -> TornadoRun:
         "source": _stable_path(source),
         "aid_src": _stable_path(aid_src()),
         "aid_src_from_env": bool(os.environ.get(AID_SRC_ENV)),
+        "aid_src_commit": _aid_commit(),
         "extra_panel_cl_share": extra_share,
         "flight_condition": {
             "mach": geometry.mach,
@@ -1193,16 +1280,50 @@ def tornado_run(source: Path | None = None) -> TornadoRun:
             "dx_m": geometry.dx_m,
             "dy_m": geometry.dy_m,
             "dz_m": geometry.dz_m,
-            "note": "Tornado reports about ref_point with x aft-positive; the CG offset passed "
-                    "to shift_moments_to_cg is dx = -ft(2.94) in the dynamics frame (x forward)",
+            "note": "Tornado reports about ref_point and the sibling re-expresses every "
+                    "coefficient in Forward-Right-Down, where the reference station is 2.94 ft "
+                    "AHEAD of the CG in the x-FORWARD sense; the CG offset passed to "
+                    "shift_moments_to_cg is therefore dx = -ft(2.94) m",
         },
         "sign_convention": {
-            "tornado_axes": "x aft, y right, z up (right-handed)",
+            "tornado_axes": "x forward, y right, z DOWN, as RETURNED -- coeff_create ends "
+                            "with `return to_frd(\"tornado\", out)` and aid/axes.py is the "
+                            "sibling's single home for solver signs",
+            "frame_conversion_applied": "none: the sibling already returns "
+                                        "plane/dynamics.py's own frame, so no moment and no "
+                                        "force needs its sign changed for frame reasons",
+            "only_surviving_negations": "cz = -CL on cz[1] and cz[5], which is the "
+                                        "plane/dynamics.py identity (its body +z axis points "
+                                        "down) and not a conversion",
             "dynamics_axes": "x forward, y right, z down (plane/dynamics.py)",
-            "cz": "cz = -CL (body z down); cl = -Cl; cm = +Cm; cn = -Cn",
-            "rate_derivatives": "no extra flip: the code perturbs the relative wind with r x "
-                                "omega, which is the correct omega x r for a negated velocity",
+            "cz": "cz = -CL on cz[1] and cz[5] only; cl, cm, cn, cy and cx are read exactly as "
+                  "reported",
+            "rate_derivatives": "none: coeff_create returns F-R-D for every channel, including "
+                                "the p/r columns, and Tornado's own Cl_P and Cn_R now AGREE "
+                                "with AVL's (which is unmapped and therefore natively F-R-D). "
+                                "The former claim that Tornado's P and R columns came back "
+                                "component-sense inverted no longer applies and was removed",
             "normalisation": "aero_convert.units.normalise_sign against SIGN_INVARIANTS",
+        },
+        "cd_q_convention": {
+            "shipped": "czq[0] = coeff_create['CZ_Q'] and cxq[0] = coeff_create['CX_Q'], the "
+                       "BODY-axis pitch-rate coefficients, read unnegated",
+            "why": "the schema ADDS both slots to the body-axis cz and cx, so the body-axis "
+                   "coefficient is what they mean.  The sibling returns both in "
+                   "Forward-Right-Down, so no identity and no conversion apply",
+            "wind_axis_cl_q": float(coeffs["CL_Q"]),
+            "wind_axis_cl_q_slot_if_standard_aero": -float(coeffs["CL_Q"]),
+            "body_axis_cz_q_shipped": float(coeffs["CZ_Q"]),
+            "difference_percent": 100.0
+            * (float(coeffs["CL_Q"]) - abs(float(coeffs["CZ_Q"])))
+            / abs(float(coeffs["CL_Q"])),
+            "in_tree_files_store": "the standard-aero CL_q and CD_q (data/planes/linear/"
+                                   "morelli.json has czq[0] = -2.0, cxq[0] = 0.0), so a reader "
+                                   "comparing against them needs wind_axis_cl_q_slot_if_"
+                                   "standard_aero above; the two differ here by about a "
+                                   "quarter of a per cent because CL and CZ part company "
+                                   "wherever the axial force is non-zero, which it is -- NP[0] "
+                                   "is in the lattice",
         },
         "cl_alpha_cross_check": {
             "coeff_create": cl_alpha,
@@ -1282,6 +1403,7 @@ def tornado_run(source: Path | None = None) -> TornadoRun:
     }
     return TornadoRun(
         derivatives=derivatives,
+        coefficients=coefficients,
         raw=raw,
         geometry=geometry,
         provenance=provenance,
@@ -1454,6 +1576,7 @@ def _cross_check_provenance(
         "source": _stable_path(source),
         "aid_src": _stable_path(aid_src()),
         "aid_src_from_env": bool(os.environ.get(AID_SRC_ENV)),
+        "aid_src_commit": _aid_commit(),
         "flight_condition": flight_condition,
         "moment_reference": moment_reference,
         "sign_convention": {
@@ -2520,170 +2643,259 @@ def avl_derivatives(source: Path | None = None) -> DerivativeSet:
     return avl_run(source).derivatives
 
 
+# flow5's twelve StabDerivative channels, read off FLOW5/run/flow5_run.cpp's
+# stab_derivative_fields() field list rather than typed: a name the runner stops
+# emitting then shows up as absent here instead of silently missing from the record.
+FLOW5_STAB_DERIVATIVE_KEYS = (
+    "CZa", "CXa", "CYb", "CYp", "CYr", "Clb", "Clp", "Clr",
+    "Cnb", "Cnp", "Cnr", "XNP",
+)
+
+
+def _flow5_deck_for_record(ac: Any) -> dict[str, Any]:
+    """The deck this converter hands flow5, kept for the raw record in the file.
+
+    flow5 has no other record of what it was asked for: the runner reads the deck and
+    reports 26 numbers, so the deck's polar -- ``qinf_mps``, ``cog_m``, ``sref_m2``,
+    the alpha schedule -- is the only place the flight condition it actually ran at
+    survives.  ``cog_m`` is what the moment-reference check reads back.
+    """
+    from aid.flow5_io import write_flow5_deck
+
+    return write_flow5_deck(ac, FLOW5_MESH)
+
+
 def flow5_run(source: Path | None = None) -> CrossCheckRun:
-    """flow5 over the source: a longitudinal static cross-check and nothing more.
+    """flow5 over the source, through the ONE call that makes it Forward-Right-Down.
 
-    Measured, from ``FLOW5/run/flow5_run.cpp``: the runner reads
-    ``polar.alpha_deg`` and nothing else about the condition, calls
-    ``PlaneTask::setComputeDerivatives(false)``, and serialises exactly
-    ``alpha``, ``CL``, ``CD``, ``Cm``, ``CLa`` and ``Cma``.  There is no sideslip
-    sweep, no rate sweep, and no roll, yaw or side-force column anywhere in the
-    output, so flow5 can produce seven of the twenty-five ``DerivativeSet``
-    fields and no more:
+    ``aid.flow5_io.run_flow5(ac, mesh)`` is ``to_frd("flow5", run_flow5_native(...))``,
+    and using it is the whole frame question here -- but it is worth saying why the
+    obvious shortcut is wrong, because it is a trap:
 
-    ``cl0``, ``cl_alpha``, ``cm_alpha``, ``cm0``, ``cl_de``, ``cm_de`` and
-    ``cd0``.  Everything else is ``None``, zeroed and declared in
-    ``provenance.missing`` with that reason.  ``aid.flow5_controls.flow5_controls``
-    is still run because it is the only way to get the elevator, and it confirms
-    the absence by returning every aileron and rudder coefficient as ``None``:
-    its ``_KEEP`` table asks for ``Cl``/``Cn`` and ``CY``, and flow5's output has
-    none of them.
+    * flow5's **per-point polar channels** ``Cx``, ``Cz``, ``Cl``, ``Cn`` ARE in
+      flow5's sign map, all ``-1``.  Measured before the flip, raw ``Cz`` tracked raw
+      ``CL`` (``Cz`` = [+0.2349, -0.1315, +0.4967, ...] against ``CL`` = [-0.2353,
+      +0.1315, +0.4970, ...]) -- i.e. up-positive, so raw ``Cz`` is *not* a body-z
+      coefficient and needs the ``-1``.
+    * flow5's **twelve StabDerivatives** (``CZa``, ``CXa``, ``CYb``, ``CYp``, ``CYr``,
+      ``Clb``, ``Clp``, ``Clr``, ``Cnb``, ``Cnp``, ``Cnr``, ``XNP``) take **NO**
+      sign-map entry, because ``PanelAnalysis::computeStabilityDerivatives``
+      projects them onto the stability axes, which are already F-R-D.  Measured:
+      ``CZa`` = -5.256228 while ``CLa`` = +5.169735, so ``CZa`` already carries the
+      body-z sign and is what ``cz[1]`` wants.
+    * ``CLa`` and ``Cma`` are OLS slopes over the polar and are **per radian**
+      already, whatever their sign convention.
 
-    flow5's deck is entirely SI -- ``sref_m2``, ``cref_m``, ``bref_m``,
-    ``cog_m`` and ``qinf_mps`` -- so its static derivatives are per radian about
-    the CG at a true 10.2073 m/s, with no unit slip at all.  The flight-condition
-    note still applies: that is 2.26x slower than the trimmed cruise speed, so
-    its ``CLa`` and ``Cma`` belong to a slower, thinner wing than the one the
-    model flies.
+    So the two halves need opposite treatment and only ``run_flow5`` gets both right
+    in one place.  Hand-applying ``to_frd`` to the derivative scalars would flip
+    ``CZa`` positive and invert the lift slope.
+
+    Control derivatives come from ``aid.flow5_controls``, whose default runner is the
+    RAW one, so the same ``to_frd`` is injected here rather than left implicit --
+    measured, the flipped aileron row is ``Cl`` = +0.005592/deg where raw is
+    -0.005592/deg.
+
+    What flow5 cannot produce, measured: no q-derivative at all (the library computes
+    ``CXq``/``CZq``/``Cmq`` but ``FLOW5/run/flow5_run.cpp`` does not forward them),
+    and no aileron side force, because ``aid/flow5_controls``'s ``_KEEP`` table asks
+    the aileron for ``Cl`` and ``Cn`` only.  Those four slots are ``None``, zeroed and
+    declared.
     """
     ac, shared, _aid, numpy_note = _cross_check_inputs(source)
+    from aid.axes import to_frd
     from aid.flow5_controls import flow5_controls
-    from aid.flow5_io import run_flow5_native, write_flow5_deck
+    from aid.flow5_io import run_flow5, run_flow5_native
     from aid.paths import flow5_bin
+    from aid.solver_overlay import FLOW5_BETA_FLAT
 
     with _scratch():
         if not flow5_bin().is_file():
             raise FileNotFoundError(f"the flow5 binary is not at {flow5_bin()}")
-        deck = write_flow5_deck(ac, FLOW5_MESH)
-        polar = run_flow5_native(deck)
-        control_rows = flow5_controls(ac, deltas_deg=(0.0,), mesh=FLOW5_MESH)
+        polar = run_flow5(ac, FLOW5_MESH)
+        deck = _flow5_deck_for_record(ac)
+        control_rows = flow5_controls(
+            ac, deltas_deg=(0.0,), mesh=FLOW5_MESH,
+            run=lambda built: to_frd("flow5", run_flow5_native(built)),
+        )
     by_surface = {row["surface"]: row for row in control_rows}
     geometry = _reference_geometry(ac, mesh=FLOW5_MESH)
+    # `cog_m` is metres in the deck; `_verify_cg_reference` speaks feet, like
+    # AERO.XCG.  The conversion goes through flow5's own 1/3.28084 on the way out and
+    # back through this module's FT_TO_M, which is why the tolerance is 1e-4 ft.
     cog = [float(v) for v in deck["polar"]["cog_m"]]
     moment_reference = _verify_cg_reference(geometry, cog[0] / FT_TO_M, solver="flow5")
 
     schedule = [float(v) for v in np.asarray(polar["alpha"]).reshape(-1)]
     index = schedule.index(geometry.alpha_deg) if geometry.alpha_deg in schedule else 0
     zero = schedule.index(0.0)
+    # `Cz` and `Cm` are the BODY-axis channels and are what the two intercept slots
+    # mean; `CL` and `Cma` are the wind-axis / stability-slope spellings of the same
+    # alpha dependence and are recorded beside them.
+    cz_at_zero = float(np.asarray(polar["Cz"]).reshape(-1)[zero])
     collector = _Collector()
     raw: dict[str, Any] = {
         "mesh": list(FLOW5_MESH),
+        "frame": "to_frd('flow5', ...) via aid.flow5_io.run_flow5 -- the per-point polar "
+                 "channels Cx/Cz/Cl/Cn are in flow5's sign map with -1, the twelve "
+                 "StabDerivatives take no entry because they are already stability-axis",
+        "entry_point": "aid.flow5_io.run_flow5",
         "deck_polar": deck["polar"],
-        "deck_wings": [{"name": wing.get("name"), "role": wing.get("role"),
-                        "sections": len(wing.get("sections", []))} for wing in deck["wings"]],
+        "deck_wings": [
+            {"name": wing.get("name"), "role": wing.get("role"),
+             "sections": len(wing.get("sections", []))}
+            for wing in deck["wings"]
+        ],
         "output_keys": sorted(polar),
+        "CLa": float(polar["CLa"]),
+        "Cma": float(polar["Cma"]),
         "alpha_schedule_deg": schedule,
         "alpha_index": index,
         "alpha_deg": geometry.alpha_deg,
         "CL": [float(v) for v in np.asarray(polar["CL"]).reshape(-1)],
-        "CD": [float(v) for v in np.asarray(polar["CD"]).reshape(-1)],
+        "Cz": [float(v) for v in np.asarray(polar["Cz"]).reshape(-1)],
+        "Cx": [float(v) for v in np.asarray(polar["Cx"]).reshape(-1)],
         "Cm": [float(v) for v in np.asarray(polar["Cm"]).reshape(-1)],
-        "CLa": float(polar["CLa"]),
-        "Cma": float(polar["Cma"]),
+        "CD": [float(v) for v in np.asarray(polar["CD"]).reshape(-1)],
+        "CDvis": [float(v) for v in np.asarray(polar["CDvis"]).reshape(-1)],
+        "CDind": [float(v) for v in np.asarray(polar["CDind"]).reshape(-1)],
+        "stab_derivatives": {
+            name: float(polar[name]) for name in sorted(FLOW5_STAB_DERIVATIVE_KEYS)
+            if name in polar
+        },
         "control_rows_per_degree": {
             surface: {key: by_surface[surface].get(key)
                       for key in ("CL", "CD", "Cm", "CY", "Cl", "Cn")}
             for surface in ("aileron", "elevator", "rudder")
         },
+        "control_row_frame": "to_frd('flow5', ...) injected as flow5_controls' runner; its "
+                             "default runner is the RAW one, so without the injection the "
+                             "aileron Cl and Cn would arrive with the wrong sign",
         "cog_m": cog,
+        "beta_flat": sorted(FLOW5_BETA_FLAT),
     }
+    # --- longitudinal static ---------------------------------------------------
+    cza = float(polar["CZa"])
     collector.put(
-        "cl_alpha", -float(polar["CLa"]),
-        tornado_key="flow5 polar CLa (OLS over its own alpha rows, per radian)",
-        solver_value=float(polar["CLa"]),
-        conversion="cz = -CL_alpha; flow5's deck is SI and its OLS slope is per radian, so the "
-                   "only conversion is the cz = -CL identity",
+        "cl_alpha", cza, tornado_key="flow5 CZa (StabDerivative, already stability-axis)",
+        solver_value=cza,
+        conversion="read directly: CZa is one of the twelve StabDerivatives, which take NO "
+                   "sign-map entry because computeStabilityDerivatives projects onto the "
+                   "stability axes, and it is already the body-z alpha slope with z DOWN.  "
+                   "Measured corroboration: CLa = +5.169735 while CZa = -5.256228, so CZa "
+                   "already carries this slot's sign and no negation applies",
         role="slope",
     )
     collector.put(
-        "cm_alpha", float(polar["Cma"]),
-        tornado_key="flow5 polar Cma (OLS over its own alpha rows, per radian)",
+        "cm_alpha", float(polar["Cma"]), tornado_key="flow5 Cma",
         solver_value=float(polar["Cma"]),
-        conversion="nose-up positive already; the deck puts cog_m at the CG so no shift applies",
+        conversion="read directly; nose-up positive already, and cog_m puts the polar at the CG "
+                   "so no moment shift applies",
         role="slope",
     )
     collector.put(
-        "cl0", -float(np.asarray(polar["CL"]).reshape(-1)[zero]),
-        tornado_key="flow5 polar CL at alpha = 0 deg",
-        solver_value=float(np.asarray(polar["CL"]).reshape(-1)[zero]),
-        conversion="cz = -CL; the deck's own alpha = 0 row IS the intercept",
+        "cl0", cz_at_zero, tornado_key="flow5 Cz at alpha = 0 deg",
+        solver_value=cz_at_zero,
+        conversion="read directly: Cz is the BODY-z normal force and is the per-point polar "
+                   "channel flow5's sign map DOES flip with -1, so after to_frd it is already "
+                   "the body-z coefficient this slot means.  The alpha = 0 row IS the "
+                   "intercept",
         role="intercept",
     )
     collector.put(
         "cm0", float(np.asarray(polar["Cm"]).reshape(-1)[zero]),
-        tornado_key="flow5 polar Cm at alpha = 0 deg",
+        tornado_key="flow5 Cm at alpha = 0 deg",
         solver_value=float(np.asarray(polar["Cm"]).reshape(-1)[zero]),
-        conversion="the deck's own alpha = 0 row; Cm0's sign is tail rigging, not a derivable "
+        conversion="the alpha = 0 row; Cm0's sign is tail rigging, not a derivable "
                    "convention, so it is never sign-normalised",
         role="intercept",
     )
-    # flow5 runs with viscous = false and thin = true, so its CD is induced drag
-    # only: CD(0) = 0.001243 is almost exactly K*CL(0)^2 = 0.001391, and the
-    # difference is negative.  A thin lattice run has no profile drag, exactly as
-    # for Tornado, so the parasite drag is taken from the source file's own
-    # DATCOM-computed WG.CD0 and both figures are recorded.
+    # Parasite drag: flow5 now SPLITS CD, and the split is the measurement that settles
+    # this slot.  `CDvis` is identically 0.0 on every alpha and `CDind` identically `CD`,
+    # because `flow5_run.cpp` calls `pPlPolar->setViscous(false)`: the deck asks for no
+    # viscous model, so flow5 reports ZERO profile drag and the whole of its CD is
+    # induced.  Neither channel is informative about parasite drag, so `cx[0]` is NOT
+    # taken from them; the source file's own DATCOM-computed WG.CD0 is used, exactly as
+    # tornado.jsonc does, so all four files agree on it.  All three numbers are recorded.
     cd_at_zero = float(np.asarray(polar["CD"]).reshape(-1)[zero])
-    cl_at_zero = float(np.asarray(polar["CL"]).reshape(-1)[zero])
-    induced = float(ac.WG["K"]) * cl_at_zero * cl_at_zero
+    cd_vis_zero = float(np.asarray(polar["CDvis"]).reshape(-1)[zero])
+    cd_ind_zero = float(np.asarray(polar["CDind"]).reshape(-1)[zero])
     parasite = float(ac.WG["CD0"])
     collector.put(
         "cd0", -parasite, tornado_key="cd0 <- source WG.CD0 (NOT a flow5 output)",
         solver_value=None,
-        conversion="parasite drag as a positive magnitude, then cx = -(parasite); flow5's own "
-                   "CD(0) - K*CL(0)^2 is negative because the deck sets viscous = false and "
-                   "thin = true, so a lattice run has no profile drag to take",
+        conversion="parasite drag as a positive magnitude, then cx = -(parasite); NOT a "
+                   "flow5 output",
         role="intercept",
     )
-    for field, surface, key in (
-        ("cl_de", "elevator", "CL"), ("cm_de", "elevator", "Cm"),
+    # --- lateral static and the rate derivatives flow5 does have ----------------
+    for field, key, note_text in (
+        ("cl_beta", "Clb", "roll due to sideslip"),
+        ("cy_beta", "CYb", "side force due to sideslip"),
+        ("cn_beta", "Cnb", "yaw due to sideslip"),
+        ("cy_p", "CYp", "side force, roll rate"),
+        ("cy_r", "CYr", "side force, yaw rate"),
+        ("cl_p", "Clp", "roll due to roll rate"),
+        ("cl_r", "Clr", "roll due to yaw rate"),
+        ("cn_p", "Cnp", "yaw due to roll rate"),
+        ("cn_r", "Cnr", "yaw due to yaw rate"),
+    ):
+        collector.put(
+            field, float(polar[key]),
+            tornado_key=f"flow5 {key} (StabDerivative, already stability-axis)",
+            solver_value=float(polar[key]),
+            conversion=f"read directly: {note_text}; {key} is one of the twelve "
+                       "StabDerivatives and takes NO sign-map entry",
+            role="slope",
+        )
+    # --- controls --------------------------------------------------------------
+    for field, surface, key, negate_lift in (
+        ("cl_da", "aileron", "Cl", False), ("cn_da", "aileron", "Cn", False),
+        ("cl_de", "elevator", "CL", True), ("cm_de", "elevator", "Cm", False),
+        ("cl_dr", "rudder", "Cl", False), ("cy_dr", "rudder", "CY", False),
+        ("cn_dr", "rudder", "Cn", False),
     ):
         per_degree = by_surface[surface].get(key)
         if per_degree is None:
-            collector.absent(field, f"aid.flow5_controls[{surface}].{key}",
-                              reason="flow5's runner returned no such coefficient")
+            collector.absent(
+                field, f"aid.flow5_controls[{surface}].{key}",
+                reason="flow5's control row does not carry this coefficient",
+            )
             continue
+        magnitude = per_degree_to_per_radian(float(per_degree))
         collector.put(
-            field, -per_degree_to_per_radian(float(per_degree))
-            if key == "CL" else per_degree_to_per_radian(float(per_degree)),
+            field, -magnitude if negate_lift else magnitude,
             tornado_key=f"aid.flow5_controls[{surface}].{key}",
             solver_value=float(per_degree),
-            conversion=f"per degree x {DEG_TO_RAD}: aid.flow5_controls central-differences two "
-                       f"decks at delta +- aid.control_deriv.H_DEG = +-1 DEG",
+            conversion=(
+                f"per degree x {DEG_TO_RAD}: aid.flow5_controls central-differences two decks"
+                f" at delta +- aid.control_deriv.H_DEG = +-1 DEGREE.  The row is already "
+                f"Forward-Right-Down because to_frd is injected as the runner, so it is "
+                f"read directly"
+                + (
+                    ".  The one negation that survives is the plane/dynamics.py identity "
+                    "cz = -CL, the same one that gives cz[1] its sign"
+                    if negate_lift else "; no identity and no frame conversion apply"
+                )
+            ),
             role="slope",
         )
-    absent = [
-        ("cl_beta", "roll due to sideslip"),
-        ("cy_beta", "side force due to sideslip"),
-        ("cn_beta", "yaw due to sideslip"),
-        ("cl_q", "roll rate"), ("cm_q", "pitch rate"), ("cy_p", "side force, roll rate"),
-        ("cy_r", "side force, yaw rate"), ("cl_p", "roll due to roll rate"),
-        ("cl_r", "roll due to yaw rate"), ("cn_p", "yaw due to roll rate"),
-        ("cn_r", "yaw due to yaw rate"), ("cd_q", "axial force due to pitch rate"),
-        ("cl_da", "aileron roll"), ("cy_da", "aileron side force"),
-        ("cn_da", "aileron yaw"), ("cl_dr", "rudder roll"),
-        ("cy_dr", "rudder side force"), ("cn_dr", "rudder yaw"),
-    ]
-    emitted = sorted(polar)
-    lateral_emitted = sorted(set(emitted) & {"CY", "Cl", "Cn"})
-    for field, quantity in absent:
-        if lateral_emitted:
-            lateral_note = (
-                f"  NOTE: the runner DOES emit {', '.join(lateral_emitted)}, but only at "
-                f"beta = {float(np.asarray(polar['beta']).reshape(-1)[0]):g} deg -- the deck "
-                "this converter builds requests no sideslip sweep -- so there is no DERIVATIVE "
-                "to take, and aid/axes.py records that flow5's Forward-Right-Down sign map "
-                "for those channels is not filled in yet (\"Task 2.3 owns filling this map "
-                "in\"), so consuming them is a separate piece of work this adapter does not "
-                "do.  See provenance.coverage.not_yet_consumed."
-            )
-        else:
-            lateral_note = ""
+    for field, quantity in (
+        ("cl_q", "pitch-rate derivative of roll"),
+        ("cm_q", "pitch-rate derivative of Cm"),
+        ("cd_q", "pitch-rate derivative of the axial force"),
+        ("cy_da", "aileron side force"),
+    ):
         collector.absent(
             field, "flow5 polar / aid.flow5_controls",
-            reason=f"{quantity}: flow5's runner (FLOW5/run/flow5_run.cpp) calls "
-                   "setComputeDerivatives(false) and sweeps alpha only; it emitted "
-                   f"{len(emitted)} keys over that sweep ({', '.join(emitted)}) and none of "
-                   f"them carries a {quantity} derivative.{lateral_note}",
+            reason=(
+                f"{quantity}: flow5's library DOES compute CXq / CZq / Cmq, but "
+                "FLOW5/run/flow5_run.cpp's stab_derivative_fields() does not forward them, so "
+                "they never reach the JSON.  No q-derivative of any kind is available"
+                if field.endswith("_q") else
+                "aileron side force: aid/flow5_controls' _KEEP table asks the aileron for "
+                "Cl and Cn only, and does not ask for CY at all, so no aileron side-force "
+                "coefficient is computed"
+            ),
         )
 
     derivatives = collector.derivative_set()
@@ -2692,76 +2904,116 @@ def flow5_run(source: Path | None = None) -> CrossCheckRun:
     margin = coefficients["cm"][1] / coefficients["cz"][1]
     if not 0.05 <= margin <= 0.45:
         raise ValueError(f"static margin {margin:.4f} cbar is outside 0.05...0.45")
+    produced = sorted(f for f in ALL_DERIVATIVE_FIELDS if getattr(derivatives, f) is not None)
+    absent = sorted(f for f in ALL_DERIVATIVE_FIELDS if getattr(derivatives, f) is None)
     provenance = _cross_check_provenance(
         "flow5",
-        solver_version="flow5 via aid.flow5_io.write_flow5_deck / run_flow5_native and "
-                       "aid.flow5_controls.flow5_controls",
+        solver_version="flow5 via aid.flow5_io.run_flow5 (to_frd) and "
+                       "aid.flow5_controls.flow5_controls with to_frd injected as the runner",
         geometry=geometry,
         collector=collector,
         source=source,
         shared=shared,
         moment_reference=moment_reference,
-        flight_condition=_generic_flight_condition(geometry, trim_block, source_speed_mps=geometry.v_true_mps),
+        flight_condition=_generic_flight_condition(
+            geometry, trim_block, source_speed_mps=geometry.v_true_mps),
         trim_block=trim_block,
         extra={
-            "axes": "flow5: its deck's cog_m is x forward, y right, z DOWN and its polar is "
-                    "up-positive lift with nose-up-positive Cm -- identical to "
-                    "plane/dynamics.py, so this adapter applies no axis mapping and no moment "
-                    "shift",
+            "axes": "flow5 after to_frd: its per-point polar channels Cx/Cz/Cl/Cn take a -1 "
+                    "and its twelve StabDerivatives take none, because they are already "
+                    "stability-axis -- so the adapter contains no frame mapping at all and no "
+                    "moment shift",
             "numpy_bridge": numpy_note,
             "control_rows": {surface: dict(by_surface[surface]) for surface in by_surface},
             "coverage": {
-                "produced": sorted(f for f in ALL_DERIVATIVE_FIELDS
-                                   if getattr(derivatives, f) is not None),
-                "absent": sorted(f for f in ALL_DERIVATIVE_FIELDS
-                                 if getattr(derivatives, f) is None),
-                "why": "flow5 is a steady thin-lattice polar code whose runner emits six "
-                       "numbers; it is a longitudinal cross-check, not a 6-DOF data set",
-                "not_yet_consumed": {
-                    "lateral_channels_emitted_at_beta_zero": lateral_emitted,
-                    "why": "the sibling's flow5 now emits CY, Cl and Cn, but only at "
-                           "beta = 0 because the deck requests no sideslip sweep, and "
-                           "aid/axes.py records that flow5's Forward-Right-Down sign map for "
-                           "those channels is NOT filled in yet -- 'Task 2.3 owns filling "
-                           "this map in as {\"Cx\": -1, \"Cz\": -1, \"Cl\": -1, "
-                           "\"Cn\": -1}'.  Consuming them therefore means both sweeping beta "
-                           "and applying a sign map the sibling has not shipped, so this "
-                           "adapter does not and declares it instead of guessing",
-                },
-                "not_a_field": {
-                    "cd_de": "flow5 DOES produce an elevator drag derivative -- "
-                             "aid.flow5_controls keeps ('CL', 'CD', 'Cm') for the elevator --"
-                             " but this schema has no cd_de slot in any of the 19 arrays, so"
-                             " it maps to nothing.  It is NOT carried in this file;"
-                             " provenance.raw_output_location says where the build put it, and"
-                             " provenance.control_rows holds the number",
-                },
-                "invariant_band_note": (
-                    f"cm[1] = {coefficients['cm'][1]:.6f}/rad is 4.9 % BELOW the plan's "
-                    "pitched-moment slope band of -1.5 ... -0.3 /rad, which that band was "
-                    "estimated from (tornado.jsonc ships -1.1927).  The sign and the static "
-                    "margin are both correct and the band is the outlier here, not the "
-                    "coefficient; it is recorded rather than forced"
-                ),
+                "produced": produced,
+                "absent": absent,
+                "why": "flow5 emits 26 keys: the six longitudinal polar channels, the twelve "
+                       "StabDerivatives, CLa/Cma, a CDvis/CDind split and XNP.  The four absent "
+                       "slots are the three q-derivatives the runner does not forward and the "
+                       "aileron side force its control helper does not ask for",
+            },
+            "beta_flat": {
+                "keys": sorted(FLOW5_BETA_FLAT),
+                "note": "flow5's StabDerivatives are frozen at beta = 0: "
+                        "panelanalysis.cpp's computeStabilityDerivatives and "
+                        "computeAngularDerivatives both hardcode `double beta(0.0)`, while "
+                        "CLa and Cma are polar OLS slopes that DO follow beta.  aid's "
+                        "FLOW5_BETA_FLAT names the frozen set and "
+                        "flow5_emitted_stab_derivatives() checks it against the C++ field list, "
+                        "so a 13th derivative would show up as a gap rather than silently "
+                        "claiming to have flown a sideslip",
+                "harmless_here": "we fly beta = 0, so no channel in this file is being read at "
+                                 "a condition it did not fly at",
+            },
+            "mesh": {
+                "value": list(FLOW5_MESH),
+                "why_pinned": "flow5's Clb is MESH-DEPENDENT and the sibling records it: "
+                              "-0.0736 at ('5','3'), +0.0018 at ('10','5'), -0.0530 at "
+                              "('10','10'), -0.0593 at ('20','10'), against AVL's -0.059 and "
+                              "Tornado's -0.054.  At ('10','5') it goes POSITIVE and |Clb| is "
+                              "~30x too small, which reads as a sign flip rather than a "
+                              "convergence failure.  ('10','10') is the sibling's own default "
+                              "and the only one of the four that agrees with AVL, so it is "
+                              "pinned by test_16_flow5_mesh_is_pinned because the hazard is a "
+                              "silent sign inversion, not a precision loss",
+            },
+            "drag_split": {
+                "CD_at_alpha0": cd_at_zero,
+                "CDvis_at_alpha0": cd_vis_zero,
+                "CDind_at_alpha0": cd_ind_zero,
+                "note": "NOT informative about parasite drag: flow5_run.cpp calls "
+                        "setViscous(false), so CDvis is identically 0.0 on every alpha and "
+                        "CDind is identically CD -- the whole of flow5's drag is induced.  This "
+                        "is why cx[0] is NOT taken from either channel",
             },
             "cd0": {
+                "source": "the source analysis file's own DATCOM-computed WG.CD0, the same "
+                          "value tornado.jsonc, datcom.jsonc and avl.jsonc all use",
                 "value": parasite,
-                "source": "source WG.CD0 (NOT a flow5 output)",
-                "flow5_CD_at_alpha0": cd_at_zero,
-                "induced_part": induced,
-                "flow5_parasite": cd_at_zero - induced,
-                "note": "flow5's own parasite drag is NEGATIVE (-1.5e-04): the deck sets "
-                        "viscous = false and thin = true, so the polar carries induced drag "
-                        "only.  The source file's own DATCOM-computed WG.CD0 is used instead, "
-                        "as it already is for tornado.jsonc, so all four files agree on it",
+                "source_WG_CD0": parasite,
+                "note": "cx[0] is a POSITIVE parasite-drag magnitude in Morelli's sign "
+                        "convention (the collector applies the cx = -CD0 identity), and it is "
+                        "NOT a flow5 output.  flow5's own CDvis/CDind split cannot supply "
+                        "it; see provenance.drag_split.  Recorded here because "
+                        "cross_check_header's item 4 reads provenance['cd0']['value'] and "
+                        "['source'] for every model, and flow5's absence of it raised "
+                        "KeyError during the file write",
             },
+            "not_a_field": {
+                "cd_de": "flow5 DOES produce an elevator drag derivative -- "
+                         "aid.flow5_controls keeps ('CL', 'CD', 'Cm') for the elevator -- but "
+                         "this schema has no cd_de slot in any of the 19 arrays, so it maps to "
+                         "nothing.  It is NOT carried in this file; see "
+                         "provenance.raw_output_location for where the build put it",
+            },
+            "cross_solver_disagreements": {
+                "cn_p": "flow5's Cnp is POSITIVE (+0.0403) where this table wants cnp[0] < 0, "
+                        "and Tornado, DATCOM and AVL all report it negative.  The sign is "
+                        "established -- roll and yaw damping have one sign and "
+                        "data/planes/linear/morelli.json is the named authority -- so "
+                        "normalise_sign flips it mechanically and provenance.flipped records "
+                        "it.  It is recorded here as a CROSS-SOLVER DISAGREEMENT rather than "
+                        "routine normalisation, because three solvers agree and one does not",
+                "cz_5": "flow5's elevator CL is positive per degree where this table wants "
+                        "cz[5] < 0, which is the same `cz = -CL` identity that gives cz[1] its "
+                        "sign and is applied to every solver equally; the flip recorded in "
+                        "provenance.flipped is that identity plus the table",
+            },
+            "invariant_band_note": (
+                f"cm[1] = {coefficients['cm'][1]:.6f}/rad is 4.9 % BELOW the plan's "
+                "pitched-moment slope band of -1.5 ... -0.3 /rad, which that band was "
+                "estimated from (tornado.jsonc ships -1.1927).  The sign and the static "
+                "margin are both correct and the band is the outlier here, not the "
+                "coefficient; it is recorded rather than forced, and Task 5's suite is where "
+                "magnitudes are asserted"
+            ),
         },
     )
     return CrossCheckRun(
         model="flow5", derivatives=derivatives, coefficients=coefficients,
-        raw=raw, geometry=geometry,
-        provenance=provenance, aircraft=aircraft, initial=initial,
-        controls=controls, trim=trim_block,
+        raw=raw, geometry=geometry, provenance=provenance, aircraft=aircraft,
+        initial=initial, controls=controls, trim=trim_block,
     )
 
 
@@ -3012,7 +3264,8 @@ def geometry_block(
         },
         "provenance": {
             key: run.provenance[key]
-            for key in ("solver", "mesh", "source", "aid_src", "moment_reference",
+            for key in ("solver", "mesh", "source", "aid_src", "aid_src_commit",
+                        "moment_reference",
                         "sign_convention", "cl_alpha_cross_check", "cd0", "flipped",
                         "not_normalised", "missing")
         },
@@ -3037,13 +3290,17 @@ def model_payload(run: TornadoRun) -> dict[str, Any]:
 
 
 def _flipped_rate_slots(flipped: list[str]) -> list[str]:
-    """The flipped slots that are rate/sideslip columns, i.e. the P and R defect.
+    """The flipped slots that are rate or sideslip columns, for the header to name.
 
     Derived from the run's own ``provenance.flipped`` rather than written out, so
-    the header cannot name a slot the table did not flip or omit one it did.  The
-    control-derivative fields are excluded by their ``_da`` / ``_dr`` / ``_de``
-    suffixes: they are per radian of control deflection and are unaffected by the
-    P and R component-sense defect.
+    the header cannot name a slot the invariant table did not flip or omit one it
+    did.  The control-derivative fields are excluded by their ``_da`` / ``_dr`` /
+    ``_de`` suffixes: they are per radian of control deflection.
+
+    Since the sibling began returning Forward-Right-Down this set is normally EMPTY
+    -- the whole class of "the P and R columns come back component-sense inverted"
+    defects it was built to report no longer exists -- so an empty result is the
+    expected answer and the header says so rather than listing something.
     """
     return [name for name in flipped if not name.endswith(("_da", "_dr", "_de"))]
 
@@ -3100,6 +3357,11 @@ def header_comment(
         f" {run.provenance['aid_src']},",
         "//    a path relative to THIS repository's root so the bytes do not depend on which",
         "//    mount point the repo is reached through; see provenance.aid_src.",
+        f"//    Sibling commit: {run.provenance.get('aid_src_commit') or 'not a git checkout'}."
+        "  It is recorded",
+        "//    because an upstream commit has broken this converter twice, silently both"
+        " times -- a rebuild",
+        "//    that moves it should be a one-line diff in this field and nothing else.",
         f"//    Mesh: {TORNADO_MESH[0]} chordwise x {TORNADO_MESH[1]} spanwise (the AID batch"
         " default).  NP[0],",
         "//    the AR 33.3, S 3 ft^2 panel, is KEPT in the lattice and carries",
@@ -3163,27 +3425,23 @@ def header_comment(
         "// 5. THE MOMENT REFERENCE SHIFT",
         f"//    Tornado reports about geo['ref_point'] = [{geometry.x_ref_ft:g}, 0, 0] while"
         f" geo['CG'] = [{geometry.x_cg_ft:g}, 0, 0] ft, so the",
-        f"//    reference point is {geometry.x_cg_ft:g} ft AHEAD of the CG.  Tornado's x axis is"
-        " AFT-positive, so the offset",
-        f"//    handed to shift_moments_to_cg is dx = -ft({geometry.x_cg_ft:g}) = {geometry.dx_m}"
-        " m (NOT +), with dy = dz = 0.",
-        "//    Tornado's lift is up-positive while plane/dynamics.py's cz is the body +z force"
-        " with z DOWN,",
-        "//    so every vertical-force argument is negative.  It is specifically the BODY-Z"
-        " force",
-        "//    slope, coeff_create's CZ: slopes shift with slopes (Cm_a with -CZ_a, Cm_Q"
-        " with -CZ_Q,",
-        "//    Cm_de with -CZ_de, reconstructed exactly from the control row's CL and CD)"
-        " and the",
-        "//    Cm0 intercept shifts with the -CL(0) intercept, which is also the body-z"
-        " intercept at",
-        "//    alpha = 0.  CL_a and CZ_a differ by 0.34 % here because NP[0] is in the"
-        " lattice.  The",
-        "//    yaw slopes shift with the BODY-Y side force (Cn_beta with CY_b, Cn_p with"
-        " CY_P, Cn_r with",
-        "//    CY_R).  No drag coefficient enters any shift: cx reaches the pitch line"
-        " only through dz",
-        "//    and the yaw line only through dy, and both arms are zero for this aircraft.",
+        f"//    reference point is {geometry.x_cg_ft:g} ft AHEAD of the CG in the x-FORWARD"
+        " sense the sibling returns.",
+        f"//    The offset handed to shift_moments_to_cg is dx = -ft({geometry.x_cg_ft:g}) ="
+        f" {geometry.dx_m} m (NOT +), with dy = dz = 0.",
+        "//    The shift's cz is the BODY-Z force coefficient, and coeff_create's CZ IS that",
+        "//    coefficient, already in plane/dynamics.py's frame, so it is used as it stands:",
+        "//    slopes shift with slopes (Cm_a with CZ_a, Cm_Q with CZ_Q, Cm_de with CZ_de",
+        "//    reconstructed exactly from the control row's wind-axis CL and CD) and the Cm0",
+        "//    intercept shifts with the body-z intercept CZ(0), which at alpha = 0 is the same",
+        "//    number as the -CL(0) that gives cz[0] its sign.  CL_a and CZ_a differ by 0.34 %"
+        " here because",
+        "//    NP[0] is in the lattice.  The yaw slopes shift with the BODY-Y side force (Cn_beta",
+        "//    with CY_b, Cn_p with CY_P, Cn_r with CY_R).  No drag coefficient enters any"
+        " shift: cx reaches",
+        "//    the pitch line only through dz and the yaw line only through dy, and both arms"
+        " are zero",
+        "//    for this aircraft.",
         "//",
         "// 6. SIGN CONVENTION",
         "//    cz is the body +z force coefficient with z DOWN, so cz = -CL and cz[1] is"
@@ -3205,38 +3463,36 @@ def header_comment(
         " disagree with",
         "//    the F-16 set on cm[1] and cnp[0].",
         "//",
-        "//    Tornado's axes are x aft, y right, z up; plane/dynamics.py's are x forward,"
-        " y right, z down.",
-        "//    So cz = -CL, cl = -Cl, cm = +Cm, cn = -Cn.  That mapping resolves the alpha,"
-        " beta and Q",
-        "//    inversions on its own (CL_Q = +9.59 against a required CL_q < 0; Cl_b ="
-        " +0.054; Cn_b = -0.247),",
-        "//    but NOT the P and R ones.  Those are a separate and narrower defect in the"
-        " sibling:",
-        "//    rot_rates = np.array([state[\"P\"], state[\"Q\"], state[\"R\"]]) drops the"
-        " standard-aero rates into the",
-        "//    Tornado (aft, right, up) component slots without converting their sense, so"
-        " roll-right is",
-        "//    omega_x_aft = -P and nose-right is omega_z_up = -R and the P and R columns come"
-        " back",
-        "//    inverted whatever the mapping does -- measured CY_P = +0.160 where physics"
-        " needs CY_p < 0",
-        "//    and CY_R = -0.387 where it needs CY_r > 0, while Cm_Q is right.  The slots"
-        " the mapping leaves",
-        "//    on the wrong side, computed from this run's provenance.flipped rather than"
-        " written out, are:",
-        *[f"//      {name}" for name in _flipped_rate_slots(run.provenance["flipped"])],
-        "//    Cn_P is NOT among them: -Cn_P = -0.0687 already satisfies cn_p < 0, so"
-        " cn_p is absent",
-        "//    from provenance.flipped.  No blanket flip is applied on top of the"
-        " mapping, and it makes",
-        "//    no difference to any written coefficient: recomputed under both readings,"
-        " all twenty-five",
-        "//    values are identical, because the table is the final authority and a"
-        " component-sense",
-        "//    flip reverses the moment and its shift's force coefficient together.",
-        "//    Signs are normalised mechanically against aero_convert.units.SIGN_INVARIANTS"
-        " and every flip is",
+        "//    NO FRAME CONVERSION IS APPLIED IN THIS FILE, and that is the new normal.",
+        "//    aid/axes.py is the sibling's single home for solver signs and",
+        "//    aid/tornado/coeff.py's last statement is `return to_frd(\"tornado\", out)`, so",
+        "//    everything read here is ALREADY x forward, y right, z DOWN with positive Cl",
+        "//    rolling right, positive Cm nose up and positive Cn yawing right --",
+        "//    plane/dynamics.py's own frame and senses.  The control rows are already",
+        "//    Forward-Right-Down too, and aid/tornado/control_deriv.py says on purpose that it",
+        "//    does not re-wrap them.  The earlier mapping `cz = -CL; cl = -Cl; cm = +Cm;",
+        "//    cn = -Cn; cy = +CY` existed only to convert Tornado's former aft-positive x and",
+        "//    up-positive z, and it is GONE: cl, cm, cn, cy and cx are read exactly as reported,",
+        "//    and the P and R columns need no flip because they no longer arrive inverted.",
+        "//",
+        "//    TWO negations survive, and neither is a frame conversion -- both are the",
+        "//    plane/dynamics.py identity `cz = -CL`, its body +z axis pointing down:",
+        f"//      cz[1] = -CL_a = {float(run.raw['CL_a']):.6f} -> {run.coefficients['cz'][1]:.6f}"
+        " per radian",
+        f"//      cz[5] = -CL_de = {float(-run.coefficients['cz'][5] / DEG_TO_RAD):.6f}"
+        f" per degree -> {run.coefficients['cz'][5]:.6f} per radian",
+        "//    Everything else is unnegated, including czq[0] = CZ_Q and cxq[0] = CX_Q, which are",
+        "//    the body-axis coefficients the schema actually adds to cz and cx.  The wind-axis",
+        "//    numbers sit in provenance.cd_q_convention for a reader comparing against the in-tree",
+        "//    files, which store the standard-aero CL_q and CD_q in those two slots.",
+        "//",
+        "//    Signs are normalised mechanically against aero_convert.units.SIGN_INVARIANTS and",
+        "//    every flip is logged in provenance.flipped.  Computed from this run's own flipped",
+        f"//    list rather than written out, it is:"
+        f" {_flipped_rate_slots(run.provenance['flipped']) or '(none)'}.",
+        "//    Those are convention differences, not frame errors: the invariant table is the",
+        "//    final authority, and each is a slot whose SIGN the two in-tree reference files",
+        "//    disagree on.  cm0 carries no invariant and is recorded as not-normalised.",
         "//    logged in provenance.flipped; cm0 carries no invariant and is recorded as"
         " not-normalised.",
         "//",
@@ -3565,17 +3821,30 @@ def cross_check_header(
             f" {run.provenance['aid_src']},",
             "//    a path relative to this repository's root so the bytes do not depend on which",
             "//    mount point the repo is reached through; see provenance.aid_src.",
+        f"//    Sibling commit: {run.provenance.get('aid_src_commit') or 'not a git checkout'}."
+        "  It is recorded",
+        "//    because an upstream commit has broken this converter twice, silently both"
+        " times -- a rebuild",
+        "//    that moves it should be a one-line diff in this field and nothing else.",
             f"//    Mesh: {FLOW5_MESH[0]} spanwise x {FLOW5_MESH[1]} chordwise, read by"
             " write_flow5_deck as (ny, nx).  The deck",
             "//    carries WG, HT, VT and NP[0] (\"Wing 2\"), so NP[0] IS in this file even"
             " though it is",
             "//    not in avl.jsonc (AVL keeps at most three surfaces).",
-            "//    THE RUNNER'S OUTPUT IS THE WHOLE OF WHAT THIS FILE CAN CONTAIN, and it is",
-            "//    six numbers.  Measured from FLOW5/run/flow5_run.cpp: the deck's only",
-            "//    condition key read is `polar.alpha_deg`, the analysis calls",
-            "//    `PlaneTask::setComputeDerivatives(false)`, and `polar_to_json` serialises",
-            "//    exactly alpha, CL, CD, Cm, CLa and Cma.  There is NO sideslip sweep, NO",
-            "//    rate sweep, and no roll, yaw or side-force column anywhere in the output.",
+            f"//    The runner emits {len(run.raw['output_keys'])} keys and this file fills"
+            f" {len(run.provenance['coverage']['produced'])} of the 25 slots from them:",
+            f"//      {', '.join(run.raw['output_keys'])}",
+            "//    The frame is settled in ONE call, aid.flow5_io.run_flow5, which is",
+            "//    to_frd('flow5', run_flow5_native(...)).  Hand-applying the sign map would be",
+            "//    wrong in a way that is worth stating: flow5's per-point polar channels",
+            "//    Cx/Cz/Cl/Cn ARE in its sign map with a -1 (raw Cz tracks raw CL, i.e. it is",
+            "//    up-positive and is NOT a body-z coefficient), while its twelve",
+            "//    StabDerivatives take NO entry because computeStabilityDerivatives projects",
+            "//    them onto the stability axes.  Measured: CZa = -5.256228 while CLa = +5.169735,",
+            "//    so CZa already carries this slot's sign.  Negating the derivative scalars would",
+            "//    invert the lift slope.",
+            "//    aid/flow5_controls' DEFAULT runner is the RAW one, so to_frd is injected as",
+            "//    the runner here; without it the aileron Cl and Cn arrive with the wrong sign.",
             f"//    Evaluated at alpha = {geometry.alpha_deg:g} deg, {SOURCE_ALPHA_INDEX_RULE}.",
             f"//    Flight condition: the deck is ENTIRELY SI -- sref_m2, cref_m, bref_m,"
             f" cog_m and qinf_mps -- so",
@@ -3594,7 +3863,10 @@ def cross_check_header(
             f" {geometry.v_true_mps:.4f} really is {geometry.v_true_mps:.4f} m/s,",
             f"//    while the other two feed {SOURCE_SPEED_AS_REPORTED:.4f} into a FEET frame,"
             f" where it means {geometry.as_mps:.4f} m/s.",
-            "//    flow5 has no rate slots at all, so the factor bites only its static set.",
+            "//    The rate factor is 1 for three of the four rate slots this file does have,",
+            "//    because flow5's StabDerivatives are per unit of p-hat / r-hat taken at the",
+            "//    source speed and are NOT rescaled -- the same treatment as the other three",
+            "//    files, for the same reason, and recorded the same way.",
         ]
         item4 = [
             f"//    length: ft x {FT_TO_M} = 0.3048 m, applied by aid.flow5_units inside"
@@ -3610,14 +3882,22 @@ def cross_check_header(
             f"  numpy bridge: {run.provenance['numpy_bridge']}",
             f"//    cx[0] -- the parasite drag slot, Cd0 in a drag build-up -- ="
             f" {run.provenance['cd0']['value']:.6g}.",
-            f"//    Source: {run.provenance['cd0']['source']}.  flow5's own CD at alpha = 0 is"
-            f" {run.provenance['cd0']['flow5_CD_at_alpha0']:.6g} with an",
-            f"//    induced part of {run.provenance['cd0']['induced_part']:.6g}, i.e. a parasite"
-            f" of {run.provenance['cd0']['flow5_parasite']:.6g} -- NEGATIVE, because the deck",
-            "//    sets `viscous: false` and `thin: true`, so a thin lattice run has no profile"
-            " drag at all.",
-            "//    The source file's own DATCOM-computed WG.CD0 is used instead, exactly as it",
-            "//    already is for tornado.jsonc, so all four files agree on it.",
+            f"//    Source: {run.provenance['cd0']['source']}, and it is NOT a flow5 output."
+            " flow5 now SPLITS",
+            "//    its drag and the split is the measurement that settles this slot:",
+            f"//      CD(0)    = {run.provenance['drag_split']['CD_at_alpha0']:.6g}",
+            f"//      CDvis(0) = {run.provenance['drag_split']['CDvis_at_alpha0']:.6g}"
+            "   <- identically 0.0 on EVERY alpha",
+            f"//      CDind(0) = {run.provenance['drag_split']['CDind_at_alpha0']:.6g}"
+            "   <- identically CD on every alpha",
+            "//    because FLOW5/run/flow5_run.cpp calls `pPlPolar->setViscous(false)`: the deck",
+            "//    asks for no viscous model, so flow5 reports ZERO profile drag and the whole"
+            " of its CD",
+            "//    is induced.  Neither channel is informative about parasite drag, so cx[0] is"
+            " not taken from",
+            "//    either.  The source file's own DATCOM-computed WG.CD0 is used instead,"
+            " exactly as it already is",
+            "//    for tornado.jsonc, so all four files agree on it.",
         ]
         item5 = [
             f"//    NO MOMENT SHIFT WAS APPLIED, and that is verified rather than assumed."

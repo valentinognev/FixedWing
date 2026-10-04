@@ -1,5 +1,14 @@
 # Updates
 
+## 0.90.0 - Cessna 172 aero: Tornado re-based onto Forward-Right-Down, flow5 at 21 of 25
+- The sibling `aid` package now returns every solver in Forward-Right-Down, which is `plane/dynamics.py`'s own frame, so `aero_convert/solvers.py` reads Tornado's `cl`, `cm`, `cn`, `cy`, `cx` and all rate columns directly. Only the two `cz = -CL` identities (`cz[1]`, `cz[5]`) still negate, and neither is a frame conversion.
+- `czq[0]` now holds the body-axis `CZ_Q` rather than the wind-axis `CL_Q` (+0.249 %). Both numbers are kept in `provenance.cd_q_convention`.
+- flow5 switched from `run_flow5_native` to `run_flow5(ac, mesh)` and now fills 21 of 25 slots instead of 7: every sideslip and roll/yaw-rate derivative, plus `cl_da`/`cn_da` and the rudder rows. `cl_q`, `cm_q`, `cd_q` and `cy_da` stay `None` and declared.
+- `FLOW5_MESH` is pinned to `("10","10")` by a test: flow5's `Clb` inverts sign at `("10","5")`.
+- flow5's `Cnp` and elevator `CL` are recorded as cross-solver disagreements with the invariant table, flipped mechanically.
+- `provenance.aid_src_commit` records the sibling's HEAD in all five generated files.
+- `datcom.jsonc` and `avl.jsonc` are byte-identical to their previous contents.
+
 ## 0.89.0 - Linear Morelli host 6DOF
 - `python/plane/` integrates a 13-state airplane with `morelli_coefficients`. Nonlinear slots in `data/planes/linear/morelli.json` are zero.
 - `python/run_plane.py --plane linear` writes a host-only CSV. No PX4, MAVLink, Docker, or FlightGear.

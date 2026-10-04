@@ -4,7 +4,9 @@
 // 1. SOLVER, MESH, FLIGHT CONDITION
 //    Solver: AVL, via aid.avl_io.run_avl_full for the stability sweep and
 //    aid.avl_controls.avl_controls for the control derivatives, both from the
-//    sibling package imported from /mnt/VirtualMachine/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Python/src.
+//    sibling package imported from ../USAF_DATCOM/AircraftIntuitiveDesign/Python/src, a path relative to this
+//    repository's root so the bytes do not depend on which mount point the repo is reached
+//    through; see provenance.aid_src.
 //    Mesh: 10 spanwise x 10 chordwise.  aid/avl_controls.py's own default, so the
 //    stability run and the control run agree.  AVL keeps only WG, HT and VT (nwing <= 3),
 //    so NP[0], which tornado.jsonc keeps in its lattice, is NOT in this file.
@@ -118,8 +120,10 @@
 //
 //    NO SLOT IS ABSENT: AVL produces all 25, including cnda[0] and cy[1], which DATCOM cannot.
 //    CD_alpha is not representable in this schema (cx has no CD*alpha term) and is 0.0 and
-//    declared.  cxq[0] is written 0.0: AVL's .sb carries a CXq, but run_avl_full's stacked .st
-//    does not, so no axial rate derivative was taken and the zero is a real value, not a gap.
+//    declared.
+//      (none: this solver filled every slot in the schema)
+//      the slots whose sign the invariant table reversed, so the solver's own sign sits on
+//      the other side of zero: cd_q, cl_dr, cn_da, cn_dr, cn_p, cy_da, cy_dr.  Every one is in the slot table above with state `flipped`.
 //
 // 7. PER-SLOT PROVENANCE (all 19 arrays; real solver output vs zeroed)
 //   cz[1]     cl_alpha   normalised     solver AVL .st CLA at alpha = 4 deg = 5.00737 -> mapped -5.00737 -> written -5.00737
@@ -149,6 +153,11 @@
 //   cndr[0]   cn_dr      flipped        solver aid.avl_controls[rudder].Cn = 0.003556 -> mapped 0.203744 -> written -0.203744
 //   every slot in plane.groups.nonlinear_index is exactly 0.0; CD_alpha is not
 //   representable in this schema (cx has no CD*alpha term) and is zeroed and declared
+//    THE REST OF THIS SOLVER'S RAW, UNCONVERTED OUTPUT IS IN geometry.jsonc, under raw_cross_checks.avl
+//    -- the Fortran's own for006 table and AID's pre-correction handbook rows for
+//    DATCOM, the per-alpha .st rows for AVL, the deck and the polar for flow5.
+//    A model file's provenance.mapping carries only the one raw number behind each
+//    slot, so that block is what makes the rest re-derivable without re-running.
 //
 // 8. HOW TO REGENERATE THIS FILE
 //    cd python && python3 scripts/build_cessna172_aero.py
@@ -351,8 +360,10 @@
       "10",
       "10"
     ],
-    "source": "/mnt/VirtualMachine/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
-    "aid_src": "/mnt/VirtualMachine/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Python/src",
+    "source": "../USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
+    "aid_src": "../USAF_DATCOM/AircraftIntuitiveDesign/Python/src",
+    "aid_src_from_env": false,
+    "aid_src_commit": "c273aa6f0e7bb1672284404a540e9a1c9310dc32",
     "flight_condition": {
       "mach": 0.03,
       "alt_ft": 0.0,
@@ -376,7 +387,7 @@
       "dx_m": 0.0,
       "dy_m": 0.0,
       "dz_m": 0.0,
-      "note": "AVL reports every moment about AERO.XCG, read back from its own input and checked against the source; dx = dy = dz = 0, so no moment shift is applied"
+      "note": "AVL reports every moment about AERO.XCG, and the station was read back out of the input the SOLVER was given rather than out of the same in-memory value, then compared with the source; dx = dy = dz = 0, so no moment shift is applied"
     },
     "sign_convention": {
       "solver_axes": "AVL: x forward, y right, z DOWN (its own .sb header prints \"Standard axis orientation, X fwd, Z down\"), positive Cl roll right, positive Cm nose up, positive Cn yaw right -- identical to plane/dynamics.py, so this adapter applies no axis mapping at all",
@@ -449,7 +460,7 @@
     "zeroed_slots": {
       "nonlinear": "every slot in plane.groups.nonlinear_index is exactly 0.0",
       "CD_alpha": "cx has no CD*alpha term in this schema, so CD_alpha is 0.0 and is declared rather than approximated",
-      "flap": "the Morelli schema has no flap slot; the handbook/AVL/flow5 flap rows are kept in geometry.jsonc as raw output and mapped to nothing"
+      "flap": "the Morelli schema has no flap slot, so the handbook's flap row maps to nothing.  It is NOT carried in this file; provenance.raw_output_location says where the build put it, and provenance.control_rows holds it"
     },
     "mapping": [
       {
@@ -865,6 +876,7 @@
       "note": "run_avl_full also solves an unconstrained case (`x` before the first `a a`), which AVL trims to zero lift; it is recorded but NOT used, because every slot comes from the alpha = 4 deg row of the schedule so all four models describe the same condition",
       "alpha_deg": -1.9039,
       "CLtot": 0.0008
-    }
+    },
+    "raw_output_location": "geometry.jsonc, under raw_cross_checks.avl"
   }
 }

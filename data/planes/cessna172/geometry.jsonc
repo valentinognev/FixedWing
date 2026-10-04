@@ -2,7 +2,12 @@
 // data/planes/cessna172/geometry.jsonc for the Cessna 172 source analysis, generated -- do not hand-edit.
 //
 // 1. SOLVER, MESH, FLIGHT CONDITION
-//    Solver: Tornado, via the sibling package aid.tornado (imported from /mnt/VirtualMachine/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Python/src).
+//    Solver: Tornado, via the sibling package aid.tornado (imported from ../USAF_DATCOM/AircraftIntuitiveDesign/Python/src,
+//    a path relative to THIS repository's root so the bytes do not depend on which
+//    mount point the repo is reached through; see provenance.aid_src.
+//    Sibling commit: c273aa6f0e7bb1672284404a540e9a1c9310dc32.  It is recorded
+//    because an upstream commit has broken this converter twice, silently both times -- a rebuild
+//    that moves it should be a one-line diff in this field and nothing else.
 //    Mesh: 10 chordwise x 5 spanwise (the AID batch default).  NP[0],
 //    the AR 33.3, S 3 ft^2 panel, is KEPT in the lattice and carries
 //    9.6% of the aircraft's CL at the trim alpha.
@@ -44,17 +49,18 @@
 //
 // 5. THE MOMENT REFERENCE SHIFT
 //    Tornado reports about geo['ref_point'] = [0, 0, 0] while geo['CG'] = [2.94, 0, 0] ft, so the
-//    reference point is 2.94 ft AHEAD of the CG.  Tornado's x axis is AFT-positive, so the offset
-//    handed to shift_moments_to_cg is dx = -ft(2.94) = -0.896112 m (NOT +), with dy = dz = 0.
-//    Tornado's lift is up-positive while plane/dynamics.py's cz is the body +z force with z DOWN,
-//    so every vertical-force argument is negative.  It is specifically the BODY-Z force
-//    slope, coeff_create's CZ: slopes shift with slopes (Cm_a with -CZ_a, Cm_Q with -CZ_Q,
-//    Cm_de with -CZ_de, reconstructed exactly from the control row's CL and CD) and the
-//    Cm0 intercept shifts with the -CL(0) intercept, which is also the body-z intercept at
-//    alpha = 0.  CL_a and CZ_a differ by 0.34 % here because NP[0] is in the lattice.  The
-//    yaw slopes shift with the BODY-Y side force (Cn_beta with CY_b, Cn_p with CY_P, Cn_r with
-//    CY_R).  No drag coefficient enters any shift: cx reaches the pitch line only through dz
-//    and the yaw line only through dy, and both arms are zero for this aircraft.
+//    reference point is 2.94 ft AHEAD of the CG in the x-FORWARD sense the sibling returns.
+//    The offset handed to shift_moments_to_cg is dx = -ft(2.94) = -0.896112 m (NOT +), with dy = dz = 0.
+//    The shift's cz is the BODY-Z force coefficient, and coeff_create's CZ IS that
+//    coefficient, already in plane/dynamics.py's frame, so it is used as it stands:
+//    slopes shift with slopes (Cm_a with CZ_a, Cm_Q with CZ_Q, Cm_de with CZ_de
+//    reconstructed exactly from the control row's wind-axis CL and CD) and the Cm0
+//    intercept shifts with the body-z intercept CZ(0), which at alpha = 0 is the same
+//    number as the -CL(0) that gives cz[0] its sign.  CL_a and CZ_a differ by 0.34 % here because
+//    NP[0] is in the lattice.  The yaw slopes shift with the BODY-Y side force (Cn_beta
+//    with CY_b, Cn_p with CY_P, Cn_r with CY_R).  No drag coefficient enters any shift: cx reaches
+//    the pitch line only through dz and the yaw line only through dy, and both arms are zero
+//    for this aircraft.
 //
 // 6. SIGN CONVENTION
 //    cz is the body +z force coefficient with z DOWN, so cz = -CL and cz[1] is NEGATIVE for a
@@ -68,27 +74,33 @@
 //    sets share a convention: this file and linear/morelli.json agree on cz[1] and disagree with
 //    the F-16 set on cm[1] and cnp[0].
 //
-//    Tornado's axes are x aft, y right, z up; plane/dynamics.py's are x forward, y right, z down.
-//    So cz = -CL, cl = -Cl, cm = +Cm, cn = -Cn.  That mapping resolves the alpha, beta and Q
-//    inversions on its own (CL_Q = +9.59 against a required CL_q < 0; Cl_b = +0.054; Cn_b = -0.247),
-//    but NOT the P and R ones.  Those are a separate and narrower defect in the sibling:
-//    rot_rates = np.array([state["P"], state["Q"], state["R"]]) drops the standard-aero rates into the
-//    Tornado (aft, right, up) component slots without converting their sense, so roll-right is
-//    omega_x_aft = -P and nose-right is omega_z_up = -R and the P and R columns come back
-//    inverted whatever the mapping does -- measured CY_P = +0.160 where physics needs CY_p < 0
-//    and CY_R = -0.387 where it needs CY_r > 0, while Cm_Q is right.  The slots the mapping leaves
-//    on the wrong side, computed from this run's provenance.flipped rather than written out, are:
-//      cl_p
-//      cl_r
-//      cn_r
-//      cy_p
-//      cy_r
-//    Cn_P is NOT among them: -Cn_P = -0.0687 already satisfies cn_p < 0, so cn_p is absent
-//    from provenance.flipped.  No blanket flip is applied on top of the mapping, and it makes
-//    no difference to any written coefficient: recomputed under both readings, all twenty-five
-//    values are identical, because the table is the final authority and a component-sense
-//    flip reverses the moment and its shift's force coefficient together.
-//    Signs are normalised mechanically against aero_convert.units.SIGN_INVARIANTS and every flip is
+//    NO FRAME CONVERSION IS APPLIED IN THIS FILE, and that is the new normal.
+//    aid/axes.py is the sibling's single home for solver signs and
+//    aid/tornado/coeff.py's last statement is `return to_frd("tornado", out)`, so
+//    everything read here is ALREADY x forward, y right, z DOWN with positive Cl
+//    rolling right, positive Cm nose up and positive Cn yawing right --
+//    plane/dynamics.py's own frame and senses.  The control rows are already
+//    Forward-Right-Down too, and aid/tornado/control_deriv.py says on purpose that it
+//    does not re-wrap them.  The earlier mapping `cz = -CL; cl = -Cl; cm = +Cm;
+//    cn = -Cn; cy = +CY` existed only to convert Tornado's former aft-positive x and
+//    up-positive z, and it is GONE: cl, cm, cn, cy and cx are read exactly as reported,
+//    and the P and R columns need no flip because they no longer arrive inverted.
+//
+//    TWO negations survive, and neither is a frame conversion -- both are the
+//    plane/dynamics.py identity `cz = -CL`, its body +z axis pointing down:
+//      cz[1] = -CL_a = 5.148013 -> -5.148013 per radian
+//      cz[5] = -CL_de = 0.006480 per degree -> -0.371259 per radian
+//    Everything else is unnegated, including czq[0] = CZ_Q and cxq[0] = CX_Q, which are
+//    the body-axis coefficients the schema actually adds to cz and cx.  The wind-axis
+//    numbers sit in provenance.cd_q_convention for a reader comparing against the in-tree
+//    files, which store the standard-aero CL_q and CD_q in those two slots.
+//
+//    Signs are normalised mechanically against aero_convert.units.SIGN_INVARIANTS and
+//    every flip is logged in provenance.flipped.  Computed from this run's own flipped
+//    list rather than written out, it is: ['cd_q', 'cn_p'].
+//    Those are convention differences, not frame errors: the invariant table is the
+//    final authority, and each is a slot whose SIGN the two in-tree reference files
+//    disagree on.  cm0 carries no invariant and is recorded as not-normalised.
 //    logged in provenance.flipped; cm0 carries no invariant and is recorded as not-normalised.
 //
 //    A CAVEAT on the NINE genuinely per-phat / per-qhat / per-rhat slots:
@@ -119,27 +131,27 @@
 // 7. PER-SLOT PROVENANCE (all 19 arrays; real solver output vs zeroed)
 //   cz[1]     cl_alpha   normalised     solver CL_a = 5.14801 -> mapped -5.14801 -> written -5.14801
 //   cz[0]     cl0        normalised     solver CL(alpha=0) = 0.168285 -> mapped -0.168285 -> written -0.168285
-//   czq[0]    cl_q       normalised     solver CL_Q = 9.59113 -> mapped -9.59113 -> written -9.59113
+//   czq[0]    cl_q       normalised     solver CZ_Q = -9.61505 -> mapped -9.61505 -> written -9.61505
 //   cy[0]     cy_beta    normalised     solver CY_b = -0.40827 -> mapped -0.40827 -> written -0.40827
-//   cyp[0]    cy_p       flipped        solver CY_P = 0.159618 -> mapped 0.159618 -> written -0.159618
-//   cyr[0]    cy_r       flipped        solver CY_R = -0.386951 -> mapped -0.386951 -> written 0.386951
-//   cl[0]     cl_beta    normalised     solver Cl_b = 0.0537212 -> mapped -0.0537212 -> written -0.0537212
-//   clp[0]    cl_p       flipped        solver Cl_P = -0.486095 -> mapped 0.486095 -> written -0.486095
-//   clr[0]    cl_r       flipped        solver Cl_R = 0.044525 -> mapped -0.044525 -> written 0.044525
+//   cyp[0]    cy_p       normalised     solver CY_P = -0.159618 -> mapped -0.159618 -> written -0.159618
+//   cyr[0]    cy_r       normalised     solver CY_R = 0.386951 -> mapped 0.386951 -> written 0.386951
+//   cl[0]     cl_beta    normalised     solver Cl_b = -0.0537212 -> mapped -0.0537212 -> written -0.0537212
+//   clp[0]    cl_p       normalised     solver Cl_P = -0.486095 -> mapped -0.486095 -> written -0.486095
+//   clr[0]    cl_r       normalised     solver Cl_R = 0.044525 -> mapped 0.044525 -> written 0.044525
 //   cm[1]     cm_alpha   normalised     solver Cm_a = -8.78614 -> mapped -1.19274 -> written -1.19274
 //   cm[0]     cm0        not-normalised solver Cm(alpha=0) = -0.231932 -> mapped 0.0154461 -> written 0.0154461
 //   cmq[0]    cm_q       normalised     solver Cm_Q = -33.3488 -> mapped -19.2147 -> written -19.2147
-//   cn[0]     cn_beta    normalised     solver Cn_b = -0.2465 -> mapped 0.146473 -> written 0.146473
-//   cnp[0]    cn_p       normalised     solver Cn_P = 0.0686714 -> mapped -0.0295649 -> written -0.0295649
-//   cnr[0]    cn_r       flipped        solver Cn_R = -0.286403 -> mapped 0.1916 -> written -0.1916
-//   cxq[0]    cd_q       normalised     solver CX_Q = 0.00707928 -> mapped 0.00707928 -> written 0.00707928
+//   cn[0]     cn_beta    normalised     solver Cn_b = 0.2465 -> mapped 0.146473 -> written 0.146473
+//   cnp[0]    cn_p       flipped        solver Cn_P = 0.0686714 -> mapped 0.0295649 -> written -0.0295649
+//   cnr[0]    cn_r       normalised     solver Cn_R = -0.286403 -> mapped -0.1916 -> written -0.1916
+//   cxq[0]    cd_q       flipped        solver CX_Q = -0.00707928 -> mapped -0.00707928 -> written 0.00707928
 //   cx[0]     cd0        normalised     NOT solver output -- cd0 <- source WG.CD0 (the plan's formula, Tornado CD(0) - K_wing*CL(0)^2 = -0.001673, is negative: a linear VLM has no profile drag) -> mapped -0.017219 -> written -0.017219
-//   clda[0]   cl_da      normalised     solver tornado_controls[aileron].Cl = 0.00428109 -> mapped -0.245288 -> written -0.245288
+//   clda[0]   cl_da      normalised     solver tornado_controls[aileron].Cl = -0.00428109 -> mapped -0.245288 -> written -0.245288
 //   cy[1]     cy_da      flipped        solver tornado_controls[aileron].CY = -0.000875673 -> mapped -0.0501724 -> written 0.0501724
-//   cnda[0]   cn_da      flipped        solver tornado_controls[aileron].Cn = -0.000311384 -> mapped 0.017841 -> written -0.017841
-//   cldr[0]   cl_dr      flipped        solver tornado_controls[rudder].Cl = 0.000374454 -> mapped -0.0214546 -> written 0.0214546
+//   cnda[0]   cn_da      flipped        solver tornado_controls[aileron].Cn = 0.000311384 -> mapped 0.017841 -> written -0.017841
+//   cldr[0]   cl_dr      flipped        solver tornado_controls[rudder].Cl = -0.000374454 -> mapped -0.0214546 -> written 0.0214546
 //   cy[2]     cy_dr      flipped        solver tornado_controls[rudder].CY = -0.00400424 -> mapped -0.229426 -> written 0.229426
-//   cndr[0]   cn_dr      flipped        solver tornado_controls[rudder].Cn = -0.00319877 -> mapped 0.183276 -> written -0.183276
+//   cndr[0]   cn_dr      flipped        solver tornado_controls[rudder].Cn = 0.00319877 -> mapped 0.183276 -> written -0.183276
 //   cz[5]     cl_de      normalised     solver tornado_controls[elevator].CL = 0.00647969 -> mapped -0.371259 -> written -0.371259
 //   cm[2]     cm_de      normalised     solver tornado_controls[elevator].Cm = -0.0298079 -> mapped -1.16154 -> written -1.16154
 //   every slot in plane.groups.nonlinear_index is exactly 0.0; CD_alpha is not
@@ -149,10 +161,23 @@
 //    cd python && python3 scripts/build_cessna172_aero.py
 //    Nothing else writes these files; the sibling analysis and the sibling aid tree
 //    are read-only inputs and all solver scratch goes to a temporary directory.
+//
+// 9. THE OTHER THREE SOLVERS' RAW OUTPUT
+//    This file also carries `raw_cross_checks`, keyed by model, because a model file's
+//    provenance.mapping holds only the ONE raw number behind each slot.  Without this block
+//    the rest of each solver's output would not be re-derivable from the committed
+//    tree without re-running the solver:
+//      datcom  raw_cross_checks.datcom: 30 keys -- aid_CL0_as_reported, aid_CL_level_flight, aid_CLa_as_reported, aid_Cm0_as_reported, aid_Cma_as_reported, aid_K, aid_drag_CD0, aid_lateral_as_reported, aid_longitudinal_dynamic_CLq, aid_x_cg, datcom_alt, datcom_cd, datcom_cl, datcom_cla_per_degree, datcom_clb_per_degree, datcom_cm, datcom_cma_per_degree, datcom_cn, datcom_cnb_per_degree, datcom_cyb_per_degree, datcom_mach, datcom_table_alpha_deg, handbook_controls_per_degree, lateral_corrected, lateral_dynamic_as_reported, planform, section7, solver_alpha_deg, solver_alpha_index, solver_alpha_schedule_deg
+//      avl     raw_cross_checks.avl: 11 keys -- alpha_deg, alpha_index, alpha_schedule_deg, avl_axes, control_rows_per_degree, control_surfaces_available, mesh, reference_case, sb_geometry_axis, st_alpha_rows, x_reference_ft
+//      flow5   raw_cross_checks.flow5: 23 keys -- CD, CDind, CDvis, CL, CLa, Cm, Cma, Cx, Cz, alpha_deg, alpha_index, alpha_schedule_deg, beta_flat, cog_m, control_row_frame, control_rows_per_degree, deck_polar, deck_wings, entry_point, frame, mesh, output_keys, stab_derivatives
+//    Every per-degree number in them is UNCONVERTED: the model files carry the
+//    x 57.29577951308232 step and the sign normalisation, those blocks do not.
+//    flow5 has none -- its deck and polar are already SI and per radian -- which is
+//    itself part of that solver's record.
 // ==========================================================================
 {
   "model": "geometry",
-  "source": "/mnt/VirtualMachine/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
+  "source": "../USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
   "units": {
     "length": "m",
     "mass": "kg",
@@ -317,24 +342,24 @@
     "Cm_a": -8.786140193126624,
     "Cm_at_alpha0": -0.23193213566127172,
     "Cm_Q": -33.34877673385612,
-    "Cl_b": 0.0537212279989802,
+    "Cl_b": -0.0537212279989802,
     "Cl_P": -0.48609492506873475,
     "Cl_R": 0.04452499744582839,
-    "Cn_b": -0.2464995646609797,
+    "Cn_b": 0.2464995646609797,
     "Cn_P": 0.0686713968215351,
     "Cn_R": -0.2864030873858086,
     "CY_b": -0.4082698700081908,
     "CC_b": -0.4082698700081908,
-    "CY_P": 0.15961835084869766,
-    "CY_R": -0.3869509772284947,
-    "CX_Q": 0.0070792752703040486,
+    "CY_P": -0.15961835084869766,
+    "CY_R": 0.3869509772284947,
+    "CX_Q": -0.0070792752703040486,
     "CD_at_alpha0": 0.0006035629331626336,
     "CD_at_alpha": 0.015676295680821593,
     "CL_at_alpha": 0.5022740423558433,
     "CD_a": 0.43162175087239213,
-    "CZ_a": 5.165580958710336,
-    "CZ_Q": 9.615046347075133,
-    "CZ_at_alpha0": 0.16828451691889987,
+    "CZ_a": -5.165580958710336,
+    "CZ_Q": -9.615046347075133,
+    "CZ_at_alpha0": -0.16828451691889987,
     "K_wing": 0.08037324626140716,
     "CD0_source": 0.017218979436844056,
     "CL_wing": [
@@ -416,8 +441,8 @@
       "CD": 0.0007602595769772178,
       "Cm": -0.016334274776835245,
       "CY": 7.719640749775874e-18,
-      "Cl": -3.3584665546755754e-18,
-      "Cn": 6.759215961658217e-18
+      "Cl": 3.3584665546755754e-18,
+      "Cn": -6.759215961658217e-18
     },
     "aileron": {
       "delta_deg": 0.0,
@@ -425,8 +450,8 @@
       "CD": 1.734723475976807e-18,
       "Cm": -5.551115123125783e-17,
       "CY": -0.0008756730696224283,
-      "Cl": 0.004281088121852435,
-      "Cn": -0.0003113840588138146
+      "Cl": -0.004281088121852435,
+      "Cn": 0.0003113840588138146
     },
     "elevator": {
       "delta_deg": 0.0,
@@ -434,8 +459,8 @@
       "CD": 0.00032511773089295183,
       "Cm": -0.02980788598289902,
       "CY": -6.523640070233137e-19,
-      "Cl": 5.327639390690392e-18,
-      "Cn": 1.1793895589935362e-18
+      "Cl": -5.327639390690392e-18,
+      "Cn": -1.1793895589935362e-18
     },
     "rudder": {
       "delta_deg": 0.0,
@@ -443,8 +468,8 @@
       "CD": 1.3877787807814457e-17,
       "Cm": 0.0,
       "CY": -0.004004240094412686,
-      "Cl": 0.00037445384558744996,
-      "Cn": -0.0031987659455805996
+      "Cl": -0.00037445384558744996,
+      "Cn": 0.0031987659455805996
     }
   },
   "provenance": {
@@ -453,7 +478,9 @@
       "10",
       "5"
     ],
-    "source": "/mnt/VirtualMachine/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
+    "source": "../USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
+    "aid_src": "../USAF_DATCOM/AircraftIntuitiveDesign/Python/src",
+    "aid_src_commit": "c273aa6f0e7bb1672284404a540e9a1c9310dc32",
     "moment_reference": {
       "reference_point": [
         0.0,
@@ -469,13 +496,15 @@
       "dx_m": -0.896112,
       "dy_m": 0.0,
       "dz_m": 0.0,
-      "note": "Tornado reports about ref_point with x aft-positive; the CG offset passed to shift_moments_to_cg is dx = -ft(2.94) in the dynamics frame (x forward)"
+      "note": "Tornado reports about ref_point and the sibling re-expresses every coefficient in Forward-Right-Down, where the reference station is 2.94 ft AHEAD of the CG in the x-FORWARD sense; the CG offset passed to shift_moments_to_cg is therefore dx = -ft(2.94) m"
     },
     "sign_convention": {
-      "tornado_axes": "x aft, y right, z up (right-handed)",
+      "tornado_axes": "x forward, y right, z DOWN, as RETURNED -- coeff_create ends with `return to_frd(\"tornado\", out)` and aid/axes.py is the sibling's single home for solver signs",
+      "frame_conversion_applied": "none: the sibling already returns plane/dynamics.py's own frame, so no moment and no force needs its sign changed for frame reasons",
+      "only_surviving_negations": "cz = -CL on cz[1] and cz[5], which is the plane/dynamics.py identity (its body +z axis points down) and not a conversion",
       "dynamics_axes": "x forward, y right, z down (plane/dynamics.py)",
-      "cz": "cz = -CL (body z down); cl = -Cl; cm = +Cm; cn = -Cn",
-      "rate_derivatives": "no extra flip: the code perturbs the relative wind with r x omega, which is the correct omega x r for a negated velocity",
+      "cz": "cz = -CL on cz[1] and cz[5] only; cl, cm, cn, cy and cx are read exactly as reported",
+      "rate_derivatives": "none: coeff_create returns F-R-D for every channel, including the p/r columns, and Tornado's own Cl_P and Cn_R now AGREE with AVL's (which is unmapped and therefore natively F-R-D). The former claim that Tornado's P and R columns came back component-sense inverted no longer applies and was removed",
       "normalisation": "aero_convert.units.normalise_sign against SIGN_INVARIANTS"
     },
     "cl_alpha_cross_check": {
@@ -497,20 +526,836 @@
       "value": -0.017218979436844056
     },
     "flipped": [
+      "cd_q",
       "cl_dr",
-      "cl_p",
-      "cl_r",
       "cn_da",
       "cn_dr",
-      "cn_r",
+      "cn_p",
       "cy_da",
-      "cy_dr",
-      "cy_p",
-      "cy_r"
+      "cy_dr"
     ],
     "not_normalised": [
       "cm0"
     ],
     "missing": []
+  },
+  "raw_cross_checks": {
+    "datcom": {
+      "solver_alpha_schedule_deg": [
+        -4.0,
+        0.0,
+        4.0,
+        8.0,
+        12.0
+      ],
+      "solver_alpha_index": 2,
+      "solver_alpha_deg": 4.0,
+      "datcom_table_alpha_deg": [
+        -4.0,
+        0.0,
+        4.0,
+        8.0,
+        12.0
+      ],
+      "datcom_cl": [
+        -0.225,
+        0.131,
+        0.516,
+        0.934,
+        1.383
+      ],
+      "datcom_cd": [
+        0.028,
+        0.024,
+        0.037,
+        0.07,
+        0.128
+      ],
+      "datcom_cm": [
+        0.1059,
+        0.0472,
+        -0.0022,
+        -0.0672,
+        -0.1558
+      ],
+      "datcom_cn": [
+        0.227,
+        -0.131,
+        -0.518,
+        -0.934,
+        -1.38
+      ],
+      "datcom_cla_per_degree": [
+        0.08555,
+        0.09269,
+        0.1003,
+        0.1084,
+        0.1164
+      ],
+      "datcom_cma_per_degree": [
+        -0.01236,
+        -0.01351,
+        -0.01431,
+        -0.0192,
+        -0.02508
+      ],
+      "datcom_clb_per_degree": [
+        -0.001579,
+        -0.001988,
+        -0.002436,
+        -0.002933,
+        -0.003471
+      ],
+      "datcom_cyb_per_degree": [
+        -0.01207,
+        99999.0,
+        99999.0,
+        99999.0,
+        99999.0
+      ],
+      "datcom_cnb_per_degree": [
+        0.000795,
+        99999.0,
+        99999.0,
+        99999.0,
+        99999.0
+      ],
+      "datcom_mach": 0.03,
+      "datcom_alt": 0.0,
+      "aid_CLa_as_reported": 0.09115859371450025,
+      "aid_Cma_as_reported": -0.01099618832657766,
+      "aid_CL0_as_reported": 0.1599173420302446,
+      "aid_Cm0_as_reported": 0.02030704769680876,
+      "aid_lateral_as_reported": {
+        "CYb": -0.009326495800599612,
+        "Cnb": 0.0036194771593376467,
+        "Clb": -0.003090622882802272
+      },
+      "lateral_corrected": {
+        "cy_beta": -0.6082444104218907,
+        "cn_beta": -0.2482385665675611,
+        "cl_beta": -0.06896624615490778,
+        "cyb_v_as_reported": -0.010638771144151423,
+        "cyb_v": -0.6095566857654425,
+        "cyb_wb": 0.001312275343551812,
+        "vt_a_as_reported": 0.06109307940241697,
+        "vt_a_per_rad": 3.500375607216114,
+        "units_factor": 57.29577951308232,
+        "units_factor_meaning": "aid/lateral.py:571 divided a PER RADIAN slope by pi/180, so this multiplies it back by DEG_TO_RAD.  It is the numerical reciprocal of that division, not a per-degree-to-per-radian conversion",
+        "ht_a0_per_radian_as_read": 6.839621084719293,
+        "helmbold_k_per_radian": 1.0885595045086265,
+        "mechanism": "aid/lateral.py:565 reads HT['a0'] (rewritten by apply_handbook to 6.8396 PER RADIAN), so k = a0/(2*pi) = 1.0886/rad and the tail slope formula returns 3.5004 PER RADIAN -- 51 per cent of the 2-D 6.8396/rad, the reduction a fin of AR ~ 1.8 must show.  aid/lateral.py:571 then multiplies that by pi/180, which is the defect"
+      },
+      "section7": {
+        "cl_q": 5.95022084548837,
+        "cm_q": -18.654827246725755,
+        "cl_p": -0.7986100292146804,
+        "cy_p": 0.03535868993134663,
+        "cy_r": 0.5115600771886895,
+        "cl_r": 0.09534248151407834,
+        "cn_p": -0.03440682038461791,
+        "cn_r": -0.2874483865517269,
+        "ht_v": 0.6858137817381008,
+        "ht_arm_ft": 6.270297433034065,
+        "ht_a_per_rad": 4.381892174228073,
+        "wg_a_per_rad": 4.791660175288082,
+        "vt_a_per_rad": 3.500375607216114,
+        "vt_h_ft": 1.3198928600509827,
+        "vt_hp_ft": 1.6686870880833073,
+        "vt_l_ft": 5.046261684514562,
+        "vt_swash": 1.2664753815849223,
+        "vt_s_last": 4.4,
+        "sweep_c4_deg": 0.0,
+        "cl_source": 0.1563017616001531,
+        "cyb": -0.6082444104218907
+      },
+      "lateral_dynamic_as_reported": {
+        "CYp": 0.0005421713171694765,
+        "CYr": 0.007843989734891964,
+        "Clp": -0.013938374449244277,
+        "Clr": 0.0399382092371547,
+        "Cnp": -0.019765715062042066,
+        "Cnr": -0.0050169207748730245
+      },
+      "aid_longitudinal_dynamic_CLq": 0.10385094497457285,
+      "aid_drag_CD0": 0.01726937123110341,
+      "aid_K": 0.08037324626140716,
+      "aid_x_cg": 0.3699999999999999,
+      "aid_CL_level_flight": 0.1563017616001531,
+      "handbook_controls_per_degree": {
+        "aileron": {
+          "CL": null,
+          "CD": null,
+          "Cm": null,
+          "CY": null,
+          "Cl": 0.003629764423837838,
+          "Cn": null
+        },
+        "elevator": {
+          "CL": 0.00449313857151534,
+          "CD": null,
+          "Cm": -0.014086657625619491,
+          "CY": null,
+          "Cl": null,
+          "Cn": null
+        },
+        "rudder": {
+          "CL": null,
+          "CD": null,
+          "Cm": null,
+          "CY": 0.004545676104812234,
+          "Cl": 0.0004999837862371692,
+          "Cn": -0.001911555929827281
+        }
+      },
+      "planform": {
+        "wing": {
+          "chord_root_ft": 2.0,
+          "chord_break_ft": 2.5,
+          "chord_tip_ft": 2.0,
+          "span_ft": 6.0,
+          "area_ft2": 24.0,
+          "aspect_ratio": 6.0,
+          "panel_count": 1,
+          "dihedral_deg": 3.0,
+          "root_quarter_chord_sweep_deg": 0.0,
+          "x_station_ft": 2.2,
+          "airfoil": [
+            "2412",
+            "2412"
+          ]
+        },
+        "horizontal_tail": {
+          "chord_root_ft": 1.3,
+          "chord_break_ft": 1.3,
+          "chord_tip_ft": 0.8,
+          "span_ft": 2.5,
+          "area_ft2": 5.25,
+          "aspect_ratio": 4.761904761904762,
+          "panel_count": 1,
+          "dihedral_deg": 0.0,
+          "root_quarter_chord_sweep_deg": 11.309932474020213,
+          "x_station_ft": 8.75,
+          "airfoil": "0012"
+        },
+        "vertical_tail": {
+          "chord_root_ft": 5.0,
+          "chord_break_ft": 2.0,
+          "chord_tip_ft": 1.0,
+          "span_ft": 2.0,
+          "area_ft2": 8.8,
+          "aspect_ratio": 0.39999999999999997,
+          "panel_count": 3,
+          "dihedral_deg": 0.0,
+          "root_quarter_chord_sweep_deg": 77.61425752475202,
+          "x_station_ft": 5.0,
+          "airfoil": "0012"
+        },
+        "extra_panel": {
+          "name": "NP[0]",
+          "chord_root_ft": 0.3,
+          "chord_tip_ft": 0.3,
+          "span_ft": 5.0,
+          "area_ft2": 3.0,
+          "aspect_ratio": 33.333333333333336,
+          "dihedral_deg": 17.0,
+          "x_station_ft": 2.5,
+          "airfoil": "2412",
+          "in_lattice": true,
+          "cl_share_at_trim": 0.0,
+          "kept_because": "the user ruled it in: excluding it is explicitly out of scope"
+        }
+      }
+    },
+    "avl": {
+      "mesh": [
+        "10",
+        "10"
+      ],
+      "alpha_schedule_deg": [
+        -4.0,
+        0.0,
+        4.0,
+        8.0,
+        12.0
+      ],
+      "alpha_index": 2,
+      "alpha_deg": 4.0,
+      "x_reference_ft": 2.94,
+      "avl_axes": "X fwd, Y right, Z down -- identical to plane/dynamics.py",
+      "reference_case": {
+        "CLa": 5.057308,
+        "CYa": -0.019203,
+        "Cla": -0.001643,
+        "Cma": -0.97886,
+        "Cna": 0.007526,
+        "CLb": 0.036782,
+        "CYb": -0.393134,
+        "Clb": -0.065868,
+        "Cmb": -0.078914,
+        "Cnb": 0.182475,
+        "CLp": 0.01338,
+        "CYp": -0.203789,
+        "Clp": -0.484034,
+        "Cmp": -0.027843,
+        "Cnp": 0.05431,
+        "CLq": 9.734317,
+        "CYq": -0.216504,
+        "Clq": -0.012662,
+        "Cmq": -18.539804,
+        "Cnq": 0.0909,
+        "CLr": -0.040346,
+        "CYr": 0.429151,
+        "Clr": 0.045563,
+        "Cmr": 0.09209,
+        "Cnr": -0.206347,
+        "NP": 3.327107,
+        "alpha": -1.9039,
+        "beta": 0.0,
+        "mach": 0.03,
+        "CXtot": -0.01736,
+        "CYtot": 0.00117,
+        "CZtot": -0.00022,
+        "Cltot": 5e-05,
+        "Cmtot": 0.05644,
+        "Cntot": -0.00047,
+        "CLtot": 0.0008,
+        "CDtot": 0.01734,
+        "CDvis": 0.017,
+        "CDind": 0.0003381,
+        "CDff": 0.0003325,
+        "CLff": 0.00078,
+        "CYff": 0.00108,
+        "e": 0.0003
+      },
+      "sb_geometry_axis": {
+        "CXu": -0.037394,
+        "CYu": 0.001114,
+        "CZu": -0.337762,
+        "CXq": -0.140889,
+        "CYq": -0.203658,
+        "CZq": -9.53656,
+        "Cnp": 0.039264,
+        "Cnr": -0.207956
+      },
+      "st_alpha_rows": {
+        "CDff": [
+          0.0023538,
+          0.0016972,
+          0.0144471,
+          0.0403552,
+          0.0789173
+        ],
+        "CDind": [
+          0.0023614,
+          0.0016972,
+          0.0144536,
+          0.0402016,
+          0.0778778
+        ],
+        "CDtot": [
+          0.01936,
+          0.0187,
+          0.03145,
+          0.0572,
+          0.09488
+        ],
+        "CDvis": [
+          0.017,
+          0.017,
+          0.017,
+          0.017,
+          0.017
+        ],
+        "CLa": [
+          5.041013,
+          5.056652,
+          5.007369,
+          4.894505,
+          4.721423
+        ],
+        "CLb": [
+          0.037589,
+          0.036012,
+          0.0343,
+          0.032485,
+          0.030602
+        ],
+        "CLff": [
+          -0.18419,
+          0.1688,
+          0.52096,
+          0.87059,
+          1.21598
+        ],
+        "CLp": [
+          0.015223,
+          0.011753,
+          0.008518,
+          0.005588,
+          0.003012
+        ],
+        "CLq": [
+          9.941287,
+          9.53656,
+          9.094834,
+          8.624706,
+          8.135327
+        ],
+        "CLr": [
+          -0.041043,
+          -0.039592,
+          -0.037668,
+          -0.035349,
+          -0.032722
+        ],
+        "CLtot": [
+          -0.18397,
+          0.16888,
+          0.52056,
+          0.86656,
+          1.20256
+        ],
+        "CXtot": [
+          -0.00648,
+          -0.0187,
+          0.00494,
+          0.06396,
+          0.15722
+        ],
+        "CYa": [
+          -0.020638,
+          -0.017811,
+          -0.014637,
+          -0.011178,
+          -0.007502
+        ],
+        "CYb": [
+          -0.398866,
+          -0.387472,
+          -0.374191,
+          -0.359086,
+          -0.342233
+        ],
+        "CYff": [
+          0.00168,
+          0.00053,
+          -0.00061,
+          -0.00175,
+          -0.00289
+        ],
+        "CYp": [
+          -0.221631,
+          -0.187238,
+          -0.151727,
+          -0.11579,
+          -0.080127
+        ],
+        "CYq": [
+          -0.230369,
+          -0.203658,
+          -0.175954,
+          -0.147393,
+          -0.118114
+        ],
+        "CYr": [
+          0.423085,
+          0.433517,
+          0.43906,
+          0.439608,
+          0.435149
+        ],
+        "CYtot": [
+          0.0019,
+          0.00056,
+          -0.00058,
+          -0.00148,
+          -0.00213
+        ],
+        "CZtot": [
+          0.18487,
+          -0.16888,
+          -0.52148,
+          -0.86609,
+          -1.196
+        ],
+        "Cla": [
+          -0.00235,
+          -0.001035,
+          0.000105,
+          0.001015,
+          0.00165
+        ],
+        "Clb": [
+          -0.073277,
+          -0.059239,
+          -0.045756,
+          -0.033091,
+          -0.021488
+        ],
+        "Clp": [
+          -0.486877,
+          -0.480541,
+          -0.470451,
+          -0.456797,
+          -0.439841
+        ],
+        "Clq": [
+          -0.017441,
+          -0.008585,
+          -0.000917,
+          0.005414,
+          0.010284
+        ],
+        "Clr": [
+          0.013363,
+          0.074669,
+          0.135087,
+          0.194041,
+          0.250997
+        ],
+        "Cltot": [
+          8e-05,
+          2e-05,
+          -3e-05,
+          -6e-05,
+          -7e-05
+        ],
+        "Cma": [
+          -0.810598,
+          -1.127177,
+          -1.421816,
+          -1.688781,
+          -1.922876
+        ],
+        "Cmb": [
+          -0.080815,
+          -0.077096,
+          -0.073002,
+          -0.068552,
+          -0.063768
+        ],
+        "Cmp": [
+          -0.032121,
+          -0.024086,
+          -0.016667,
+          -0.010009,
+          -0.004241
+        ],
+        "Cmq": [
+          -18.466129,
+          -18.585224,
+          -18.613774,
+          -18.55164,
+          -18.399124
+        ],
+        "Cmr": [
+          0.093975,
+          0.09011,
+          0.085164,
+          0.079234,
+          0.072435
+        ],
+        "Cmtot": [
+          0.08919,
+          0.02144,
+          -0.06768,
+          -0.17644,
+          -0.30271
+        ],
+        "Cna": [
+          0.00785,
+          0.007157,
+          0.00617,
+          0.004938,
+          0.00352
+        ],
+        "Cnb": [
+          0.183805,
+          0.180801,
+          0.175872,
+          0.169115,
+          0.160661
+        ],
+        "Cnp": [
+          0.070706,
+          0.039264,
+          0.007108,
+          -0.025889,
+          -0.059813
+        ],
+        "Cnq": [
+          0.094895,
+          0.086977,
+          0.077902,
+          0.067849,
+          0.057013
+        ],
+        "Cnr": [
+          -0.204695,
+          -0.207956,
+          -0.211615,
+          -0.215516,
+          -0.219445
+        ],
+        "Cntot": [
+          -0.00076,
+          -0.00023,
+          0.00024,
+          0.00063,
+          0.00093
+        ],
+        "NP": [
+          3.261601,
+          3.385819,
+          3.507889,
+          3.630072,
+          3.754533
+        ],
+        "e": [
+          0.7647,
+          0.8906,
+          0.9966,
+          0.9964,
+          0.994
+        ]
+      },
+      "control_rows_per_degree": {
+        "aileron": {
+          "CL": -7.7e-05,
+          "CD": -1e-06,
+          "Cm": 0.00031,
+          "CY": -0.000959,
+          "Cl": -0.004549,
+          "Cn": 9.4e-05
+        },
+        "elevator": {
+          "CL": 0.006592,
+          "CD": 3.5e-05,
+          "Cm": -0.020322,
+          "CY": 0.000358,
+          "Cl": 3.7e-05,
+          "Cn": -0.000192
+        },
+        "rudder": {
+          "CL": 0.003009,
+          "CD": 1e-05,
+          "Cm": -0.009143,
+          "CY": -0.006586,
+          "Cl": -0.000876,
+          "Cn": 0.003556
+        }
+      },
+      "control_surfaces_available": [
+        "aileron",
+        "elevator",
+        "flap",
+        "rudder"
+      ]
+    },
+    "flow5": {
+      "mesh": [
+        "10",
+        "10"
+      ],
+      "frame": "to_frd('flow5', ...) via aid.flow5_io.run_flow5 -- the per-point polar channels Cx/Cz/Cl/Cn are in flow5's sign map with -1, the twelve StabDerivatives take no entry because they are already stability-axis",
+      "entry_point": "aid.flow5_io.run_flow5",
+      "deck_polar": {
+        "type": "T1",
+        "method": "VLM2",
+        "thin": true,
+        "viscous": false,
+        "qinf_mps": 10.207345160909794,
+        "density": 1.2250558830000002,
+        "viscosity": 1.4148641818436252e-05,
+        "sref_m2": 2.229672817300937,
+        "cref_m": 0.6095999804928006,
+        "bref_m": 3.657599882956804,
+        "cog_m": [
+          0.8961119713244169,
+          0.0,
+          0.0
+        ],
+        "mass_kg": 2.2679618500000003,
+        "alpha_deg": [
+          -4.0,
+          0.0,
+          4.0,
+          8.0,
+          12.0
+        ],
+        "beta_deg": 0.0
+      },
+      "deck_wings": [
+        {
+          "name": "Wing",
+          "role": "main",
+          "sections": 2
+        },
+        {
+          "name": "HT",
+          "role": "elevator",
+          "sections": 2
+        },
+        {
+          "name": "VT",
+          "role": "fin",
+          "sections": 3
+        },
+        {
+          "name": "Wing 2",
+          "role": "other",
+          "sections": 2
+        }
+      ],
+      "output_keys": [
+        "CD",
+        "CDind",
+        "CDvis",
+        "CL",
+        "CLa",
+        "CXa",
+        "CY",
+        "CYb",
+        "CYp",
+        "CYr",
+        "CZa",
+        "Cl",
+        "Clb",
+        "Clp",
+        "Clr",
+        "Cm",
+        "Cma",
+        "Cn",
+        "Cnb",
+        "Cnp",
+        "Cnr",
+        "Cx",
+        "Cz",
+        "XNP",
+        "alpha",
+        "beta"
+      ],
+      "CLa": 5.169735416175694,
+      "Cma": -1.5733256708165417,
+      "alpha_schedule_deg": [
+        -4.0,
+        0.0,
+        4.0,
+        8.0,
+        12.0
+      ],
+      "alpha_index": 2,
+      "alpha_deg": 4.0,
+      "CL": [
+        -0.23527030355832992,
+        0.13153556577751602,
+        0.4969998284379696,
+        0.8567758849515711,
+        1.2066876262391464
+      ],
+      "Cz": [
+        0.23486778726757948,
+        -0.13153556577751602,
+        -0.4966577137720113,
+        -0.8533919694254812,
+        -1.1947949062308323
+      ],
+      "Cx": [
+        0.013972071175725558,
+        -0.0012434428735832157,
+        0.02224808410571662,
+        0.08398941626218889,
+        0.18277882879513221
+      ],
+      "Cm": [
+        0.06768149276941772,
+        0.0002734207791160791,
+        -0.0966250883511877,
+        -0.22112801536169302,
+        -0.3708120523981203
+      ],
+      "CD": [
+        0.002445512723296366,
+        0.0012434428735832157,
+        0.01245120187953468,
+        0.03559716968267181,
+        0.06962715628400469
+      ],
+      "CDvis": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "CDind": [
+        0.002445512723296366,
+        0.0012434428735832157,
+        0.01245120187953468,
+        0.03559716968267181,
+        0.06962715628400469
+      ],
+      "stab_derivatives": {
+        "CXa": 0.059465607023915075,
+        "CYb": -0.41070604616019024,
+        "CYp": -0.20729059212631326,
+        "CYr": 0.4102636045841654,
+        "CZa": -5.2562276473919,
+        "Clb": -0.053008695558360824,
+        "Clp": -0.5384902543943747,
+        "Clr": 0.02673956552942886,
+        "Cnb": 0.1685338139166461,
+        "Cnp": 0.04030244694167647,
+        "Cnr": -0.20601583863404388,
+        "XNP": 1.023290730327584
+      },
+      "control_rows_per_degree": {
+        "aileron": {
+          "CL": null,
+          "CD": null,
+          "Cm": null,
+          "CY": null,
+          "Cl": 0.00559176887962237,
+          "Cn": -0.0006039287786305219
+        },
+        "elevator": {
+          "CL": 0.010631254688146213,
+          "CD": -0.00045024288077187276,
+          "Cm": -0.0320606179413116,
+          "CY": null,
+          "Cl": null,
+          "Cn": null
+        },
+        "rudder": {
+          "CL": null,
+          "CD": null,
+          "Cm": null,
+          "CY": 0.005083551317731487,
+          "Cl": -0.0005573436979134923,
+          "Cn": 0.0027568457793402676
+        }
+      },
+      "control_row_frame": "to_frd('flow5', ...) injected as flow5_controls' runner; its default runner is the RAW one, so without the injection the aileron Cl and Cn would arrive with the wrong sign",
+      "cog_m": [
+        0.8961119713244169,
+        0.0,
+        0.0
+      ],
+      "beta_flat": [
+        "CXa",
+        "CYb",
+        "CYp",
+        "CYr",
+        "CZa",
+        "Clb",
+        "Clp",
+        "Clr",
+        "Cnb",
+        "Cnp",
+        "Cnr",
+        "XNP"
+      ]
+    }
   }
 }
