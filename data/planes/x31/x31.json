@@ -1,0 +1,72 @@
+{
+  "plane": "x31",
+  "provenance": {
+    "port": "Dynamic-And-Control-Model-Of-SuperManeuverable-Aircraft",
+    "commit": "c03cc39",
+    "license": "GPLv2, Copyright (C) 2016 Hsin-Yi Kang",
+    "vendored_at": "python/x31/",
+    "trim_source": "X31dynamics_03_init, level flight at 50 m/s",
+    "notes": [
+      "The plant, aero, actuators, maneuver generator and both controllers live in python/x31 as vendored GPLv2 source; they are not FixedWing's to edit.",
+      "Only the trim point, the NED spawn, the maneuver-generator command, and the scenario table are data, so they live here rather than in Python source.",
+      "Controller state counts and the gain-schedule measurement delay are read from the port itself at run time, not restated here."
+    ]
+  },
+  "frames": {
+    "earth": "NED, +z down. The port integrates gravity as +z, so its earth frame is NED and d_m is altitude below the spawn.",
+    "body": "FRD. Body +x is forward, +y right, +z down.",
+    "state_units": "m, m/s, rad, rad/s. The port is SI natively and has no unit conversion layer.",
+    "control_units": "aileron, canard, flap, rudder, thrust_pitch and thrust_yaw are degrees; thrust is kN."
+  },
+  "spawn": {
+    "n_m": 0.0,
+    "e_m": 0.0,
+    "d_m": 0.0
+  },
+  "trim": {
+    "description": "Level flight at 50 m/s. q is the port's quaternion (w, x, y, z) and carries the 4.8648645161451505 deg trim incidence; w is zero.",
+    "pos": [0.0, 0.0, 0.0],
+    "vel": [50.0, 0.0, 0.0],
+    "q": [0.99909897, 0.0, 0.0424412, 0.0],
+    "w": [0.0, 0.0, 0.0]
+  },
+  "command": {
+    "description": "Maneuver-generator demand handed to the controller as a V/Chi/Gamma triplet. This is the port's own level-flight trim, so a run that starts here is trimmed.",
+    "V": 50.0,
+    "Chi": 0.0,
+    "Gamma": 0.0
+  },
+  "scenarios": {
+    "trim_hold": {
+      "description": "Hold the trim demand for 10 s. The only step is the trim demand itself, so this is the no-disturbance run. It does not sit still: the plant starts trimmed but the controller integrators start at zero, as the diagram's integrator blocks do, so every run opens with the port's own canard transient before the response settles.",
+      "duration_s": 10.0,
+      "steps": [
+        { "t_s": 0.0, "V": 50.0, "Chi": 0.0, "Gamma": 0.0 }
+      ]
+    },
+    "chi_step": {
+      "description": "Ramp the heading demand 30 deg right over 6 s from t = 2 s and hold it. Lateral, so it exercises aileron, rudder and thrust-vector yaw. The ramp is load-bearing: the same step taken instantaneously drives alpha past the diagram's 85 deg limit and ends the run.",
+      "duration_s": 20.0,
+      "steps": [
+        { "t_s": 0.0, "V": 50.0, "Chi": 0.0, "Gamma": 0.0 },
+        { "t_s": 2.0, "ramp_s": 6.0, "V": 50.0, "Chi": 30.0, "Gamma": 0.0 }
+      ]
+    },
+    "speed_step": {
+      "description": "Step the airspeed demand from 50 to 80 m/s at t = 2 s and hold it. Longitudinal, so it exercises canard and throttle.",
+      "duration_s": 20.0,
+      "steps": [
+        { "t_s": 0.0, "V": 50.0, "Chi": 0.0, "Gamma": 0.0 },
+        { "t_s": 2.0, "V": 80.0, "Chi": 0.0, "Gamma": 0.0 }
+      ]
+    },
+    "gamma_pull": {
+      "description": "Ramp the flight-path-angle demand 20 deg up over 6 s from t = 2 s and hold it. Longitudinal at high alpha, so it reaches the gain schedule's high-alpha rows. The ramp is load-bearing here too: the same step taken instantaneously ends the run at the 85 deg limit.",
+      "duration_s": 20.0,
+      "steps": [
+        { "t_s": 0.0, "V": 50.0, "Chi": 0.0, "Gamma": 0.0 },
+        { "t_s": 2.0, "ramp_s": 6.0, "V": 50.0, "Chi": 0.0, "Gamma": 20.0 }
+      ]
+    }
+  }
+}
