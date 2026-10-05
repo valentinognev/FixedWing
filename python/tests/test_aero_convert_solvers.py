@@ -155,6 +155,29 @@ CROSS_HEADER_SUBSTRINGS = {
 CL_ALPHA_BAND = (-6.5, -4.0)
 
 
+def sibling_aid_present() -> bool:
+    """Whether the sibling analysis tree and ``aid`` package these tests drive exist.
+
+    Both are read-only inputs outside this repository, so they are absent on any
+    clone that does not carry them, and ``solvers`` then raises ``FileNotFoundError``
+    from ``_load``/``_aid_on_path``.  A non-SkipTest exception in ``setUpClass`` is
+    reported as an ERROR for the WHOLE class, which would make the documented
+    ``cd python && python3 -m unittest discover -s tests`` fail for reasons that
+    have nothing to do with this change.
+    """
+    from aero_convert.solvers import aid_src, default_source
+
+    return aid_src().is_dir() and default_source().is_file()
+
+
+SIBLING_ABSENT = (
+    "the sibling aid package and Cessna172 analysis this module drives are absent; "
+    "set AID_SRC to the aid 'src' directory and place Analyses/Cessna172.jsonc "
+    "beside this repository"
+)
+
+
+@unittest.skipUnless(sibling_aid_present(), SIBLING_ABSENT)
 class TornadoAdapterTest(unittest.TestCase):
     """One solver run shared by every test in the class."""
 
@@ -652,6 +675,7 @@ class TornadoAdapterTest(unittest.TestCase):
         self.assertEqual(aircraft["he"], 0.0)
 
 
+@unittest.skipUnless(sibling_aid_present(), SIBLING_ABSENT)
 class CrossCheckAdapterTest(unittest.TestCase):
     """DATCOM, AVL and flow5 over the same source geometry.
 
@@ -1310,9 +1334,6 @@ class CrossCheckAdapterTest(unittest.TestCase):
                 # (2) every identity-negated slot, one per line
                 with self.subTest(model=model, claim="item 6 names every identity slot"):
                     expected = {item["slot"] for item in identity_negated(run)}
-                    named = set(re.findall(
-                        r"^//\s+(?:cz|cx)\[(\d+)\] from ", header, re.M))
-                    named = {f"cz[{i}]" for i in named} if False else named
                     named_slots = set(re.findall(
                         r"^//\s+([a-z]+\[\d+\]) from ", header, re.M))
                     self.assertEqual(

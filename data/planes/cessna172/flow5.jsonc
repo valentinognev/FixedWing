@@ -73,7 +73,7 @@
 //    it forms at delta +- aid.control_deriv.H_DEG = +-1 DEGREE, so each control
 //    slot is the solver's own number x 57.29577951308232.
 //    Every array in this file is per radian and every length is SI.  numpy bridge: numpy.trapezoid present; no alias bound
-//    cx[0] -- the parasite drag slot, Cd0 in a drag build-up -- = 0.017219.
+//    cx[0] -- the parasite drag slot, Cd0 in a drag build-up -- = -0.017219.
 //    Source: the source analysis file's own DATCOM-computed WG.CD0, the same value tornado.jsonc, datcom.jsonc and avl.jsonc all use, and it is NOT a flow5 output. flow5 now SPLITS
 //    its drag and the split is the measurement that settles this slot:
 //      CD(0)    = 0.00124344
@@ -148,10 +148,10 @@
 //    the slot table:
 //      produced (21): cd0, cl0, cl_alpha, cl_beta, cl_da, cl_de, cl_dr, cl_p, cl_r, cm0, cm_alpha, cm_de, cn_beta, cn_da, cn_dr, cn_p, cn_r, cy_beta, cy_dr, cy_p, cy_r
 //      absent   (4): cd_q, cl_q, cm_q, cy_da
-//      cmq[0]    cm_q    ZEROED AND DECLARED -- no value exists: pitch-rate derivative of Cm: flow5's library DOES compute CXq / CZq / Cmq, but FLOW5/run/flow5_run.cpp's stab_derivative_fields() does not forward them, so they never reach the JSON.  No q-derivative of any kind is available
+//      cmq[0]    cm_q    ZEROED AND DECLARED -- no value exists: pitch-rate derivative of the pitching moment: flow5's library DOES compute CXq / CZq / Cmq, but FLOW5/run/flow5_run.cpp's stab_derivative_fields() does not forward them, so they never reach the JSON.  No q-derivative of any kind is available
 //      cxq[0]    cd_q    ZEROED AND DECLARED -- no value exists: pitch-rate derivative of the axial force: flow5's library DOES compute CXq / CZq / Cmq, but FLOW5/run/flow5_run.cpp's stab_derivative_fields() does not forward them, so they never reach the JSON.  No q-derivative of any kind is available
 //      cy[1]     cy_da   ZEROED AND DECLARED -- no value exists: aileron side force: aid/flow5_controls' _KEEP table asks the aileron for Cl and Cn only, and does not ask for CY at all, so no aileron side-force coefficient is computed
-//      czq[0]    cl_q    ZEROED AND DECLARED -- no value exists: pitch-rate derivative of roll: flow5's library DOES compute CXq / CZq / Cmq, but FLOW5/run/flow5_run.cpp's stab_derivative_fields() does not forward them, so they never reach the JSON.  No q-derivative of any kind is available
+//      czq[0]    cl_q    ZEROED AND DECLARED -- no value exists: pitch-rate derivative of the body-z normal force: flow5's library DOES compute CXq / CZq / Cmq, but FLOW5/run/flow5_run.cpp's stab_derivative_fields() does not forward them, so they never reach the JSON.  No q-derivative of any kind is available
 
 //    SEPARATELY, 4 SLOT(S) ARE FILLED BUT FLIPPED -- these are NOT absent:
 //    they carry a real solver value whose sign the invariant table reversed, so
@@ -159,10 +159,11 @@
 //    Every one is in the slot table above with state `flipped`.
 //    This is flow5's real capability, measured, not a shortfall of this adapter:
 //    its runner emits 26 keys over the alpha sweep (CD, CDind, CDvis, CL, CLa, CXa, CY, CYb, CYp, CYr, CZa, Cl, Clb, Clp, Clr, Cm, Cma, Cn, Cnb, Cnp, Cnr, Cx, Cz, XNP, alpha, beta),
-//    and of those only CL, CD, Cm, CLa and Cma are longitudinal coefficients the
-//    schema has a slot for.  flow5 is a LONGITUDINAL cross-check on the lift
-//    slope, the pitching slope, the two intercepts, the elevator and the parasite
-//    drag -- it is not a 6-DOF data set and must not be flown as one.
+//    and of those only CL, CD, Cm, CLa and Cma are longitudinal coefficients the schema has a slot for.
+//    The file is much wider than that, though: it takes 21 of the 25 slots from
+//    that runner, every one of them named in the produced list above, so the sideslip, rate
+//    and control coefficients are cross-checks too and not zeroed stand-ins.  The 4 absent
+//    slots named above are the whole of what this runner does not reach.
 //    CD_alpha is not representable in this schema (cx has no CD*alpha term) and is 0.0.
 //    cd_de is not a FIELD at all: flow5 does produce an elevator drag derivative, but this
 //    schema has no slot for it in any of the 19 arrays, so it maps to nothing.  It is NOT
@@ -830,13 +831,13 @@
         "field": "cl_q",
         "slot": "czq[0]",
         "solver_key": "flow5 polar / aid.flow5_controls",
-        "reason": "pitch-rate derivative of roll: flow5's library DOES compute CXq / CZq / Cmq, but FLOW5/run/flow5_run.cpp's stab_derivative_fields() does not forward them, so they never reach the JSON.  No q-derivative of any kind is available"
+        "reason": "pitch-rate derivative of the body-z normal force: flow5's library DOES compute CXq / CZq / Cmq, but FLOW5/run/flow5_run.cpp's stab_derivative_fields() does not forward them, so they never reach the JSON.  No q-derivative of any kind is available"
       },
       {
         "field": "cm_q",
         "slot": "cmq[0]",
         "solver_key": "flow5 polar / aid.flow5_controls",
-        "reason": "pitch-rate derivative of Cm: flow5's library DOES compute CXq / CZq / Cmq, but FLOW5/run/flow5_run.cpp's stab_derivative_fields() does not forward them, so they never reach the JSON.  No q-derivative of any kind is available"
+        "reason": "pitch-rate derivative of the pitching moment: flow5's library DOES compute CXq / CZq / Cmq, but FLOW5/run/flow5_run.cpp's stab_derivative_fields() does not forward them, so they never reach the JSON.  No q-derivative of any kind is available"
       },
       {
         "field": "cd_q",
@@ -965,7 +966,7 @@
       "source": "the source analysis file's own DATCOM-computed WG.CD0, the same value tornado.jsonc, datcom.jsonc and avl.jsonc all use",
       "value": 0.017218979436844056,
       "source_WG_CD0": 0.017218979436844056,
-      "note": "cx[0] is a POSITIVE parasite-drag magnitude in Morelli's sign convention (the collector applies the cx = -CD0 identity), and it is NOT a flow5 output.  flow5's own CDvis/CDind split cannot supply it; see provenance.drag_split.  Recorded here because cross_check_header's item 4 reads provenance['cd0']['value'] and ['source'] for every model, and flow5's absence of it raised KeyError during the file write"
+      "note": "the recorded value is the POSITIVE parasite-drag magnitude the collector negates into cx[0], so cx[0] itself is negative; it is NOT a flow5 output -- flow5's own CDvis/CDind split cannot supply it, see provenance.drag_split. Recorded here because cross_check_header's item 4 reads provenance['cd0']['source'] for every model, and flow5's absence of it raised KeyError during the file write"
     },
     "not_a_field": {
       "cd_de": "flow5 DOES produce an elevator drag derivative -- aid.flow5_controls keeps ('CL', 'CD', 'Cm') for the elevator -- but this schema has no cd_de slot in any of the 19 arrays, so it maps to nothing.  It is NOT carried in this file; see provenance.raw_output_location for where the build put it"

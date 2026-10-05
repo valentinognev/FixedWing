@@ -59,7 +59,7 @@
 //    same units.  aid.handbook_pass._per_rad and aid.stability._per_deg were NOT
 //    used anywhere on this path: AVL does not go through them.
 //    Every array in this file is per radian and every length is SI.  numpy bridge: numpy.trapezoid present; no alias bound
-//    cx[0] -- the parasite drag slot, Cd0 in a drag build-up -- = 0.0170028,
+//    cx[0] -- the parasite drag slot, Cd0 in a drag build-up -- = -0.0170028,
 //    from AVL's own CDtot - CDind at the alpha = 0 run case (0.0187 - 0.0016972).
 //    AVL's reported CDvis is 0.017 and the #CDp card it was given was
 //    0.017219 (the source planform's own DATCOM-computed WG.CD0); all three agree
@@ -93,15 +93,20 @@
 //    itself requires -- `cz = -CL` for the lift slots, its body +z axis pointing down, and
 //    `cx = -CD` for the drag slot -- not a change of axis.  Listed from provenance.mapping:
 //      cz[1] from AVL .st CLA at alpha = 4 deg = 5.007369 -> -5.007369 per radian
-//      cz[0] from AVL .st CLtot at alpha = 0 deg = 0.168880 -> -0.168880 per radian
-//      cx[0] from AVL .st CDtot - CDind at alpha = 0 deg = 0.017003 -> -0.017003 per radian
+//      cz[0] from AVL .st CLtot at alpha = 0 deg = 0.168880 -> -0.168880
+//      cx[0] from AVL .st CDtot - CDind at alpha = 0 deg = 0.017003 -> -0.017003
 //      czq[0] from AVL .st CLq at alpha = 4 deg = 9.094834 -> -9.094834 per radian
 //      cz[5] from aid.avl_controls[elevator].CL = 0.006592 per degree -> -0.377694 per radian
-//    CLp is NOT negated (its .st value is
-//    already negative, 0.008518), and Cn_p IS, because AVL reports
-//    +0.007108 against the invariant cnp[0] < 0.
-//    Every sign is decided mechanically by aero_convert.units.normalise_sign against SIGN_INVARIANTS;
-//    the slots it flipped are listed in provenance.flipped, computed from this run's own mapping.
+//    The roll and yaw RATE slots that identity does not touch are decided by the invariant
+//    table instead, and both are printed here from the .st channel this adapter reads rather
+//    than from a similarly named one (`normalised` is the solver's own sign already on the
+//    invariant side of zero, `flipped` is the table's reversal):
+//      clp[0]    cl_p    AVL .st Clp at alpha = 4 deg = -0.470451 -> normalised
+//      cnp[0]    cn_p    AVL .st Cnp at alpha = 4 deg = +0.007108 -> flipped
+//    A table flip and a schema identity are different things with different justifications, and
+//    neither is a frame conversion.  Every sign is decided mechanically by aero_convert.units.normalise_sign
+//    against SIGN_INVARIANTS; the slots it flipped are listed in provenance.flipped, computed from
+//    this run's own mapping.
 //    cm0 (Cm0) carries NO invariant -- the two in-tree reference files disagree on it and its
 //    sign is tail rigging, not a derivable convention -- so it is written through untouched and is
 //    recorded as `not-normalised` in provenance.not_normalised.  Three provenance states exist and

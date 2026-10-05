@@ -85,7 +85,7 @@
 //          0.1 values are a placeholder, not a computation, and are NOT used: cy[1]
 //          and cnda[0] are 0.0 and declared in provenance.missing.
 //    Every array in this file is per radian and every length is SI.  numpy bridge: numpy.trapezoid present; no alias bound
-//    cx[0] -- the parasite drag slot, Cd0 in a drag build-up -- = 0.0172694.
+//    cx[0] -- the parasite drag slot, Cd0 in a drag build-up -- = -0.0172694.
 //    Source: aid.drag.aircraft_cd0, which is 1.25 x the summed section drag.  The Fortran's own CD at alpha = 0 is 0.024 with an induced part of 0.00137929,
 //    i.e. a parasite of 0.0226207, 1.310x the handbook build-up; both are recorded.
 //
@@ -124,8 +124,8 @@
 //    itself requires -- `cz = -CL` for the lift slots, its body +z axis pointing down, and
 //    `cx = -CD` for the drag slot -- not a change of axis.  Listed from provenance.mapping:
 //      cz[1] from DATCOM for006 CLA at alpha = 4 deg = 0.100300 per degree -> -5.746767 per radian
-//      cz[0] from DATCOM for006 CL at alpha = 0 deg = 0.131000 -> -0.131000 per radian
-//      cx[0] from aid.drag.aircraft_cd0 (via aid.handbook_pass) = 0.017269 -> -0.017269 per radian
+//      cz[0] from DATCOM for006 CL at alpha = 0 deg = 0.131000 -> -0.131000
+//      cx[0] from aid.drag.aircraft_cd0 (via aid.handbook_pass) = 0.017269 -> -0.017269
 //    The source planform runs x AFT-positive (XW = 2.2 < XCG = 2.94 < XH = 8.75 ft), which is why
 //    tornado.jsonc needs a shift and this file does not.
 //    cm0 (Cm0) carries NO invariant -- the two in-tree reference files disagree on it and its

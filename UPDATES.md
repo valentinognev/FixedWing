@@ -1,5 +1,15 @@
 # Updates
 
+## 0.92.1 - Cessna 172 aero headers: the last hand-written counts
+- `provenance.sign_convention.only_surviving_negations` and `.cz` are now built from the same mapping item 6 counts, so they name `cz[1]`, `cz[0]`, `cz[5]` instead of contradicting the header's own three.
+- Item 4's `cx[0]` prints the value written into the coefficients array in all four headers. It was the positive parasite-drag magnitude in `datcom`, `avl` and `flow5`, which ship the negated value; `flow5`'s `provenance.cd0.note` said so outright and now states the recorded value is the magnitude the collector negates.
+- An identity NEGATION that is an INTERCEPT (`cz[0]` = `CL(alpha=0)`, `cx[0]` = `Cd0`) no longer carries a "per radian" unit suffix.
+- `flow5`'s declared-gap reasons name the force each slot holds: `cl_q` is the body-z normal force, not roll.
+- `flow5`'s header no longer calls itself a longitudinal-only cross-check that must not be flown as a 6-DOF set; it states its real 21-of-25 coverage from the run's own counts.
+- AVL's rate-slot sentence is built from the mapping entry the adapter actually read (`.st Clp`, not `.st CLp`), and separates a table flip from a schema identity.
+- `python/tests/test_aero_convert_solvers.py` skips both adapter classes when the sibling `aid` package or the analysis tree is absent, so `python3 -m unittest discover -s tests` skips instead of erroring. Its `test_18` lost the dead `if False else named` binding.
+- No coefficient changed: this release is generated header and provenance text only.
+
 ## 0.92.0 - Cessna 172 aero regenerated against AID e0d2b99
 - Rebuilt `data/planes/cessna172/` against AircraftIntuitiveDesign `e0d2b992003fe7c81682dabcf31777f187961228` (Merge branch `feature/frd-sign-convention`). `provenance.aid_src_commit` moved from `c273aa6`.
 - No coefficient changed.

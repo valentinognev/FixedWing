@@ -1276,6 +1276,9 @@ def tornado_run(source: Path | None = None) -> TornadoRun:
             "frame or the cz sign is wrong, not the aircraft"
         )
 
+    identity_slots = _identity_slot_list(
+        _identity_negated_from(collector.mapping, collector.flipped))
+
     provenance = {
         "solver": "tornado",
         "solver_version": "aid.tornado (sibling package, imported at call time)",
@@ -1320,12 +1323,18 @@ def tornado_run(source: Path | None = None) -> TornadoRun:
             "frame_conversion_applied": "none: the sibling already returns "
                                         "plane/dynamics.py's own frame, so no moment and no "
                                         "force needs its sign changed for frame reasons",
-            "only_surviving_negations": "cz = -CL on cz[1] and cz[5], which is the "
-                                        "plane/dynamics.py identity (its body +z axis points "
-                                        "down) and not a conversion",
+            "only_surviving_negations": (
+                f"the plane/dynamics.py identity `cz = -CL`, and its `cx = -CD` twin on"
+                f" the drag slot, on {identity_slots} and on nothing else: that file's"
+                " sign convention (its body +z axis points down), not a conversion."
+                " Derived from provenance.mapping, which is the same source item 6 of"
+                " this file's header prints its count from"
+            ),
             "dynamics_axes": "x forward, y right, z down (plane/dynamics.py)",
-            "cz": "cz = -CL on cz[1] and cz[5] only; cl, cm, cn, cy and cx are read exactly as "
-                  "reported",
+            "cz": (
+                f"cz = -CL on {identity_slots} and on nothing else; cl, cm, cn, cy and cx"
+                " are read exactly as reported"
+            ),
             "rate_derivatives": "none: coeff_create returns F-R-D for every channel, including "
                                 "the p/r columns, and Tornado's own Cl_P and Cn_R now AGREE "
                                 "with AVL's (which is unmapped and therefore natively F-R-D). "
@@ -2910,8 +2919,8 @@ def flow5_run(source: Path | None = None) -> CrossCheckRun:
             role="slope",
         )
     for field, quantity in (
-        ("cl_q", "pitch-rate derivative of roll"),
-        ("cm_q", "pitch-rate derivative of Cm"),
+        ("cl_q", "pitch-rate derivative of the body-z normal force"),
+        ("cm_q", "pitch-rate derivative of the pitching moment"),
         ("cd_q", "pitch-rate derivative of the axial force"),
         ("cy_da", "aileron side force"),
     ):
@@ -3002,13 +3011,13 @@ def flow5_run(source: Path | None = None) -> CrossCheckRun:
                           "value tornado.jsonc, datcom.jsonc and avl.jsonc all use",
                 "value": parasite,
                 "source_WG_CD0": parasite,
-                "note": "cx[0] is a POSITIVE parasite-drag magnitude in Morelli's sign "
-                        "convention (the collector applies the cx = -CD0 identity), and it is "
-                        "NOT a flow5 output.  flow5's own CDvis/CDind split cannot supply "
-                        "it; see provenance.drag_split.  Recorded here because "
-                        "cross_check_header's item 4 reads provenance['cd0']['value'] and "
-                        "['source'] for every model, and flow5's absence of it raised "
-                        "KeyError during the file write",
+                "note": "the recorded value is the POSITIVE parasite-drag magnitude the"
+                        " collector negates into cx[0], so cx[0] itself is negative; it is"
+                        " NOT a flow5 output -- flow5's own CDvis/CDind split cannot supply"
+                        " it, see provenance.drag_split.  Recorded here because"
+                        " cross_check_header's item 4 reads provenance['cd0']['source'] for"
+                        " every model, and flow5's absence of it raised KeyError during the"
+                        " file write",
             },
             "not_a_field": {
                 "cd_de": "flow5 DOES produce an elevator drag derivative -- "
@@ -3451,6 +3460,20 @@ def identity_negated(run: TornadoRun | CrossCheckRun) -> list[dict[str, Any]]:
     for Tornado, one for flow5, zero for the two solvers whose ``.st``/``.sb`` are
     already body-axis.
     """
+    return _identity_negated_from(run.provenance["mapping"], run.provenance["flipped"])
+
+
+def _identity_negated_from(
+    mapping: Sequence[dict[str, Any]], flipped: Sequence[str]
+) -> list[dict[str, Any]]:
+    """The predicate behind ``identity_negated``, over the collector's own two lists.
+
+    It takes the lists rather than a finished run so ``tornado_run`` can build its
+    ``provenance.sign_convention`` strings out of the very same set its header later
+    counts.  Those strings used to name two slots by hand while the header counted
+    three from here: a hand-written copy of one derived set, which is the rot this
+    module keeps being rewritten to remove.
+    """
     from aero_convert.morelli import SLOT_MAP
 
     field_slot = {
@@ -3458,13 +3481,13 @@ def identity_negated(run: TornadoRun | CrossCheckRun) -> list[dict[str, Any]]:
         for array, slots in SLOT_MAP.items()
         for index, name in slots
     }
-    flipped = set(run.provenance["flipped"])
+    flipped_fields = set(flipped)
     found: list[dict[str, Any]] = []
-    for entry in run.provenance["mapping"]:
+    for entry in mapping:
         field = entry["field"]
         solver_value = entry.get("solver_value")
         mapped_value = entry.get("mapped_value")
-        if solver_value is None or mapped_value is None or field in flipped:
+        if solver_value is None or mapped_value is None or field in flipped_fields:
             continue
         if solver_value == 0.0:
             continue
@@ -3479,8 +3502,19 @@ def identity_negated(run: TornadoRun | CrossCheckRun) -> list[dict[str, Any]]:
                 "solver_value": float(solver_value),
                 "mapped_value": float(mapped_value),
                 "per_degree": per_degree,
+                "role": entry.get("role"),
             })
     return found
+
+
+def _identity_slot_list(identity: Sequence[dict[str, Any]]) -> str:
+    """A derived slot set as prose: ``"cz[0], cz[1] and cz[5]"``."""
+    slots = [item["slot"] for item in identity]
+    if not slots:
+        return "(none)"
+    if len(slots) == 1:
+        return slots[0]
+    return ", ".join(slots[:-1]) + " and " + slots[-1]
 
 
 def identity_lines(run: TornadoRun | CrossCheckRun) -> list[str]:
@@ -3510,9 +3544,10 @@ def identity_lines(run: TornadoRun | CrossCheckRun) -> list[str]:
                 f" -> {item['mapped_value']:.6f} per radian"
             )
         else:
+            unit = "" if item["role"] == "intercept" else " per radian"
             lines.append(
                 f"//      {item['slot']} from {item['solver_key']}"
-                f" = {item['solver_value']:.6f} -> {item['mapped_value']:.6f} per radian"
+                f" = {item['solver_value']:.6f} -> {item['mapped_value']:.6f}{unit}"
             )
     return lines
 
@@ -3626,7 +3661,7 @@ def header_comment(
         "//    per-degree number here is multiplied by 57.29577951308232 explicitly.",
         "//    Every array in this file is per radian and every length is SI.",
         f"//    cx[0] -- the parasite drag slot, Cd0 in a drag build-up -- ="
-        f" {run.provenance['cd0']['value']:.6g}.",
+        f" {run.coefficients['cx'][0]:.6g}.",
         f"//    It is NOT a Tornado output.  Source: {run.provenance['cd0']['source']}.",
         f"//    CD(0) = {run.provenance['cd0']['CD_at_alpha0']:.6g} and K*CL(0)^2 ="
         f" {run.provenance['cd0']['induced_part']:.6g} with K = {run.provenance['cd0']['K_wing']:.6g},",
@@ -3847,7 +3882,7 @@ def cross_check_header(
             f"//    Every array in this file is per radian and every length is SI."
             f"  numpy bridge: {run.provenance['numpy_bridge']}",
             f"//    cx[0] -- the parasite drag slot, Cd0 in a drag build-up -- ="
-            f" {run.provenance['cd0']['value']:.6g}.",
+            f" {run.coefficients['cx'][0]:.6g}.",
             f"//    Source: {run.provenance['cd0']['source']}.  The Fortran's own CD at alpha = 0"
             f" is {run.provenance['cd0']['datcom_own_CD_at_alpha0']:.6g} with an induced part of"
             f" {run.provenance['cd0']['induced_part']:.6g},",
@@ -3960,7 +3995,7 @@ def cross_check_header(
             f"//    Every array in this file is per radian and every length is SI."
             f"  numpy bridge: {run.provenance['numpy_bridge']}",
             f"//    cx[0] -- the parasite drag slot, Cd0 in a drag build-up -- ="
-            f" {run.provenance['cd0']['value']:.6g},",
+            f" {run.coefficients['cx'][0]:.6g},",
             f"//    from AVL's own CDtot - CDind at the alpha = 0 run case"
             f" ({run.provenance['cd0']['CDtot_at_alpha0']:.6g} -"
             f" {run.provenance['cd0']['CDind_at_alpha0']:.6g}).",
@@ -3986,6 +4021,7 @@ def cross_check_header(
             "//    tornado.jsonc, whose ref_point is 2.94 ft AHEAD of the CG and is corrected"
             " by dx = -0.896112 m.",
         ]
+        avl_entries = {entry["field"]: entry for entry in run.provenance["mapping"]}
         axes = [
             "//    AVL PRINTS ITS OWN CONVENTION, and it is the same one"
             " plane/dynamics.py uses: its .sb",
@@ -3995,16 +4031,27 @@ def cross_check_header(
             "//    applied in this file.  Which slots, if any, the `cz = -CL` identity still"
             " negates is derived:",
             *identity_lines(run),
-            "//    CLp is NOT negated"
-            " (its .st value is",
-            f"//    already negative, {float(run.raw['st_alpha_rows']['CLp'][run.raw['alpha_index']]):.6f}),"
-            " and Cn_p IS, because AVL reports",
-            f"//    {float(run.raw['st_alpha_rows']['Cnp'][run.raw['alpha_index']]):+.6f} against"
-            " the invariant cnp[0] < 0.",
-            "//    Every sign is decided mechanically by aero_convert.units.normalise_sign"
-            " against SIGN_INVARIANTS;",
-            "//    the slots it flipped are listed in provenance.flipped, computed from this"
-            " run's own mapping.",
+            "//    The roll and yaw RATE slots that identity does not touch are decided by the"
+            " invariant",
+            "//    table instead, and both are printed here from the .st channel this adapter"
+            " reads rather",
+            "//    than from a similarly named one (`normalised` is the solver's own sign already"
+            " on the",
+            "//    invariant side of zero, `flipped` is the table's reversal):",
+            *[
+                f"//      {avl_entries[field]['slot']:<9s} {field:<7s}"
+                f" {avl_entries[field]['tornado_key']} ="
+                f" {avl_entries[field]['solver_value']:+.6f}"
+                f" -> {avl_entries[field]['state']}"
+                for field in ("cl_p", "cn_p")
+            ],
+            "//    A table flip and a schema identity are different things with different"
+            " justifications, and",
+            "//    neither is a frame conversion.  Every sign is decided mechanically by"
+            " aero_convert.units.normalise_sign",
+            "//    against SIGN_INVARIANTS; the slots it flipped are listed in"
+            " provenance.flipped, computed from",
+            "//    this run's own mapping.",
         ]
         gaps = [
             "//    NO SLOT IS ABSENT: AVL produces all 25, including cnda[0] and cy[1], which"
@@ -4081,7 +4128,7 @@ def cross_check_header(
             f"//    Every array in this file is per radian and every length is SI."
             f"  numpy bridge: {run.provenance['numpy_bridge']}",
             f"//    cx[0] -- the parasite drag slot, Cd0 in a drag build-up -- ="
-            f" {run.provenance['cd0']['value']:.6g}.",
+            f" {run.coefficients['cx'][0]:.6g}.",
             f"//    Source: {run.provenance['cd0']['source']}, and it is NOT a flow5 output."
             " flow5 now SPLITS",
             "//    its drag and the split is the measurement that settles this slot:",
@@ -4143,10 +4190,15 @@ def cross_check_header(
             "//    This is flow5's real capability, measured, not a shortfall of this adapter:",
             f"//    its runner emits {len(run.raw['output_keys'])} keys over the alpha sweep"
             f" ({', '.join(run.raw['output_keys'])}),",
-            "//    and of those only CL, CD, Cm, CLa and Cma are longitudinal coefficients the",
-            "//    schema has a slot for.  flow5 is a LONGITUDINAL cross-check on the lift",
-            "//    slope, the pitching slope, the two intercepts, the elevator and the parasite",
-            "//    drag -- it is not a 6-DOF data set and must not be flown as one.",
+            "//    and of those only CL, CD, Cm, CLa and Cma are longitudinal coefficients the"
+            " schema has a slot for.",
+            f"//    The file is much wider than that, though: it takes {len(produced)} of the"
+            f" {len(ALL_DERIVATIVE_FIELDS)} slots from",
+            "//    that runner, every one of them named in the produced list above, so the"
+            " sideslip, rate",
+            "//    and control coefficients are cross-checks too and not zeroed stand-ins.  The"
+            f" {len(coverage['absent'])} absent",
+            "//    slots named above are the whole of what this runner does not reach.",
             "//    CD_alpha is not representable in this schema (cx has no CD*alpha term) and"
             " is 0.0.",
             "//    cd_de is not a FIELD at all: flow5 does produce an elevator drag derivative,"

@@ -90,7 +90,7 @@
 //    itself requires -- `cz = -CL` for the lift slots, its body +z axis pointing down, and
 //    `cx = -CD` for the drag slot -- not a change of axis.  Listed from provenance.mapping:
 //      cz[1] from CL_a = 5.148013 -> -5.148013 per radian
-//      cz[0] from CL(alpha=0) = 0.168285 -> -0.168285 per radian
+//      cz[0] from CL(alpha=0) = 0.168285 -> -0.168285
 //      cz[5] from tornado_controls[elevator].CL = 0.006480 per degree -> -0.371259 per radian
 //
 //    Everything else is unnegated, including czq[0] = CZ_Q and cxq[0] = CX_Q, which are
@@ -403,9 +403,9 @@
     "sign_convention": {
       "tornado_axes": "x forward, y right, z DOWN, as RETURNED -- coeff_create ends with `return to_frd(\"tornado\", out)` and aid/axes.py is the sibling's single home for solver signs",
       "frame_conversion_applied": "none: the sibling already returns plane/dynamics.py's own frame, so no moment and no force needs its sign changed for frame reasons",
-      "only_surviving_negations": "cz = -CL on cz[1] and cz[5], which is the plane/dynamics.py identity (its body +z axis points down) and not a conversion",
+      "only_surviving_negations": "the plane/dynamics.py identity `cz = -CL`, and its `cx = -CD` twin on the drag slot, on cz[1], cz[0] and cz[5] and on nothing else: that file's sign convention (its body +z axis points down), not a conversion. Derived from provenance.mapping, which is the same source item 6 of this file's header prints its count from",
       "dynamics_axes": "x forward, y right, z down (plane/dynamics.py)",
-      "cz": "cz = -CL on cz[1] and cz[5] only; cl, cm, cn, cy and cx are read exactly as reported",
+      "cz": "cz = -CL on cz[1], cz[0] and cz[5] and on nothing else; cl, cm, cn, cy and cx are read exactly as reported",
       "rate_derivatives": "none: coeff_create returns F-R-D for every channel, including the p/r columns, and Tornado's own Cl_P and Cn_R now AGREE with AVL's (which is unmapped and therefore natively F-R-D). The former claim that Tornado's P and R columns came back component-sense inverted no longer applies and was removed",
       "normalisation": "aero_convert.units.normalise_sign against SIGN_INVARIANTS"
     },
