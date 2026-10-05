@@ -41,6 +41,7 @@ computed quantity goes stale the moment the computation changes.
 """
 from __future__ import annotations
 
+import inspect
 import json
 import math
 import unittest
@@ -676,6 +677,29 @@ class TornadoAdapterTest(unittest.TestCase):
         self.assertGreaterEqual(aircraft["t_max_n"], 0.0)
         self.assertEqual(aircraft["ixz"], 0.0)
         self.assertEqual(aircraft["he"], 0.0)
+
+
+class BuildGuardTest(unittest.TestCase):
+    """``build()`` must not be able to overwrite the committed deliverables.
+
+    It writes Tornado only, so with the default out_dir it would replace the
+    committed ``geometry.jsonc`` -- the only copy of the Fortran ``for006`` table,
+    the AVL per-alpha rows and the flow5 deck and polar -- with a version missing
+    every ``raw_cross_checks`` key.  The guard raises instead.  No solver run is
+    needed to check that, so this class is independent of the sibling analysis tree.
+    """
+
+    def test_build_refuses_the_committed_data_directory(self) -> None:
+        import aero_convert.solvers as solvers
+
+        self.assertIn("build", solvers.__all__)
+        with self.assertRaises(ValueError):
+            solvers.build()
+        signature = inspect.signature(solvers.build)
+        self.assertIs(
+            signature.parameters["out_dir"].default, None,
+            "an explicit out_dir must stay the only way in",
+        )
 
 
 @unittest.skipUnless(sibling_aid_present(), SIBLING_ABSENT)

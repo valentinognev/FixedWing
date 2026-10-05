@@ -127,6 +127,7 @@ cd python && python3 run_f16.py --aero stevens   # same runner; Appendix A.8 aer
 cd python && python3 run_plane.py --plane linear --duration 1 --csv /tmp/linear.csv  # host-only Morelli 6DOF; nonlinear slots zeroed
 cd python && python3 run_plane.py --plane cessna172 --model tornado --duration 5 --csv /tmp/c172.csv
 cd python && python3 -m unittest discover -s tests
+cd python && MPLBACKEND=Agg python3 -m unittest tests.test_plane_cessna172_json -v  # c172 aero acceptance suite; signs + tornado magnitudes + static margin + trim + modes; flow5 cm[1] is the declared 4.9 % band outlier, asserted against provenance.invariant_band_note at 5 %
 FW_SITL_E2E=1 ./python/scripts/run_race_quat_e2e.sh   # opt-in live SITL (50 m smoke course)
 FW_SITL_E2E=1 ./python/scripts/run_race_quat_production_e2e.sh  # production 10 m course, typical-spawn first circuit
 FW_SITL_E2E=1 ./python/scripts/run_race_euler_e2e.sh  # GZ race_euler, production 10 m course

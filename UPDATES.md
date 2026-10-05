@@ -49,7 +49,9 @@
 - `flow5` `provenance.beta_flat` gained `CY`, `Cz`, and `Cx` from `aid.solver_overlay.FLOW5_BETA_FLAT`. `geometry.jsonc` `raw_cross_checks.flow5.beta_flat` matches.
 - `flow5` `cm[1]` remains `-1.57333`/rad, outside the tornado magnitude band `-1.5 … -0.3`. Raw solver `Cma` is the same number and was not flipped. `provenance.invariant_band_note` already records the band as the outlier. Not adjusted.
 - `python/tests/test_plane_cessna172_json.py` pins schema, tornado magnitudes, cross-check signs, static margin, trim, modes, cross-model agreement, declared gaps, and the `run_plane.py` smoke.
-- README names `python/aero_convert/`, the Cessna `--model` selection, and the tornado run line.
+- The suite also asserts flow5's declared limit rather than leaving it unasserted: `cm[1]` must equal the value `provenance.invariant_band_note` records, to the 6 decimals it is recorded at, and its deviation from the `-1.5 … -0.3` band edge must stay within 5 % (currently 4.888 %). A rebuild that moves `cm[1]` further fails.
+- README names `python/aero_convert/`, the Cessna `--model` selection, the tornado run line, and the acceptance-suite run line.
+- Governing spec committed: `docs/superpowers/plans/2026-10-02-cessna172-aero-data.md` and `docs/superpowers/plans/2026-10-02-linear-morelli-6dof.md`. `test_invariants` and `test_static_margin` cite the committed plan path for the two quoted acceptance requirements.
 
 ## 0.91.0 - Cessna 172 aero headers: derive every count and slot name from the run
 - Header prose that stated a count, slot name, key set or capability is now computed from the run at build time. `item6` prints the whole `provenance.flipped` list and derives its sign-convention negations via `identity_negated`, instead of naming two slots and calling a 7-element list a 2-element one.

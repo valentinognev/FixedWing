@@ -4892,7 +4892,19 @@ def build(out_dir: Path | None = None, source: Path | None = None) -> dict[str, 
     Deliberately Tornado-only: geometry.jsonc collects Tornado's raw output, and
     the cross-check models would each add their own run to every caller.
     ``build_all`` is the entry point that writes all five files.
+
+    ``out_dir`` is required.  Called with no directory this would resolve to
+    ``DEFAULT_OUT_DIR`` and overwrite the committed ``geometry.jsonc`` -- the only
+    copy of the Fortran ``for006`` table, the AVL per-alpha rows and the flow5 deck
+    and polar -- with a Tornado-only version that drops every ``raw_cross_checks``
+    key.  Pass a scratch directory, or use ``build_all`` to rebuild the tree.
     """
+    if out_dir is None:
+        raise ValueError(
+            "build() would overwrite the committed data/planes/cessna172/ files, and "
+            "its geometry.jsonc carries none of the cross-check raw output; pass an "
+            "explicit out_dir for a scratch build, or call build_all() to rebuild"
+        )
     return write_all(tornado_run(source), out_dir)
 
 
