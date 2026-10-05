@@ -1,5 +1,13 @@
 # Updates
 
+## 0.93.0 - Cessna 172 aero: CD_alpha/CD_de are a mapping gap, not a schema gap
+- Every generated file's `zeroed_slots.CD_alpha` (and flow5's `cd_de` notes and both header gap blocks) now state the truth: `cx[1]` and `cx[3]` ARE the `CD_alpha` and `CD_de` slots (`plane/groups.py` `LINEAR_INDEX["cx"] = (0, 1, 3)`, `f16/aero_morelli.py` evaluates both), and they ship 0.0 because `DerivativeSet` has no field for either derivative and `aero_convert/morelli.py`'s `SLOT_MAP` maps only `('cx', ((0, 'cd0'),))`. The zeroed-linear-slot list is derived from the written coefficients.
+- `provenance.cd0.value` means the value AS WRITTEN in all four files, so it matches `coefficients.cx[0]`; the positive parasite magnitude moved to `provenance.cd0.parasite_magnitude`. `_cd0_slot_text` raises if the two ever drift.
+- The sign-convention identity names are derived per array from the identity set (`cz = -CL`, `cx = -CD`, `czq[0] = -CL_q`), so no file names an identity its own set does not contain; tornado's `cx[0]` is described as the negated source magnitude rather than "read exactly as reported".
+- Every remaining hand-written ratio or magnitude in the tornado and DATCOM headers is computed from the run: the Clb correction factor, the AVL comparison (`build_all` passes the other runs to the header), the p-hat scaling, the VT slope factor and the `cm[1]` band excursion, whose percentage now comes from `PLAN_CM_ALPHA_BAND`. `SPEED_FACTOR_FEET_FRAME` is gone: the flow5 header derives the feet-frame factor from its own trim.
+- `_run_datcom`'s docstring now says what actually happens to a missing Fortran binary (it propagates out of the build).
+- No coefficient changed: this release is regenerated header and provenance text only.
+
 ## 0.92.1 - Cessna 172 aero headers: the last hand-written counts
 - `provenance.sign_convention.only_surviving_negations` and `.cz` are now built from the same mapping item 6 counts, so they name `cz[1]`, `cz[0]`, `cz[5]` instead of contradicting the header's own three.
 - Item 4's `cx[0]` prints the value written into the coefficients array in all four headers. It was the positive parasite-drag magnitude in `datcom`, `avl` and `flow5`, which ship the negated value; `flow5`'s `provenance.cd0.note` said so outright and now states the recorded value is the magnitude the collector negates.

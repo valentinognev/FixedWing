@@ -113,8 +113,8 @@
 //    being true when the source became the body-axis CZa, which needs no
 //    negation at all:
 //    1 negation survives, and none is a frame conversion.  Each is a SIGN-CONVENTION identity that the schema
-//    itself requires -- `cz = -CL` for the lift slots, its body +z axis pointing down, and
-//    `cx = -CD` for the drag slot -- not a change of axis.  Listed from provenance.mapping:
+//    itself requires -- `cz = -CL` on cz[5] -- its body +z axis points down, not a change
+//    of axis.  Listed from provenance.mapping:
 //      cz[5] from aid.flow5_controls[elevator].CL = 0.010631 per degree -> -0.609126 per radian
 //    Its Cma = -1.573326 is already negative, the
 //    invariant sign, so it is written through unnegated.
@@ -164,16 +164,20 @@
 //    that runner, every one of them named in the produced list above, so the sideslip, rate
 //    and control coefficients are cross-checks too and not zeroed stand-ins.  The 4 absent
 //    slots named above are the whole of what this runner does not reach.
-//    CD_alpha is not representable in this schema (cx has no CD*alpha term) and is 0.0.
-//    cd_de is not a FIELD at all: flow5 does produce an elevator drag derivative, but this
-//    schema has no slot for it in any of the 19 arrays, so it maps to nothing.  It is NOT
-//    carried in this file; the note at the end of item 7 says where the build put it.
-//    One magnitude sits outside the plan's band and is RECORDED rather than forced: cm[1] = -1.573326
-//    /rad is 4.9 % below the plan's -1.5 ... -0.3 pitched-moment-slope band, which that band was
-//    estimated from (tornado.jsonc ships -1.1927).  The sign and the static margin are both
-//    correct and the band is the outlier here, not the coefficient.  Task 5's
-//    invariant suite is where magnitudes are asserted, so this excursion is
-//    declared here rather than forced into the band.
+//    cx[1] (CD_alpha) and cx[3] (CD_de) are the two slots nothing here can fill, and NOT
+//    because the schema lacks them: it has both, and f16/aero_morelli.py evaluates Cx0 = cx[0] +
+//    cx[1]*alpha + ... + cx[3]*de.  DerivativeSet has no field for either derivative and SLOT_MAP
+//    maps only ('cx', ((0, 'cd0'),)), so both ship 0.0: the linear slots left at 0.0 undeclared are cx[1] and cx[3].
+//    provenance.zeroed_slots.CD_alpha carries the same fact in full.  flow5 DOES produce the
+//    elevator drag derivative (provenance.not_a_field.cd_de keeps it, and provenance.control_rows
+//    holds the row); it maps to nothing because that field does not exist.  It is NOT carried in
+//    this file; the note at the end of item 7 says where the build put it.
+//    One magnitude sits outside the plan's band and is RECORDED rather than forced:
+//      cm[1] = -1.573326/rad is 4.9 % BELOW the plan's pitched-moment slope
+//      band of -1.5 ... -0.3 /rad, measured against that band's lower edge.
+//      The sign and the static margin are both correct and the band is the
+//      outlier here, not the coefficient; it is recorded rather than forced,
+//      and Task 5's suite is where magnitudes are asserted
 //
 // 7. PER-SLOT PROVENANCE (all 19 arrays; real solver output vs zeroed)
 //   cz[1]     cl_alpha   normalised     solver flow5 CZa (StabDerivative, already stability-axis) = -5.25623 -> mapped -5.25623 -> written -5.25623
@@ -201,8 +205,11 @@
 //   cmq[0]    cm_q       missing        ABSENT -- flow5 polar / aid.flow5_controls (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
 //   cxq[0]    cd_q       missing        ABSENT -- flow5 polar / aid.flow5_controls (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
 //   cy[1]     cy_da      missing        ABSENT -- flow5 polar / aid.flow5_controls (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
-//   every slot in plane.groups.nonlinear_index is exactly 0.0; CD_alpha is not
-//   representable in this schema (cx has no CD*alpha term) and is zeroed and declared
+//   every slot in plane.groups.nonlinear_index is exactly 0.0; cx[1] (CD_alpha) and cx[3] (CD_de)
+//   are real schema slots the flight model evaluates, but DerivativeSet has no field for either
+//   derivative and SLOT_MAP maps only ('cx', ((0, 'cd0'),)), so both ship 0.0 -- named here rather
+//   than declared in provenance.missing: cx[1] and cx[3].  provenance.zeroed_slots.CD_alpha
+//   carries the same fact in full.
 //    THE REST OF THIS SOLVER'S RAW, UNCONVERTED OUTPUT IS IN geometry.jsonc, under raw_cross_checks.flow5
 //    -- the Fortran's own for006 table and AID's pre-correction handbook rows for
 //    DATCOM, the per-alpha .st rows for AVL, the deck and the polar for flow5.
@@ -512,7 +519,7 @@
     },
     "zeroed_slots": {
       "nonlinear": "every slot in plane.groups.nonlinear_index is exactly 0.0",
-      "CD_alpha": "cx has no CD*alpha term in this schema, so CD_alpha is 0.0 and is declared rather than approximated",
+      "CD_alpha": "cx[1] (CD_alpha) and cx[3] (CD_de) are real schema slots: LINEAR_INDEX lists cx's linear indexes as (0, 1, 3) and f16/aero_morelli.py evaluates Cx0 = cx[0] + cx[1]*alpha + ... + cx[3]*de, so the flight model reads both terms.  They ship 0.0 because DerivativeSet has no field for either derivative and aero_convert/morelli.py's SLOT_MAP maps only ('cx', ((0, 'cd0'),)) -- a MAPPING gap, not a schema gap.  The linear slots this file leaves at 0.0 without a provenance.missing entry are: cx[1] and cx[3]",
       "flap": "the Morelli schema has no flap slot, so the handbook's flap row maps to nothing.  It is NOT carried in this file; provenance.raw_output_location says where the build put it, and provenance.control_rows holds it"
     },
     "mapping": [
@@ -964,12 +971,13 @@
     },
     "cd0": {
       "source": "the source analysis file's own DATCOM-computed WG.CD0, the same value tornado.jsonc, datcom.jsonc and avl.jsonc all use",
-      "value": 0.017218979436844056,
+      "value": -0.017218979436844056,
+      "parasite_magnitude": 0.017218979436844056,
       "source_WG_CD0": 0.017218979436844056,
-      "note": "the recorded value is the POSITIVE parasite-drag magnitude the collector negates into cx[0], so cx[0] itself is negative; it is NOT a flow5 output -- flow5's own CDvis/CDind split cannot supply it, see provenance.drag_split. Recorded here because cross_check_header's item 4 reads provenance['cd0']['source'] for every model, and flow5's absence of it raised KeyError during the file write"
+      "note": "value is the number AS WRITTEN into cx[0], so it is negative, and parasite_magnitude is the positive value the collector negates; neither is a flow5 output -- flow5's own CDvis/CDind split cannot supply them, see provenance.drag_split.  Recorded here because cross_check_header's item 4 reads provenance['cd0']['source'] for every model, and flow5's absence of it raised KeyError during the file write"
     },
     "not_a_field": {
-      "cd_de": "flow5 DOES produce an elevator drag derivative -- aid.flow5_controls keeps ('CL', 'CD', 'Cm') for the elevator -- but this schema has no cd_de slot in any of the 19 arrays, so it maps to nothing.  It is NOT carried in this file; see provenance.raw_output_location for where the build put it"
+      "cd_de": "flow5 DOES produce an elevator drag derivative -- aid.flow5_controls keeps ('CL', 'CD', 'Cm') for the elevator -- and the schema HAS a slot for it: cx[3] is a linear index of cx and f16/aero_morelli.py evaluates Cx0 = cx[0] + cx[1]*alpha + ... + cx[3]*de.  What is missing is a DerivativeSet field to carry it, because aero_convert/morelli.py's SLOT_MAP maps only ('cx', ((0, 'cd0'),)), so it maps to nothing.  It is NOT carried in this file; see provenance.raw_output_location for where the build put it and provenance.control_rows for the row itself"
     },
     "cross_solver_disagreements": {
       "cl_da": "cl_da: this solver's own aid.flow5_controls[aileron].Cl is +0.005592, where morelli.json wants cl_da negative (SIGN_INVARIANTS['cl_da'] = -1).  The sign is established -- roll, pitch and yaw damping each have one sign, and data/planes/linear/morelli.json is the named authority -- so normalise_sign flips it mechanically and provenance.flipped records it.  Recorded here as a CROSS-SOLVER DISAGREEMENT rather than routine normalisation, because the other solvers sit on the invariant side of zero",
@@ -978,7 +986,7 @@
       "cn_p": "cn_p: this solver's own flow5 Cnp (StabDerivative, already stability-axis) is +0.040302, where morelli.json wants cn_p negative (SIGN_INVARIANTS['cn_p'] = -1).  The sign is established -- roll, pitch and yaw damping each have one sign, and data/planes/linear/morelli.json is the named authority -- so normalise_sign flips it mechanically and provenance.flipped records it.  Recorded here as a CROSS-SOLVER DISAGREEMENT rather than routine normalisation, because the other solvers sit on the invariant side of zero",
       "_not_a_disagreement": "For the record, cd0, cl0, cl_alpha, cl_de are NOT in this list: the sign-convention identities (`cz = -CL`, `cx = -CD`) already put them on the invariant side, so normalise_sign leaves them alone and provenance.flipped does not name them.  An earlier version of this block listed cz[5] here anyway and described a flip that was never recorded."
     },
-    "invariant_band_note": "cm[1] = -1.573326/rad is 4.9 % BELOW the plan's pitched-moment slope band of -1.5 ... -0.3 /rad, which that band was estimated from (tornado.jsonc ships -1.1927).  The sign and the static margin are both correct and the band is the outlier here, not the coefficient; it is recorded rather than forced, and Task 5's suite is where magnitudes are asserted",
+    "invariant_band_note": "cm[1] = -1.573326/rad is 4.9 % BELOW the plan's pitched-moment slope band of -1.5 ... -0.3 /rad, measured against that band's lower edge.  The sign and the static margin are both correct and the band is the outlier here, not the coefficient; it is recorded rather than forced, and Task 5's suite is where magnitudes are asserted",
     "raw_output_location": "geometry.jsonc, under raw_cross_checks.flow5"
   }
 }

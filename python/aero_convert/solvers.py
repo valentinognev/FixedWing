@@ -299,7 +299,7 @@ from aero_convert.units import (
 from f16.aero_morelli import morelli_coefficients
 from plane.atmosphere import air
 from plane.dynamics import plane_derivative
-from plane.groups import MORELLI_LENGTHS
+from plane.groups import LINEAR_INDEX, MORELLI_LENGTHS
 
 __all__ = [
     "AID_SRC_ENV",
@@ -1276,8 +1276,14 @@ def tornado_run(source: Path | None = None) -> TornadoRun:
             "frame or the cz sign is wrong, not the aircraft"
         )
 
-    identity_slots = _identity_slot_list(
-        _identity_negated_from(collector.mapping, collector.flipped))
+    identity = _identity_negated_from(collector.mapping, collector.flipped)
+    cd0_slot = next(
+        entry["slot"] for entry in collector.mapping if entry["field"] == "cd0"
+    )
+    sign_convention = _tornado_sign_convention(identity, cd0_slot)
+    cx_gap = _cx_derivative_gap(
+        coefficients, [item["slot"] for item in collector.missing]
+    )[0]
 
     provenance = {
         "solver": "tornado",
@@ -1323,18 +1329,9 @@ def tornado_run(source: Path | None = None) -> TornadoRun:
             "frame_conversion_applied": "none: the sibling already returns "
                                         "plane/dynamics.py's own frame, so no moment and no "
                                         "force needs its sign changed for frame reasons",
-            "only_surviving_negations": (
-                f"the plane/dynamics.py identity `cz = -CL`, and its `cx = -CD` twin on"
-                f" the drag slot, on {identity_slots} and on nothing else: that file's"
-                " sign convention (its body +z axis points down), not a conversion."
-                " Derived from provenance.mapping, which is the same source item 6 of"
-                " this file's header prints its count from"
-            ),
+            "only_surviving_negations": sign_convention["only_surviving_negations"],
             "dynamics_axes": "x forward, y right, z down (plane/dynamics.py)",
-            "cz": (
-                f"cz = -CL on {identity_slots} and on nothing else; cl, cm, cn, cy and cx"
-                " are read exactly as reported"
-            ),
+            "cz": sign_convention["cz"],
             "rate_derivatives": "none: coeff_create returns F-R-D for every channel, including "
                                 "the p/r columns, and Tornado's own Cl_P and Cn_R now AGREE "
                                 "with AVL's (which is unmapped and therefore natively F-R-D). "
@@ -1427,8 +1424,7 @@ def tornado_run(source: Path | None = None) -> TornadoRun:
         },
         "zeroed_slots": {
             "nonlinear": "every slot in plane.groups.nonlinear_index is exactly 0.0",
-            "CD_alpha": "cx has no CD*alpha term in this schema, so CD_alpha is 0.0 and is "
-                        "declared rather than approximated",
+            "CD_alpha": cx_gap,
             "Cn_da": "produced by Tornado; DATCOM cannot produce it",
             "flap": "the Morelli schema has no flap slot; tornado_controls' flap row is kept "
                     "in geometry.jsonc as raw output and mapped to nothing",
@@ -1598,6 +1594,7 @@ def _cross_check_provenance(
     solver_version: str,
     geometry: Geometry,
     collector: _Collector,
+    coefficients: dict[str, list[float]],
     source: Path | None,
     shared: dict,
     moment_reference: dict[str, Any],
@@ -1606,6 +1603,9 @@ def _cross_check_provenance(
     extra: dict[str, Any],
 ) -> dict[str, Any]:
     """The provenance block every cross-check file carries, in Tornado's shape."""
+    cx_gap = _cx_derivative_gap(
+        coefficients, [item["slot"] for item in collector.missing]
+    )[0]
     return {
         "solver": model,
         "solver_version": solver_version,
@@ -1649,8 +1649,7 @@ def _cross_check_provenance(
         "trim": trim_block,
         "zeroed_slots": {
             "nonlinear": "every slot in plane.groups.nonlinear_index is exactly 0.0",
-            "CD_alpha": "cx has no CD*alpha term in this schema, so CD_alpha is 0.0 and is "
-                        "declared rather than approximated",
+            "CD_alpha": cx_gap,
             "flap": "the Morelli schema has no flap slot, so the handbook's flap row maps to "
                     "nothing.  It is NOT carried in this file; provenance.raw_output_location "
                     "says where the build put it, and provenance.control_rows holds it",
@@ -1715,10 +1714,21 @@ def tornado_derivatives(source: Path | None = None) -> DerivativeSet:
 # recorded in every file; neither is silently reconciled.
 SOURCE_SPEED_AS_REPORTED = 10.207345160909794
 SOURCE_SPEED_REPORTED_UNIT = "ft/s in Tornado's and AVL's AID drivers; m/s in flow5's SI deck"
-# The V_trim/V_source ratio the two FEET-frame solvers carry, for the flow5 header to
-# quote beside its own.  Computed here from the same constant rather than typed, so the
-# two cannot drift apart.
-SPEED_FACTOR_FEET_FRAME = 23.1146 / (SOURCE_SPEED_AS_REPORTED * FT_TO_M)
+
+# The plan's pitched-moment-slope band for cm[1], per radian, named once so the note
+# that measures flow5's excursion against it cannot drift from the band it quotes.  The
+# percentage in that note is computed against the band's lower edge.
+PLAN_CM_ALPHA_BAND = (-1.5, -0.3)
+
+# The sign-convention identity each array's slots carry, keyed by array so a header
+# names the identity of an array it actually negates and no other.  plane/dynamics.py
+# stores the body-axis force, so cz is -CL, cx is -CD, and czq[0] holds the
+# standard-aero CL_q the schema and both in-tree reference files store there.
+_ARRAY_IDENTITY = {
+    "cx": "`cx = -CD`",
+    "cz": "`cz = -CL`",
+    "czq": "`czq[0] = -CL_q`",
+}
 
 
 def _source_alpha_index(ac: Any) -> int:
@@ -1929,8 +1939,9 @@ def _datcom_lateral(lateral: dict, ac: Any, vt_a_per_rad: float) -> dict[str, fl
 
     Measured, which is what settles it: with the sibling's value ``Clb =
     -0.003091`` against the sibling's own AVL gold ``Clb = -0.065868`` for the same
-    planform, a factor 21.7; with the correction ``Clb = -0.068966``, within 5 per
-    cent of that gold.
+    planform -- more than twenty times too small; with the correction ``Clb =
+    -0.068966``, within 5 per cent of that gold.  Both files print the ratios they
+    quote, so neither can drift from the numbers beside it.
 
     Every quantity ``lateral_static`` returns that is LINEAR in that slope is
     therefore corrected, and the rest is left alone because it is already per
@@ -2145,9 +2156,10 @@ def datcom_run(source: Path | None = None) -> CrossCheckRun:
     # aid/drag.py's own build-up, 1.25 x the sum of the section drag estimates.
     # The Fortran's CD column at alpha = 0 minus its induced part is the same
     # quantity computed the other way round and is recorded beside it; the two
-    # differ by a factor 2.09 because aid/drag.py builds its skin-friction
-    # coefficient from a Reynolds number PER UNIT LENGTH (atm['Re'] = D*mach*a/V,
-    # not D*mach*a*cbar) and then applies DATCOM's 1.25 factor on top.
+    # DISAGREE, because aid/drag.py builds its skin-friction coefficient from a
+    # Reynolds number PER UNIT LENGTH (atm['Re'] = D*mach*a/V, not D*mach*a*cbar)
+    # and then applies DATCOM's 1.25 factor on top.  Both are recorded, and the
+    # ratio between them is provenance.cd0.ratio_datcom_to_aid.
     parasite = float(ac.WG["CD0"])
     induced = float(stability["K"]) * cl_at_zero * cl_at_zero
     cd_total_at_zero = float(np.asarray(table["cd"]).reshape(-1)[1])
@@ -2170,10 +2182,9 @@ def datcom_run(source: Path | None = None) -> CrossCheckRun:
             conversion="AID's value with its own vertical-tail term re-evaluated using the "
                        f"tail's lift slope x {DEG_TO_RAD}.  aid/lateral.py:570 divides that "
                        f"PER RADIAN slope by pi/180, so AID's {key} = "
-                       f"{float(lateral[key]):.6g} has a tail part 57.3x too small (AID's "
-                       "Clb = -0.003091 against the sibling's own AVL gold Clb = -0.065868, "
-                       "and against AVL's alpha = 4 deg row -0.045756 this adapter writes "
-                       "-0.068966)",
+                       f"{float(lateral[key]):.6g} has a tail part {DEG_TO_RAD:.1f}x too"
+                       f" small, and this adapter writes {lateral_fixed[correct]:.6g} instead"
+                       " (datcom.jsonc's own header prints the ratio against AVL's own Clb)",
             role="slope",
         )
 
@@ -2263,6 +2274,7 @@ def datcom_run(source: Path | None = None) -> CrossCheckRun:
                        "aid.handbook_pass.apply_handbook (imp sibling)",
         geometry=geometry,
         collector=collector,
+        coefficients=coefficients,
         source=source,
         shared=shared,
         moment_reference=moment_reference,
@@ -2294,7 +2306,8 @@ def datcom_run(source: Path | None = None) -> CrossCheckRun:
             },
             "cd0": {
                 "source": "aid.drag.aircraft_cd0, which is 1.25 x the summed section drag",
-                "value": parasite,
+                "value": -parasite,
+                "parasite_magnitude": parasite,
                 "datcom_own_CD_at_alpha0": cd_total_at_zero,
                 "induced_part": induced,
                 "datcom_own_parasite": cd_total_at_zero - induced,
@@ -2331,8 +2344,9 @@ def _run_datcom(ac: Any, workdir: Path) -> tuple[dict, dict[str, Any]]:
     was given (``for005.dat``) and the Fortran's own listing of the cards it read
     (``datcom.out``, copied to ``for006.dat`` by the wrapper) behind.  A missing
     binary surfaces as ``FileNotFoundError`` from ``aid.paths.datcom_wrapper`` and
-    is recorded by the caller as a missing binary rather than raised into a crash,
-    per the plan's "Fail-closed".
+    propagates out of the build: the caller has no handler for it, which is the
+    plan's fail-closed behaviour -- a missing binary stops the build rather than
+    leaving a coefficient to be guessed.
 
     Both files are returned because the second one is what makes the moment
     reference VERIFIABLE rather than assumed: the Fortran echoes its ``$SYNTHS``
@@ -2608,6 +2622,7 @@ def avl_run(source: Path | None = None) -> CrossCheckRun:
         solver_version="AVL via aid.avl_io.run_avl_full and aid.avl_controls.avl_controls",
         geometry=geometry,
         collector=collector,
+        coefficients=coefficients,
         source=source,
         shared=shared,
         moment_reference=moment_reference,
@@ -2629,7 +2644,8 @@ def avl_run(source: Path | None = None) -> CrossCheckRun:
                 "per_degree": raw["control_rows_per_degree"],
             },
             "cd0": {
-                "value": parasite,
+                "value": -parasite,
+                "parasite_magnitude": parasite,
                 "CDtot_at_alpha0": cd_total_zero,
                 "CDind_at_alpha0": cd_induced_zero,
                 "CDvis_reported": at("CDvis", zero),
@@ -2951,6 +2967,7 @@ def flow5_run(source: Path | None = None) -> CrossCheckRun:
                        "aid.flow5_controls.flow5_controls with to_frd injected as the runner",
         geometry=geometry,
         collector=collector,
+        coefficients=coefficients,
         source=source,
         shared=shared,
         moment_reference=moment_reference,
@@ -3009,34 +3026,32 @@ def flow5_run(source: Path | None = None) -> CrossCheckRun:
             "cd0": {
                 "source": "the source analysis file's own DATCOM-computed WG.CD0, the same "
                           "value tornado.jsonc, datcom.jsonc and avl.jsonc all use",
-                "value": parasite,
+                "value": -parasite,
+                "parasite_magnitude": parasite,
                 "source_WG_CD0": parasite,
-                "note": "the recorded value is the POSITIVE parasite-drag magnitude the"
-                        " collector negates into cx[0], so cx[0] itself is negative; it is"
-                        " NOT a flow5 output -- flow5's own CDvis/CDind split cannot supply"
-                        " it, see provenance.drag_split.  Recorded here because"
+                "note": "value is the number AS WRITTEN into cx[0], so it is negative, and"
+                        " parasite_magnitude is the positive value the collector negates;"
+                        " neither is a flow5 output -- flow5's own CDvis/CDind split cannot"
+                        " supply them, see provenance.drag_split.  Recorded here because"
                         " cross_check_header's item 4 reads provenance['cd0']['source'] for"
                         " every model, and flow5's absence of it raised KeyError during the"
                         " file write",
             },
             "not_a_field": {
                 "cd_de": "flow5 DOES produce an elevator drag derivative -- "
-                         "aid.flow5_controls keeps ('CL', 'CD', 'Cm') for the elevator -- but "
-                         "this schema has no cd_de slot in any of the 19 arrays, so it maps to "
-                         "nothing.  It is NOT carried in this file; see "
-                         "provenance.raw_output_location for where the build put it",
+                         "aid.flow5_controls keeps ('CL', 'CD', 'Cm') for the elevator -- and "
+                         "the schema HAS a slot for it: cx[3] is a linear index of cx and "
+                         "f16/aero_morelli.py evaluates Cx0 = cx[0] + cx[1]*alpha + ... + "
+                         "cx[3]*de.  What is missing is a DerivativeSet field to carry it, "
+                         "because aero_convert/morelli.py's SLOT_MAP maps only ('cx', "
+                         "((0, 'cd0'),)), so it maps to nothing.  It is NOT carried in this"
+                         " file; see provenance.raw_output_location for where the build put it"
+                         " and provenance.control_rows for the row itself",
             },
             "cross_solver_disagreements": _cross_solver_disagreements(
                 collector.mapping, collector.flipped,
             ),
-            "invariant_band_note": (
-                f"cm[1] = {coefficients['cm'][1]:.6f}/rad is 4.9 % BELOW the plan's "
-                "pitched-moment slope band of -1.5 ... -0.3 /rad, which that band was "
-                "estimated from (tornado.jsonc ships -1.1927).  The sign and the static "
-                "margin are both correct and the band is the outlier here, not the "
-                "coefficient; it is recorded rather than forced, and Task 5's suite is where "
-                "magnitudes are asserted"
-            ),
+            "invariant_band_note": _invariant_band_note(coefficients),
         },
     )
     return CrossCheckRun(
@@ -3507,14 +3522,176 @@ def _identity_negated_from(
     return found
 
 
+def _prose_list(values: Sequence[str]) -> str:
+    """``"a, b and c"`` -- the one place this file words a list."""
+    if not values:
+        return "(none)"
+    if len(values) == 1:
+        return values[0]
+    return ", ".join(values[:-1]) + " and " + values[-1]
+
+
 def _identity_slot_list(identity: Sequence[dict[str, Any]]) -> str:
     """A derived slot set as prose: ``"cz[0], cz[1] and cz[5]"``."""
-    slots = [item["slot"] for item in identity]
-    if not slots:
-        return "(none)"
-    if len(slots) == 1:
-        return slots[0]
-    return ", ".join(slots[:-1]) + " and " + slots[-1]
+    return _prose_list([item["slot"] for item in identity])
+
+
+def _identity_clause(identity: Sequence[dict[str, Any]]) -> str:
+    """The identities a derived slot set carries, one clause per array it touches.
+
+    ``plane/dynamics.py`` stores the body-axis force, so its lift and drag arrays are
+    the negatives of the wind-axis ones.  WHICH arrays that touches is derived, because
+    naming ``cx = -CD`` beside a set with no ``cx`` slot in it states an identity that
+    applies nowhere in the same sentence -- which is what Tornado's file did, because
+    its ``cd0`` came from the source file, carries no solver value, and so never enters
+    ``identity_negated`` at all.
+    """
+    groups: dict[str, list[str]] = {}
+    for item in identity:
+        array, _, index = item["slot"].partition("[")
+        groups.setdefault(array, []).append(f"{array}[{index.rstrip(']')}]")
+    return "; ".join(
+        f"{_ARRAY_IDENTITY.get(array, array)} on {_prose_list(slots)}"
+        for array, slots in groups.items()
+    )
+
+
+def _zeroed_linear_slots(
+    coefficients: dict[str, list[float]], declared: Sequence[str]
+) -> list[str]:
+    """Every linear slot this file writes 0.0 without declaring it in ``provenance.missing``.
+
+    Read off the written coefficients and the run's own declared gaps, so a sentence
+    quoting the list cannot name a slot the file never declared, or omit one it did.
+    """
+    declared = set(declared)
+    return [
+        f"{name}[{index}]"
+        for name, indexes in sorted(LINEAR_INDEX.items())
+        for index in sorted(indexes)
+        if coefficients[name][index] == 0.0 and f"{name}[{index}]" not in declared
+    ]
+
+
+def _cx_derivative_gap(
+    coefficients: dict[str, list[float]], declared: Sequence[str]
+) -> tuple[str, list[str]]:
+    """Why ``cx[1]`` and ``cx[3]`` ship 0.0: a DerivativeSet mapping gap, not a schema gap.
+
+    Both are real schema slots -- ``plane/groups.py``'s ``LINEAR_INDEX`` calls them
+    linear and ``f16/aero_morelli.py`` evaluates them -- so the zero is this
+    converter's ``DerivativeSet`` having no field to carry either derivative, NOT a
+    term the flight model cannot express.  Returns the sentence and the zeroed linear
+    slots, which are the same fact in machine-readable form.
+    """
+    linear = ", ".join(str(index) for index in LINEAR_INDEX["cx"])
+    zeroed = _zeroed_linear_slots(coefficients, declared)
+    sentence = (
+        "cx[1] (CD_alpha) and cx[3] (CD_de) are real schema slots: LINEAR_INDEX lists cx's"
+        f" linear indexes as ({linear}) and f16/aero_morelli.py evaluates"
+        " Cx0 = cx[0] + cx[1]*alpha + ... + cx[3]*de, so the flight model reads both"
+        " terms.  They ship 0.0 because DerivativeSet has no field for either derivative"
+        " and aero_convert/morelli.py's SLOT_MAP maps only ('cx', ((0, 'cd0'),)) -- a"
+        " MAPPING gap, not a schema gap.  The linear slots this file leaves at 0.0"
+        f" without a provenance.missing entry are: {_prose_list(zeroed)}"
+    )
+    return sentence, zeroed
+
+
+def _invariant_band_note(coefficients: dict[str, list[float]]) -> str:
+    """The one magnitude outside the plan's band, with its percentage computed."""
+    value = float(coefficients["cm"][1])
+    low, high = PLAN_CM_ALPHA_BAND
+    percent = 100.0 * (abs(value) - abs(low)) / abs(low)
+    return (
+        f"cm[1] = {value:.6f}/rad is {percent:.1f} % BELOW the plan's pitched-moment slope"
+        f" band of {low:g} ... {high:g} /rad, measured against that band's lower edge."
+        "  The sign and the static margin are both correct and the band is the outlier"
+        " here, not the coefficient; it is recorded rather than forced, and Task 5's"
+        " suite is where magnitudes are asserted"
+    )
+
+
+def _cd0_slot_text(run: TornadoRun | CrossCheckRun) -> str:
+    """``cx[0]`` as written, checked against ``provenance.cd0.value``.
+
+    ``provenance.cd0.value`` means the value AS WRITTEN in every file, so it can never
+    be the positive parasite magnitude the collector negates into the slot; that has its
+    own key.  Checked here because this is where both numbers are in hand, and a drift
+    between them would put two contradictory drag numbers in one header.
+    """
+    written = float(run.coefficients["cx"][0])
+    recorded = float(run.provenance["cd0"]["value"])
+    if recorded != written:
+        raise AssertionError(
+            f"provenance.cd0.value is {recorded!r} but cx[0] writes {written!r}: cd0.value"
+            " means the value AS WRITTEN, and the parasite magnitude has its own key"
+        )
+    return f"{written:.6g}"
+
+
+def _clb_evidence(
+    run: CrossCheckRun, siblings: Sequence[CrossCheckRun]
+) -> list[str]:
+    """DATCOM's evidence that its lateral correction is right, measured against AVL.
+
+    AID's own ``Clb`` is far too small because ``aid/lateral.py:570`` divides a
+    per-radian tail lift slope by 180; the yardstick that settles whether the
+    correction overshot is AVL's own reference-case ``Clb`` for the same planform,
+    which is AVL's run and not this one.  Every number and every ratio here is
+    therefore read out of the two runs, and without AVL's run the header says the
+    comparison is unavailable instead of quoting a copy of the other file's number.
+    """
+    aid_clb = float(run.provenance["handbook_cross_check"]["aid_lateral_as_reported"]["Clb"])
+    corrected = float(run.coefficients["cl"][0])
+    avl = next((sibling for sibling in siblings if sibling.model == "avl"), None)
+    if avl is None:
+        return [
+            "//          the correction is the right one -- that evidence is AVL's own Clb, and",
+            "//          this file was written without the AVL run beside it.  build_all writes"
+            " all five files",
+            "//          together and prints the comparison here.",
+        ]
+    gold = float(avl.raw["reference_case"]["Clb"])
+    alpha4 = float(avl.coefficients["cl"][0])
+    return [
+        "//          the correction is the right one: AID's Clb is",
+        f"//          {aid_clb:.6f}, a factor {abs(gold / aid_clb):.4g} below the sibling's own"
+        " AVL gold Clb =",
+        f"//          {gold:.6f} for the same planform (measured), while the corrected"
+        f" {corrected:.6f}",
+        f"//          is within {100.0 * abs(corrected - gold) / abs(gold):.1f} per cent of"
+        f" that gold and {abs(corrected / alpha4):.2f}x AVL's own",
+        f"//          alpha = 4 deg row, {alpha4:.6f}, which avl.jsonc ships.",
+    ]
+
+
+def _tornado_sign_convention(
+    identity: Sequence[dict[str, Any]], cd0_slot: str
+) -> dict[str, str]:
+    """Tornado's two derived sign-convention sentences, in ``provenance``'s own shape.
+
+    Both are built from the same derived identity set the header counts, because a
+    hand-written copy of that set is what put ``cx = -CD`` in a file whose drag slot
+    carries no solver value at all, and "cx is read exactly as reported" beside a
+    negated ``cx[0]``.
+    """
+    slots = _identity_slot_list(identity)
+    return {
+        "only_surviving_negations": (
+            f"the plane/dynamics.py sign-convention {_identity_clause(identity)}, and on"
+            " nothing else: that file's own sign convention (its body +z axis points"
+            " down), not a conversion.  Derived from provenance.mapping, which is the"
+            " same source item 6 of this file's header prints its count from"
+        ),
+        "cz": (
+            f"cz = -CL on {slots} and on nothing else; the slots provenance.flipped names"
+            " are the ones the invariant table reverses, and"
+            f" {cd0_slot} carries the negated parasite magnitude from provenance.cd0,"
+            " which is not a solver value at all -- every other slot is read as the"
+            " solver reported it"
+        ),
+    }
 
 
 def identity_lines(run: TornadoRun | CrossCheckRun) -> list[str]:
@@ -3531,10 +3708,9 @@ def identity_lines(run: TornadoRun | CrossCheckRun) -> list[str]:
         + (" survives" if len(found) == 1 else " survive")
         + ", and none is a frame conversion.  Each is a SIGN-CONVENTION identity"
         " that the schema",
-        "//    itself requires -- `cz = -CL` for the lift slots, its body +z axis pointing"
-        " down, and",
-        "//    `cx = -CD` for the drag slot -- not a change of axis.  Listed from"
-        " provenance.mapping:",
+        f"//    itself requires -- {_identity_clause(found)} -- its body +z axis points"
+        " down, not a change",
+        "//    of axis.  Listed from provenance.mapping:",
     ]
     for item in found:
         if item["per_degree"]:
@@ -3575,12 +3751,26 @@ def _slot_lines(run: TornadoRun | CrossCheckRun) -> list[str]:
             f"//   {entry['slot']:<9s} {entry['field']:<10s} {state:<14s} "
             f"{origin} -> mapped {mapped} -> written {value}"
         )
-    lines.append(
-        "//   every slot in plane.groups.nonlinear_index is exactly 0.0; CD_alpha is not"
+    zeroed = _zeroed_linear_slots(
+        run.coefficients, [item["slot"] for item in run.provenance["missing"]]
     )
     lines.append(
-        "//   representable in this schema (cx has no CD*alpha term) and is zeroed and declared"
+        "//   every slot in plane.groups.nonlinear_index is exactly 0.0; cx[1] (CD_alpha)"
+        " and cx[3] (CD_de)"
     )
+    lines.append(
+        "//   are real schema slots the flight model evaluates, but DerivativeSet has no"
+        " field for either"
+    )
+    lines.append(
+        "//   derivative and SLOT_MAP maps only ('cx', ((0, 'cd0'),)), so both ship 0.0 --"
+        " named here rather"
+    )
+    lines.append(
+        f"//   than declared in provenance.missing: {_prose_list(zeroed)}."
+        "  provenance.zeroed_slots.CD_alpha"
+    )
+    lines.append("//   carries the same fact in full.")
     return lines
 
 
@@ -3595,6 +3785,12 @@ def header_comment(
     ``cz = -CL``.
     """
     geometry = run.geometry
+    v_trim = float(run.trim["cruise_mps"])
+    span_m = geometry.b_ref_m
+    rate_ratio = v_trim / geometry.as_mps
+    tornado_cd0_slot = next(
+        entry["slot"] for entry in run.provenance["mapping"] if entry["field"] == "cd0"
+    )
     common = [
         "// " + "=" * 74,
         f"// {kind} for the Cessna 172 source analysis, generated -- do not hand-edit.",
@@ -3661,7 +3857,7 @@ def header_comment(
         "//    per-degree number here is multiplied by 57.29577951308232 explicitly.",
         "//    Every array in this file is per radian and every length is SI.",
         f"//    cx[0] -- the parasite drag slot, Cd0 in a drag build-up -- ="
-        f" {run.coefficients['cx'][0]:.6g}.",
+        f" {_cd0_slot_text(run)}.",
         f"//    It is NOT a Tornado output.  Source: {run.provenance['cd0']['source']}.",
         f"//    CD(0) = {run.provenance['cd0']['CD_at_alpha0']:.6g} and K*CL(0)^2 ="
         f" {run.provenance['cd0']['induced_part']:.6g} with K = {run.provenance['cd0']['K_wing']:.6g},",
@@ -3719,8 +3915,11 @@ def header_comment(
         "//    Forward-Right-Down too, and aid/tornado/control_deriv.py says on purpose that it",
         "//    does not re-wrap them.  The earlier mapping `cz = -CL; cl = -Cl; cm = +Cm;",
         "//    cn = -Cn; cy = +CY` existed only to convert Tornado's former aft-positive x and",
-        "//    up-positive z, and it is GONE: cl, cm, cn, cy and cx are read exactly as reported,",
-        "//    and the P and R columns need no flip because they no longer arrive inverted.",
+        "//    up-positive z, and it is GONE: cl, cm, cn and cy are read exactly as reported,",
+        f"//    {tornado_cd0_slot} carries the negated source parasite magnitude (item 4) rather"
+        " than a solver",
+        "//    number, and the P and R columns need no flip because they no longer arrive"
+        " inverted.",
         "//",
         *identity_lines(run),
         "//",
@@ -3745,18 +3944,28 @@ def header_comment(
         "//    flight-condition speed touches.  Inherited from the flight condition and",
         "//    NOT corrected here.",
         "//    coeff_create quotes them per p-hat = p*b_ref/(2*AS) using the SOURCE speed",
-        "//    state[\"AS\"] = 10.2073 ft/s = 3.1112 m/s (Mach 0.03, sea level), while",
+        f"//    state[\"AS\"] = {geometry.as_ftps:.4f} ft/s = {geometry.as_mps:.4f} m/s"
+        f" (Mach {geometry.mach:g}, altitude {geometry.alt_ft:g} ft), while",
         "//    f16/aero_morelli.py forms phat = p*b_m/(2*V) with V the model's own speed,",
-        "//    23.1146 m/s at the trim.  Both scalings are internally consistent -- Tornado",
-        "//    works in feet and ft/s throughout, and atm[\"a\"] = 1116.29 is ft/s -- so this",
-        "//    is NOT a unit error inside Tornado; it is a flight-condition mismatch, and",
-        "//    its effect is that dp-hat/dP is 1.70122 in Tornado against 12.63921 in the",
-        "//    model, a factor of 7.42948.  The written rate derivatives are therefore",
-        "//    7.43x smaller than the derivative with respect to the model's own phat, i.e.",
-        "//    the model's rate-damping terms are 7.43x weaker than the solver's numbers",
-        "//    imply at the trimmed speed, and CL_Q = 9.591 is not a textbook per-q-hat",
-        "//    value.  NOT rescaled here: the plan fixes the flight condition from the",
-        "//    source AERO, and rescaling it is a physics decision for a later task.",
+        f"//    {v_trim:.4f} m/s at the trim over the same {geometry.b_ref_m:.4f} m span."
+        "  Both scalings are",
+        "//    internally consistent -- Tornado works in feet and ft/s throughout, and the"
+        " sound speed it uses is in",
+        "//    ft/s too -- so this is NOT a unit error inside Tornado; it is a"
+        " flight-condition mismatch, and",
+        f"//    its effect is that dp-hat/dP is {2.0 * geometry.as_mps / span_m:.5f} in Tornado"
+        f" against {2.0 * v_trim / span_m:.5f} in the",
+        f"//    model, a factor of {rate_ratio:.5f}.  The written rate derivatives are therefore"
+        f" {rate_ratio:.2f}x smaller",
+        "//    than the derivative with respect to the model's own phat, i.e. the model's"
+        " rate-damping terms are",
+        f"//    {rate_ratio:.2f}x weaker than the solver's numbers imply at the trimmed speed,"
+        " and the pitch-rate slot's own",
+        "//    two numbers are printed from provenance.cd_q_convention immediately below.  NOT"
+        " rescaled here: the plan",
+        "//    fixes the flight condition from the source AERO, and rescaling it is a physics"
+        " decision for a later",
+        "//    task.",
         "//",
         *_q_convention_lines(run),
         "//",
@@ -3775,7 +3984,11 @@ def header_comment(
 
 
 def cross_check_header(
-    run: CrossCheckRun, kind: str, raw_output_location: str | None = None
+    run: CrossCheckRun,
+    kind: str,
+    raw_output_location: str | None = None,
+    *,
+    siblings: Sequence[CrossCheckRun] = (),
 ) -> str:
     """The same eight-item ``//`` block, written for DATCOM, AVL or flow5.
 
@@ -3785,11 +3998,25 @@ def cross_check_header(
     1, 4, 5 and 7 are per solver: what produced the numbers, which unit defects
     on the path were corrected rather than inherited, which station the moments
     are about, and which slots are real output against which are zeroed.
+
+    ``siblings`` are the other cross-check runs, which this header may compare
+    against: DATCOM's evidence for its lateral correction is AVL's own ``Clb``, and
+    a comparison with another model's number cannot be derived from one model's own
+    provenance.  ``build_all`` runs every solver before it writes, so it can pass
+    them; a header written without them says the comparison is unavailable rather
+    than quoting a copy of the other file's number.
     """
     geometry = run.geometry
     condition = run.provenance["flight_condition"]
     model = run.model
+    cx_zeroed = _zeroed_linear_slots(
+        run.coefficients, [item["slot"] for item in run.provenance["missing"]]
+    )
     if model == "datcom":
+        handbook = run.provenance["handbook_cross_check"]
+        tail_slope = handbook["lateral_corrected"]
+        a0_per_rad = float(tail_slope["ht_a0_per_radian_as_read"])
+        vt_a_per_rad = float(tail_slope["vt_a_per_rad"])
         item1 = [
             "//    Solver: Digital DATCOM.  TWO solvers, because each answers a different",
             f"//    question: (a) the Fortran binary run by aid.datcom_run.run_datcom on a card",
@@ -3837,13 +4064,13 @@ def cross_check_header(
             "//          0.076-0.084 /deg, so every one of them is a NO-OP and the number",
             "//          that needs a per-radian value is handed the per-degree one.",
             f"//          Measured: aid's own longitudinal_dynamic CLq ="
-            f" {float(run.provenance['handbook_cross_check']['aid_longitudinal_dynamic_CLq']):.6f}"
+            f" {float(handbook['aid_longitudinal_dynamic_CLq']):.6f}"
             f" where {DEG_TO_RAD:.4f}x it is",
-            f"//          {float(run.provenance['handbook_cross_check']['section7_cl_q_used']):.6f},"
+            f"//          {float(handbook['section7_cl_q_used']):.6f},"
             f" and aid's own lateral_dynamic Clp ="
-            f" {float(run.provenance['handbook_cross_check']['aid_lateral_dynamic_Clp']):.6f}"
+            f" {float(handbook['aid_lateral_dynamic_Clp']):.6f}"
             f" against",
-            f"//          {float(run.provenance['handbook_cross_check']['section7_cl_p_used']):.6f}."
+            f"//          {float(handbook['section7_cl_p_used']):.6f}."
             "  The DATCOM Section 7 formulae are therefore",
             "//          recomputed in this converter with the factor applied by hand, and the",
             "//          uncorrected numbers are kept in provenance.handbook_cross_check.",
@@ -3853,27 +4080,26 @@ def cross_check_header(
             "//          `k` comes from aid/lateral.py:565, which reads HT[\'a0\'] -- NOT",
             "//          VT.a0, which appears nowhere in the sibling tree -- and",
             f"//          apply_handbook rewrites that to"
-            f" {float(run.provenance['handbook_cross_check']['lateral_corrected']['ht_a0_per_radian_as_read']):.4f}"
+            f" {a0_per_rad:.4f}"
             " PER RADIAN, so",
             f"//          k = a0/(2*pi) ="
-            f" {float(run.provenance['handbook_cross_check']['lateral_corrected']['helmbold_k_per_radian']):.4f}"
+            f" {float(tail_slope['helmbold_k_per_radian']):.4f}"
             "/rad and the formula answers",
-            f"//          {float(run.provenance['handbook_cross_check']['lateral_corrected']['vt_a_per_rad']):.4f}"
-            " PER RADIAN -- 51 per cent of the 2-D",
-            "//          6.8396/rad, the reduction a fin of AR ~ 1.8 must show, where a",
-            "//          per-degree reading would imply about 200/rad.  The trailing pi/180",
-            "//          then divides a per-radian number by 180 and stores 0.0610931, so",
-            "//          every quantity linear in that slope is 57.3x too small and is"
-            " corrected: CYb, Cnb,",
-            "//          Clb and the three Section 7 rate terms that use it.  The evidence that",
-            f"//          the correction is the right one: AID's Clb is"
-            f" {float(run.provenance['handbook_cross_check']['aid_lateral_as_reported']['Clb']):.6f},"
-            " a factor 21.7 below",
-            "//          the sibling's own AVL gold Clb = -0.065868 for the same planform"
-            " (measured), while",
-            f"//          the corrected {run.coefficients['cl'][0]:.6f} is within 5 per cent of"
-            " that gold and 1.51x AVL's",
-            "//          own alpha = 4 deg row, -0.045756, which avl.jsonc ships.",
+            f"//          {vt_a_per_rad:.4f}"
+            f" PER RADIAN -- {100.0 * vt_a_per_rad / a0_per_rad:.0f}"
+            " per cent of the 2-D",
+            f"//          {a0_per_rad:.4f}"
+            "/rad, the reduction a fin of AR ~ 1.8 must show, where a",
+            f"//          per-degree reading would imply about"
+            f" {vt_a_per_rad * DEG_TO_RAD:.0f}"
+            "/rad.  The trailing pi/180",
+            "//          then divides a per-radian number by 180 and stores"
+            f" {float(tail_slope['vt_a_as_reported']):.6f}, so",
+            f"//          every quantity linear in that slope is {DEG_TO_RAD:.1f}x too"
+            " small and is corrected: CYb,",
+            "//          Cnb, Clb and the three Section 7 rate terms that use it.  The evidence"
+            " that",
+            *_clb_evidence(run, siblings),
             "//      (3) aid/lateral.py:616 returns a HARDCODED 0.1 for both Clda and Cnda and",
             "//          aid/handbook_controls.py has no aileron CY or Cn column at all.  Those",
             "//          0.1 values are a placeholder, not a computation, and are NOT used:"
@@ -3882,7 +4108,7 @@ def cross_check_header(
             f"//    Every array in this file is per radian and every length is SI."
             f"  numpy bridge: {run.provenance['numpy_bridge']}",
             f"//    cx[0] -- the parasite drag slot, Cd0 in a drag build-up -- ="
-            f" {run.coefficients['cx'][0]:.6g}.",
+            f" {_cd0_slot_text(run)}.",
             f"//    Source: {run.provenance['cd0']['source']}.  The Fortran's own CD at alpha = 0"
             f" is {run.provenance['cd0']['datcom_own_CD_at_alpha0']:.6g} with an induced part of"
             f" {run.provenance['cd0']['induced_part']:.6g},",
@@ -3934,8 +4160,13 @@ def cross_check_header(
             "//    provenance.missing so this list cannot go stale against the slot table"
             " below:",
             *_gap_lines(run),
-            "//    Every other slot is real output.  CD_alpha is not representable in this",
-            "//    schema (cx has no CD*alpha term) and is 0.0 and declared.",
+            "//    Every other slot is real output.  cx[1] (CD_alpha) and cx[3] (CD_de) are"
+            " real schema",
+            "//    slots the flight model evaluates, but DerivativeSet has no field for either"
+            " derivative",
+            f"//    and SLOT_MAP maps only ('cx', ((0, 'cd0'),)), so both ship 0.0 -- named here"
+            f" rather than declared: {_prose_list(cx_zeroed)}.",
+            "//    provenance.zeroed_slots.CD_alpha carries the same fact in full.",
         ]
     elif model == "avl":
         item1 = [
@@ -3995,7 +4226,7 @@ def cross_check_header(
             f"//    Every array in this file is per radian and every length is SI."
             f"  numpy bridge: {run.provenance['numpy_bridge']}",
             f"//    cx[0] -- the parasite drag slot, Cd0 in a drag build-up -- ="
-            f" {run.coefficients['cx'][0]:.6g},",
+            f" {_cd0_slot_text(run)},",
             f"//    from AVL's own CDtot - CDind at the alpha = 0 run case"
             f" ({run.provenance['cd0']['CDtot_at_alpha0']:.6g} -"
             f" {run.provenance['cd0']['CDind_at_alpha0']:.6g}).",
@@ -4056,9 +4287,13 @@ def cross_check_header(
         gaps = [
             "//    NO SLOT IS ABSENT: AVL produces all 25, including cnda[0] and cy[1], which"
             " DATCOM cannot.",
-            "//    CD_alpha is not representable in this schema (cx has no CD*alpha term) and"
-            " is 0.0 and",
-            "//    declared.",
+            "//    cx[1] (CD_alpha) and cx[3] (CD_de) are real schema slots the flight model"
+            " evaluates, but",
+            "//    DerivativeSet has no field for either derivative and SLOT_MAP maps only"
+            " ('cx', ((0, 'cd0'),)),",
+            f"//    so both ship 0.0 -- named here rather than declared: {_prose_list(cx_zeroed)}."
+            "  provenance.",
+            "//    zeroed_slots.CD_alpha carries the same fact in full.",
             *_gap_lines(run),
         ]
     else:
@@ -4105,7 +4340,7 @@ def cross_check_header(
             f" {condition['speed_ratio_v_trim_over_v_source']:.3f} higher, so this file's CLa",
             "//    and Cma describe a slower and therefore thinner wing than the one flown.",
             f"//    That factor is {condition['speed_ratio_v_trim_over_v_source']:.2f} here"
-            f" and {SPEED_FACTOR_FEET_FRAME:.2f} in tornado.jsonc and",
+            f" and {condition['v_trim_mps'] / geometry.as_mps:.2f} in tornado.jsonc and",
             "//    avl.jsonc for one reason only: flow5's deck is SI, so its"
             f" {geometry.v_true_mps:.4f} really is {geometry.v_true_mps:.4f} m/s,",
             f"//    while the other two feed {SOURCE_SPEED_AS_REPORTED:.4f} into a FEET frame,"
@@ -4128,7 +4363,7 @@ def cross_check_header(
             f"//    Every array in this file is per radian and every length is SI."
             f"  numpy bridge: {run.provenance['numpy_bridge']}",
             f"//    cx[0] -- the parasite drag slot, Cd0 in a drag build-up -- ="
-            f" {run.coefficients['cx'][0]:.6g}.",
+            f" {_cd0_slot_text(run)}.",
             f"//    Source: {run.provenance['cd0']['source']}, and it is NOT a flow5 output."
             " flow5 now SPLITS",
             "//    its drag and the split is the measurement that settles this slot:",
@@ -4199,23 +4434,24 @@ def cross_check_header(
             "//    and control coefficients are cross-checks too and not zeroed stand-ins.  The"
             f" {len(coverage['absent'])} absent",
             "//    slots named above are the whole of what this runner does not reach.",
-            "//    CD_alpha is not representable in this schema (cx has no CD*alpha term) and"
-            " is 0.0.",
-            "//    cd_de is not a FIELD at all: flow5 does produce an elevator drag derivative,"
-            " but this",
-            "//    schema has no slot for it in any of the 19 arrays, so it maps to nothing.  It"
-            " is NOT",
-            "//    carried in this file; the note at the end of item 7 says where the build put"
-            " it.",
-            f"//    One magnitude sits outside the plan's band and is RECORDED rather than forced:"
-            f" cm[1] = {run.coefficients['cm'][1]:.6f}",
-            "//    /rad is 4.9 % below the plan's -1.5 ... -0.3 pitched-moment-slope band, which"
-            " that band was",
-            "//    estimated from (tornado.jsonc ships -1.1927).  The sign and the static margin"
-            " are both",
-            "//    correct and the band is the outlier here, not the coefficient.  Task 5's",
-            "//    invariant suite is where magnitudes are asserted, so this excursion is",
-            "//    declared here rather than forced into the band.",
+            "//    cx[1] (CD_alpha) and cx[3] (CD_de) are the two slots nothing here can fill,"
+            " and NOT",
+            "//    because the schema lacks them: it has both, and f16/aero_morelli.py"
+            " evaluates Cx0 = cx[0] +",
+            "//    cx[1]*alpha + ... + cx[3]*de.  DerivativeSet has no field for either"
+            " derivative and SLOT_MAP",
+            f"//    maps only ('cx', ((0, 'cd0'),)), so both ship 0.0: the linear slots left at"
+            f" 0.0 undeclared are {_prose_list(cx_zeroed)}.",
+            "//    provenance.zeroed_slots.CD_alpha carries the same fact in full.  flow5 DOES"
+            " produce the",
+            "//    elevator drag derivative (provenance.not_a_field.cd_de keeps it, and"
+            " provenance.control_rows",
+            "//    holds the row); it maps to nothing because that field does not exist.  It is"
+            " NOT carried in",
+            "//    this file; the note at the end of item 7 says where the build put it.",
+            "//    One magnitude sits outside the plan's band and is RECORDED rather than"
+            " forced:",
+            *_wrap_note(_invariant_band_note(run.coefficients)),
         ]
 
     common = [
@@ -4493,19 +4729,29 @@ def write_jsonc(path: Path, payload: dict[str, Any], comment: str) -> Path:
 
 
 def write_model(
-    run: CrossCheckRun, out_dir: Path | None = None, *, raw_output_location: str | None = None
+    run: CrossCheckRun,
+    out_dir: Path | None = None,
+    *,
+    raw_output_location: str | None = None,
+    siblings: Sequence[CrossCheckRun] = (),
 ) -> Path:
     """Write one cross-check model file and return its path.
 
     ``raw_output_location`` is forwarded to both the payload and the header comment,
     so the file's item 7 can only state where the rest of the solver's output is if
-    the caller actually put it there.
+    the caller actually put it there.  ``siblings`` are the other cross-check runs,
+    which the header may compare this model against; see ``cross_check_header``.
     """
     directory = Path(out_dir) if out_dir is not None else DEFAULT_OUT_DIR
     return write_jsonc(
         directory / f"{run.model}.jsonc",
         cross_check_payload(run, raw_output_location),
-        cross_check_header(run, f"data/planes/cessna172/{run.model}.jsonc", raw_output_location),
+        cross_check_header(
+            run,
+            f"data/planes/cessna172/{run.model}.jsonc",
+            raw_output_location,
+            siblings=siblings,
+        ),
     )
 
 
@@ -4562,8 +4808,12 @@ def build_all(out_dir: Path | None = None, source: Path | None = None) -> dict[s
     written = write_all(tornado, out_dir, cross_runs)
     for cross in cross_runs:
         written[f"{cross.model}.jsonc"] = str(
-            write_model(cross, out_dir, raw_output_location=RAW_OUTPUT_LOCATION.format(
-                model=cross.model))
+            write_model(
+                cross,
+                out_dir,
+                raw_output_location=RAW_OUTPUT_LOCATION.format(model=cross.model),
+                siblings=[other for other in cross_runs if other is not cross],
+            )
         )
     return written
 

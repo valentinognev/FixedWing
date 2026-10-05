@@ -90,8 +90,8 @@
 //    right, positive Cm nose up and positive Cn yaw right.  So NO axis mapping is
 //    applied in this file.  Which slots, if any, the `cz = -CL` identity still negates is derived:
 //    5 negations survive, and none is a frame conversion.  Each is a SIGN-CONVENTION identity that the schema
-//    itself requires -- `cz = -CL` for the lift slots, its body +z axis pointing down, and
-//    `cx = -CD` for the drag slot -- not a change of axis.  Listed from provenance.mapping:
+//    itself requires -- `cz = -CL` on cz[1], cz[0] and cz[5]; `cx = -CD` on cx[0]; `czq[0] = -CL_q` on czq[0] -- its body +z axis points down, not a change
+//    of axis.  Listed from provenance.mapping:
 //      cz[1] from AVL .st CLA at alpha = 4 deg = 5.007369 -> -5.007369 per radian
 //      cz[0] from AVL .st CLtot at alpha = 0 deg = 0.168880 -> -0.168880
 //      cx[0] from AVL .st CDtot - CDind at alpha = 0 deg = 0.017003 -> -0.017003
@@ -131,8 +131,10 @@
 //    flight-condition speed touches.
 //
 //    NO SLOT IS ABSENT: AVL produces all 25, including cnda[0] and cy[1], which DATCOM cannot.
-//    CD_alpha is not representable in this schema (cx has no CD*alpha term) and is 0.0 and
-//    declared.
+//    cx[1] (CD_alpha) and cx[3] (CD_de) are real schema slots the flight model evaluates, but
+//    DerivativeSet has no field for either derivative and SLOT_MAP maps only ('cx', ((0, 'cd0'),)),
+//    so both ship 0.0 -- named here rather than declared: cx[1] and cx[3].  provenance.
+//    zeroed_slots.CD_alpha carries the same fact in full.
 //      (none: this solver filled every slot in the schema)
 
 //    SEPARATELY, 7 SLOT(S) ARE FILLED BUT FLIPPED -- these are NOT absent:
@@ -166,8 +168,11 @@
 //   cldr[0]   cl_dr      flipped        solver aid.avl_controls[rudder].Cl = -0.000876 -> mapped -0.0501911 -> written 0.0501911
 //   cy[2]     cy_dr      flipped        solver aid.avl_controls[rudder].CY = -0.006586 -> mapped -0.37735 -> written 0.37735
 //   cndr[0]   cn_dr      flipped        solver aid.avl_controls[rudder].Cn = 0.003556 -> mapped 0.203744 -> written -0.203744
-//   every slot in plane.groups.nonlinear_index is exactly 0.0; CD_alpha is not
-//   representable in this schema (cx has no CD*alpha term) and is zeroed and declared
+//   every slot in plane.groups.nonlinear_index is exactly 0.0; cx[1] (CD_alpha) and cx[3] (CD_de)
+//   are real schema slots the flight model evaluates, but DerivativeSet has no field for either
+//   derivative and SLOT_MAP maps only ('cx', ((0, 'cd0'),)), so both ship 0.0 -- named here rather
+//   than declared in provenance.missing: cx[1] and cx[3].  provenance.zeroed_slots.CD_alpha
+//   carries the same fact in full.
 //    THE REST OF THIS SOLVER'S RAW, UNCONVERTED OUTPUT IS IN geometry.jsonc, under raw_cross_checks.avl
 //    -- the Fortran's own for006 table and AID's pre-correction handbook rows for
 //    DATCOM, the per-alpha .st rows for AVL, the deck and the polar for flow5.
@@ -474,7 +479,7 @@
     },
     "zeroed_slots": {
       "nonlinear": "every slot in plane.groups.nonlinear_index is exactly 0.0",
-      "CD_alpha": "cx has no CD*alpha term in this schema, so CD_alpha is 0.0 and is declared rather than approximated",
+      "CD_alpha": "cx[1] (CD_alpha) and cx[3] (CD_de) are real schema slots: LINEAR_INDEX lists cx's linear indexes as (0, 1, 3) and f16/aero_morelli.py evaluates Cx0 = cx[0] + cx[1]*alpha + ... + cx[3]*de, so the flight model reads both terms.  They ship 0.0 because DerivativeSet has no field for either derivative and aero_convert/morelli.py's SLOT_MAP maps only ('cx', ((0, 'cd0'),)) -- a MAPPING gap, not a schema gap.  The linear slots this file leaves at 0.0 without a provenance.missing entry are: cx[1] and cx[3]",
       "flap": "the Morelli schema has no flap slot, so the handbook's flap row maps to nothing.  It is NOT carried in this file; provenance.raw_output_location says where the build put it, and provenance.control_rows holds it"
     },
     "mapping": [
@@ -880,7 +885,8 @@
       }
     },
     "cd0": {
-      "value": 0.017002800000000002,
+      "value": -0.017002800000000002,
+      "parasite_magnitude": 0.017002800000000002,
       "CDtot_at_alpha0": 0.0187,
       "CDind_at_alpha0": 0.0016972,
       "CDvis_reported": 0.017,

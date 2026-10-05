@@ -83,12 +83,13 @@
 //    Forward-Right-Down too, and aid/tornado/control_deriv.py says on purpose that it
 //    does not re-wrap them.  The earlier mapping `cz = -CL; cl = -Cl; cm = +Cm;
 //    cn = -Cn; cy = +CY` existed only to convert Tornado's former aft-positive x and
-//    up-positive z, and it is GONE: cl, cm, cn, cy and cx are read exactly as reported,
-//    and the P and R columns need no flip because they no longer arrive inverted.
+//    up-positive z, and it is GONE: cl, cm, cn and cy are read exactly as reported,
+//    cx[0] carries the negated source parasite magnitude (item 4) rather than a solver
+//    number, and the P and R columns need no flip because they no longer arrive inverted.
 //
 //    3 negations survive, and none is a frame conversion.  Each is a SIGN-CONVENTION identity that the schema
-//    itself requires -- `cz = -CL` for the lift slots, its body +z axis pointing down, and
-//    `cx = -CD` for the drag slot -- not a change of axis.  Listed from provenance.mapping:
+//    itself requires -- `cz = -CL` on cz[1], cz[0] and cz[5] -- its body +z axis points down, not a change
+//    of axis.  Listed from provenance.mapping:
 //      cz[1] from CL_a = 5.148013 -> -5.148013 per radian
 //      cz[0] from CL(alpha=0) = 0.168285 -> -0.168285
 //      cz[5] from tornado_controls[elevator].CL = 0.006480 per degree -> -0.371259 per radian
@@ -114,18 +115,18 @@
 //    flight-condition speed touches.  Inherited from the flight condition and
 //    NOT corrected here.
 //    coeff_create quotes them per p-hat = p*b_ref/(2*AS) using the SOURCE speed
-//    state["AS"] = 10.2073 ft/s = 3.1112 m/s (Mach 0.03, sea level), while
+//    state["AS"] = 10.2073 ft/s = 3.1112 m/s (Mach 0.03, altitude 0 ft), while
 //    f16/aero_morelli.py forms phat = p*b_m/(2*V) with V the model's own speed,
-//    23.1146 m/s at the trim.  Both scalings are internally consistent -- Tornado
-//    works in feet and ft/s throughout, and atm["a"] = 1116.29 is ft/s -- so this
-//    is NOT a unit error inside Tornado; it is a flight-condition mismatch, and
+//    23.1146 m/s at the trim over the same 3.6576 m span.  Both scalings are
+//    internally consistent -- Tornado works in feet and ft/s throughout, and the sound speed it uses is in
+//    ft/s too -- so this is NOT a unit error inside Tornado; it is a flight-condition mismatch, and
 //    its effect is that dp-hat/dP is 1.70122 in Tornado against 12.63921 in the
-//    model, a factor of 7.42948.  The written rate derivatives are therefore
-//    7.43x smaller than the derivative with respect to the model's own phat, i.e.
-//    the model's rate-damping terms are 7.43x weaker than the solver's numbers
-//    imply at the trimmed speed, and CL_Q = 9.591 is not a textbook per-q-hat
-//    value.  NOT rescaled here: the plan fixes the flight condition from the
-//    source AERO, and rescaling it is a physics decision for a later task.
+//    model, a factor of 7.42948.  The written rate derivatives are therefore 7.43x smaller
+//    than the derivative with respect to the model's own phat, i.e. the model's rate-damping terms are
+//    7.43x weaker than the solver's numbers imply at the trimmed speed, and the pitch-rate slot's own
+//    two numbers are printed from provenance.cd_q_convention immediately below.  NOT rescaled here: the plan
+//    fixes the flight condition from the source AERO, and rescaling it is a physics decision for a later
+//    task.
 //
 //    THE PITCH-RATE SLOT IS BODY-AXIS, not standard-aero.  Written out from
 //    provenance.cd_q_convention so it cannot drift from what shipped:
@@ -164,8 +165,11 @@
 //   cndr[0]   cn_dr      flipped        solver tornado_controls[rudder].Cn = 0.00319877 -> mapped 0.183276 -> written -0.183276
 //   cz[5]     cl_de      normalised     solver tornado_controls[elevator].CL = 0.00647969 -> mapped -0.371259 -> written -0.371259
 //   cm[2]     cm_de      normalised     solver tornado_controls[elevator].Cm = -0.0298079 -> mapped -1.16154 -> written -1.16154
-//   every slot in plane.groups.nonlinear_index is exactly 0.0; CD_alpha is not
-//   representable in this schema (cx has no CD*alpha term) and is zeroed and declared
+//   every slot in plane.groups.nonlinear_index is exactly 0.0; cx[1] (CD_alpha) and cx[3] (CD_de)
+//   are real schema slots the flight model evaluates, but DerivativeSet has no field for either
+//   derivative and SLOT_MAP maps only ('cx', ((0, 'cd0'),)), so both ship 0.0 -- named here rather
+//   than declared in provenance.missing: cx[1] and cx[3].  provenance.zeroed_slots.CD_alpha
+//   carries the same fact in full.
 //
 // 8. HOW TO REGENERATE THIS FILE
 //    cd python && python3 scripts/build_cessna172_aero.py
@@ -512,9 +516,9 @@
     "sign_convention": {
       "tornado_axes": "x forward, y right, z DOWN, as RETURNED -- coeff_create ends with `return to_frd(\"tornado\", out)` and aid/axes.py is the sibling's single home for solver signs",
       "frame_conversion_applied": "none: the sibling already returns plane/dynamics.py's own frame, so no moment and no force needs its sign changed for frame reasons",
-      "only_surviving_negations": "the plane/dynamics.py identity `cz = -CL`, and its `cx = -CD` twin on the drag slot, on cz[1], cz[0] and cz[5] and on nothing else: that file's sign convention (its body +z axis points down), not a conversion. Derived from provenance.mapping, which is the same source item 6 of this file's header prints its count from",
+      "only_surviving_negations": "the plane/dynamics.py sign-convention `cz = -CL` on cz[1], cz[0] and cz[5], and on nothing else: that file's own sign convention (its body +z axis points down), not a conversion.  Derived from provenance.mapping, which is the same source item 6 of this file's header prints its count from",
       "dynamics_axes": "x forward, y right, z down (plane/dynamics.py)",
-      "cz": "cz = -CL on cz[1], cz[0] and cz[5] and on nothing else; cl, cm, cn, cy and cx are read exactly as reported",
+      "cz": "cz = -CL on cz[1], cz[0] and cz[5] and on nothing else; the slots provenance.flipped names are the ones the invariant table reverses, and cx[0] carries the negated parasite magnitude from provenance.cd0, which is not a solver value at all -- every other slot is read as the solver reported it",
       "rate_derivatives": "none: coeff_create returns F-R-D for every channel, including the p/r columns, and Tornado's own Cl_P and Cn_R now AGREE with AVL's (which is unmapped and therefore natively F-R-D). The former claim that Tornado's P and R columns came back component-sense inverted no longer applies and was removed",
       "normalisation": "aero_convert.units.normalise_sign against SIGN_INVARIANTS"
     },

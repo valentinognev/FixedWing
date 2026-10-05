@@ -72,14 +72,15 @@
 //          k = a0/(2*pi) = 1.0886/rad and the formula answers
 //          3.5004 PER RADIAN -- 51 per cent of the 2-D
 //          6.8396/rad, the reduction a fin of AR ~ 1.8 must show, where a
-//          per-degree reading would imply about 200/rad.  The trailing pi/180
-//          then divides a per-radian number by 180 and stores 0.0610931, so
-//          every quantity linear in that slope is 57.3x too small and is corrected: CYb, Cnb,
-//          Clb and the three Section 7 rate terms that use it.  The evidence that
-//          the correction is the right one: AID's Clb is -0.003091, a factor 21.7 below
-//          the sibling's own AVL gold Clb = -0.065868 for the same planform (measured), while
-//          the corrected -0.068966 is within 5 per cent of that gold and 1.51x AVL's
-//          own alpha = 4 deg row, -0.045756, which avl.jsonc ships.
+//          per-degree reading would imply about 201/rad.  The trailing pi/180
+//          then divides a per-radian number by 180 and stores 0.061093, so
+//          every quantity linear in that slope is 57.3x too small and is corrected: CYb,
+//          Cnb, Clb and the three Section 7 rate terms that use it.  The evidence that
+//          the correction is the right one: AID's Clb is
+//          -0.003091, a factor 21.31 below the sibling's own AVL gold Clb =
+//          -0.065868 for the same planform (measured), while the corrected -0.068966
+//          is within 4.7 per cent of that gold and 1.51x AVL's own
+//          alpha = 4 deg row, -0.045756, which avl.jsonc ships.
 //      (3) aid/lateral.py:616 returns a HARDCODED 0.1 for both Clda and Cnda and
 //          aid/handbook_controls.py has no aileron CY or Cn column at all.  Those
 //          0.1 values are a placeholder, not a computation, and are NOT used: cy[1]
@@ -121,8 +122,8 @@
 //    roll right, positive Cn yaw right.  So there is no frame mapping in this
 //    file at all.  Which slots, if any, the `cz = -CL` identity still negates is derived:
 //    3 negations survive, and none is a frame conversion.  Each is a SIGN-CONVENTION identity that the schema
-//    itself requires -- `cz = -CL` for the lift slots, its body +z axis pointing down, and
-//    `cx = -CD` for the drag slot -- not a change of axis.  Listed from provenance.mapping:
+//    itself requires -- `cz = -CL` on cz[1] and cz[0]; `cx = -CD` on cx[0] -- its body +z axis points down, not a change
+//    of axis.  Listed from provenance.mapping:
 //      cz[1] from DATCOM for006 CLA at alpha = 4 deg = 0.100300 per degree -> -5.746767 per radian
 //      cz[0] from DATCOM for006 CL at alpha = 0 deg = 0.131000 -> -0.131000
 //      cx[0] from aid.drag.aircraft_cd0 (via aid.handbook_pass) = 0.017269 -> -0.017269
@@ -161,8 +162,10 @@
 //    they carry a real solver value whose sign the invariant table reversed, so
 //    the solver's own sign sits on the other side of zero: cl_da, cl_de, cn_beta, cy_p
 //    Every one is in the slot table above with state `flipped`.
-//    Every other slot is real output.  CD_alpha is not representable in this
-//    schema (cx has no CD*alpha term) and is 0.0 and declared.
+//    Every other slot is real output.  cx[1] (CD_alpha) and cx[3] (CD_de) are real schema
+//    slots the flight model evaluates, but DerivativeSet has no field for either derivative
+//    and SLOT_MAP maps only ('cx', ((0, 'cd0'),)), so both ship 0.0 -- named here rather than declared: cx[1] and cx[3].
+//    provenance.zeroed_slots.CD_alpha carries the same fact in full.
 //
 // 7. PER-SLOT PROVENANCE (all 19 arrays; real solver output vs zeroed)
 //   cz[1]     cl_alpha   normalised     solver DATCOM for006 CLA at alpha = 4 deg = 0.1003 -> mapped -5.74677 -> written -5.74677
@@ -190,8 +193,11 @@
 //   cndr[0]   cn_dr      normalised     solver aid.handbook_controls[rudder].Cn = -0.00191156 -> mapped -0.109524 -> written -0.109524
 //   cnda[0]   cn_da      missing        ABSENT -- aid.handbook_controls[aileron].Cn (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
 //   cy[1]     cy_da      missing        ABSENT -- aid.handbook_controls[aileron].CY (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
-//   every slot in plane.groups.nonlinear_index is exactly 0.0; CD_alpha is not
-//   representable in this schema (cx has no CD*alpha term) and is zeroed and declared
+//   every slot in plane.groups.nonlinear_index is exactly 0.0; cx[1] (CD_alpha) and cx[3] (CD_de)
+//   are real schema slots the flight model evaluates, but DerivativeSet has no field for either
+//   derivative and SLOT_MAP maps only ('cx', ((0, 'cd0'),)), so both ship 0.0 -- named here rather
+//   than declared in provenance.missing: cx[1] and cx[3].  provenance.zeroed_slots.CD_alpha
+//   carries the same fact in full.
 //    THE REST OF THIS SOLVER'S RAW, UNCONVERTED OUTPUT IS IN geometry.jsonc, under raw_cross_checks.datcom
 //    -- the Fortran's own for006 table and AID's pre-correction handbook rows for
 //    DATCOM, the per-alpha .st rows for AVL, the deck and the polar for flow5.
@@ -518,7 +524,7 @@
     },
     "zeroed_slots": {
       "nonlinear": "every slot in plane.groups.nonlinear_index is exactly 0.0",
-      "CD_alpha": "cx has no CD*alpha term in this schema, so CD_alpha is 0.0 and is declared rather than approximated",
+      "CD_alpha": "cx[1] (CD_alpha) and cx[3] (CD_de) are real schema slots: LINEAR_INDEX lists cx's linear indexes as (0, 1, 3) and f16/aero_morelli.py evaluates Cx0 = cx[0] + cx[1]*alpha + ... + cx[3]*de, so the flight model reads both terms.  They ship 0.0 because DerivativeSet has no field for either derivative and aero_convert/morelli.py's SLOT_MAP maps only ('cx', ((0, 'cd0'),)) -- a MAPPING gap, not a schema gap.  The linear slots this file leaves at 0.0 without a provenance.missing entry are: cx[1] and cx[3]",
       "flap": "the Morelli schema has no flap slot, so the handbook's flap row maps to nothing.  It is NOT carried in this file; provenance.raw_output_location says where the build put it, and provenance.control_rows holds it"
     },
     "mapping": [
@@ -588,7 +594,7 @@
         "tornado_key": "aid.lateral.lateral_static.Clb",
         "solver_value": -0.003090622882802272,
         "mapped_value": -0.06896624615490778,
-        "conversion": "AID's value with its own vertical-tail term re-evaluated using the tail's lift slope x 57.29577951308232.  aid/lateral.py:570 divides that PER RADIAN slope by pi/180, so AID's Clb = -0.00309062 has a tail part 57.3x too small (AID's Clb = -0.003091 against the sibling's own AVL gold Clb = -0.065868, and against AVL's alpha = 4 deg row -0.045756 this adapter writes -0.068966)",
+        "conversion": "AID's value with its own vertical-tail term re-evaluated using the tail's lift slope x 57.29577951308232.  aid/lateral.py:570 divides that PER RADIAN slope by pi/180, so AID's Clb = -0.00309062 has a tail part 57.3x too small, and this adapter writes -0.0689662 instead (datcom.jsonc's own header prints the ratio against AVL's own Clb)",
         "role": "slope",
         "value": -0.06896624615490778,
         "state": "normalised",
@@ -600,7 +606,7 @@
         "tornado_key": "aid.lateral.lateral_static.CYb",
         "solver_value": -0.009326495800599612,
         "mapped_value": -0.6082444104218907,
-        "conversion": "AID's value with its own vertical-tail term re-evaluated using the tail's lift slope x 57.29577951308232.  aid/lateral.py:570 divides that PER RADIAN slope by pi/180, so AID's CYb = -0.0093265 has a tail part 57.3x too small (AID's Clb = -0.003091 against the sibling's own AVL gold Clb = -0.065868, and against AVL's alpha = 4 deg row -0.045756 this adapter writes -0.068966)",
+        "conversion": "AID's value with its own vertical-tail term re-evaluated using the tail's lift slope x 57.29577951308232.  aid/lateral.py:570 divides that PER RADIAN slope by pi/180, so AID's CYb = -0.0093265 has a tail part 57.3x too small, and this adapter writes -0.608244 instead (datcom.jsonc's own header prints the ratio against AVL's own Clb)",
         "role": "slope",
         "value": -0.6082444104218907,
         "state": "normalised",
@@ -612,7 +618,7 @@
         "tornado_key": "aid.lateral.lateral_static.Cnb",
         "solver_value": 0.0036194771593376467,
         "mapped_value": -0.2482385665675611,
-        "conversion": "AID's value with its own vertical-tail term re-evaluated using the tail's lift slope x 57.29577951308232.  aid/lateral.py:570 divides that PER RADIAN slope by pi/180, so AID's Cnb = 0.00361948 has a tail part 57.3x too small (AID's Clb = -0.003091 against the sibling's own AVL gold Clb = -0.065868, and against AVL's alpha = 4 deg row -0.045756 this adapter writes -0.068966)",
+        "conversion": "AID's value with its own vertical-tail term re-evaluated using the tail's lift slope x 57.29577951308232.  aid/lateral.py:570 divides that PER RADIAN slope by pi/180, so AID's Cnb = 0.00361948 has a tail part 57.3x too small, and this adapter writes -0.248239 instead (datcom.jsonc's own header prints the ratio against AVL's own Clb)",
         "role": "slope",
         "value": 0.2482385665675611,
         "state": "flipped",
@@ -889,7 +895,8 @@
     },
     "cd0": {
       "source": "aid.drag.aircraft_cd0, which is 1.25 x the summed section drag",
-      "value": 0.01726937123110341,
+      "value": -0.01726937123110341,
+      "parasite_magnitude": 0.01726937123110341,
       "datcom_own_CD_at_alpha0": 0.024,
       "induced_part": 0.0013792852790920085,
       "datcom_own_parasite": 0.022620714720907993,
