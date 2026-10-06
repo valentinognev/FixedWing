@@ -5,6 +5,7 @@ subprocess, so the exit code, the stdout path and the file on disk are what is
 under test, not an in-process call.
 """
 import csv
+import json
 import math
 import subprocess
 import sys
@@ -17,7 +18,7 @@ _RUNNER = _PY / "run_x31.py"
 _DATA = _PY.parent / "data" / "planes" / "x31" / "x31.json"
 
 sys.path.insert(0, str(_PY))
-from x31_sim import SURFACES, column_name  # noqa: E402
+from x31_sim import column_name, surfaces  # noqa: E402
 
 _STATE_HEADER = (
     "t",
@@ -60,18 +61,18 @@ class TestRunnerCsv(unittest.TestCase):
             rows = list(csv.reader(handle))
         return rows
 
-    def test_the_header_is_the_f16_columns_then_all_seven_channel_pairs(self):
+    def test_the_header_is_the_f16_columns_then_each_of_the_seven_twice(self):
         rows = self._run_to_csv("--maneuver", "trim_hold", "--duration", "0.5")
         header = rows[0]
         self.assertEqual(tuple(header[: len(_STATE_HEADER)]), _STATE_HEADER)
-        surfaces = [name for name, _ in SURFACES]
-        self.assertEqual(len(surfaces), 7)
+        channels = list(surfaces())
+        self.assertEqual(len(channels), 7)
         self.assertEqual(
             tuple(header[len(_STATE_HEADER) :]),
             tuple(
                 column_name(surface, command)
                 for command in (True, False)
-                for surface in surfaces
+                for surface in channels
             ),
         )
 
@@ -101,12 +102,25 @@ class TestRunnerCsv(unittest.TestCase):
                 mode = rows[0].index("mode")
                 self.assertEqual({row[mode] for row in rows[1:]}, {controller})
 
-    def test_the_first_row_is_the_data_files_trim_point(self):
+    def test_the_first_row_is_the_data_files_trim_point_offset_by_its_spawn(self):
         rows = self._run_to_csv("--maneuver", "trim_hold", "--duration", "0.2")
         index = {name: position for position, name in enumerate(rows[0])}
         first = rows[1]
-        for name in ("n_m", "e_m", "d_m"):
-            self.assertEqual(float(first[index[name]]), 0.0)
+        # Derived from the NED convention, not read back off the column: the
+        # port's `dynamics.rates` adds gravity as `+[0, 0, G]`, so `d_m` is a
+        # down coordinate and the declared `spawn.d_m` is a height ABOVE the
+        # trim datum. The runner starts there because the data file's declared
+        # spawn is the default, not because the column happens to read zero.
+        payload = json.loads(_DATA.read_text())
+        n_m, e_m, d_m = (float(payload["spawn"][key]) for key in ("n_m", "e_m", "d_m"))
+        self.assertNotEqual((n_m, e_m, d_m), (0.0, 0.0, 0.0))
+        trim = payload["trim"]["pos"]
+        for name, expected in zip(
+            ("n_m", "e_m", "d_m"),
+            (trim[0] + n_m, trim[1] + e_m, trim[2] - d_m),
+        ):
+            with self.subTest(axis=name):
+                self.assertAlmostEqual(float(first[index[name]]), expected, places=9)
         self.assertAlmostEqual(float(first[index["vt_mps"]]), 50.0, places=9)
         # The port's exported quaternion is rounded to eight digits, so its
         # incidence recovers pi/37 to about seven places, not to machine
@@ -131,6 +145,17 @@ class TestRunnerCsv(unittest.TestCase):
                       "--csv", str(Path(self.enterContext(tempfile.TemporaryDirectory())) / "r.csv"))
         self.assertIn("samples", result.stdout)
         self.assertNotIn("non-finite", result.stderr)
+
+    def test_the_two_ramp_scenario_flies_to_its_horizon_on_both_controllers(self):
+        for controller in ("gain_schedule", "ndi"):
+            with self.subTest(controller=controller):
+                result = _run(
+                    "--maneuver", "chi_then_gamma", "--controller", controller,
+                    "--csv",
+                    str(Path(self.enterContext(tempfile.TemporaryDirectory())) / "r.csv"),
+                )
+                self.assertNotIn("stopped at", result.stderr)
+                self.assertIn("samples", result.stdout)
 
 
 class TestRunnerBadInput(unittest.TestCase):

@@ -12,11 +12,19 @@ diagram's manual switch, over seven channels.
 On the CSV shape: the F-16's header stops at `mode` and carries no control
 column at all, so `run_f16.py` leaves all four of its channels — elevator,
 aileron, rudder, throttle — out of its CSV entirely. That is recorded rather
-than papered over: this runner's header is the F-16's ten columns verbatim and
-then the X-31's fourteen, seven commanded and seven flown, so nothing is dropped
-and nothing is zero-padded. The command and the actuator output are separate
-because the actuator dynamics lag the command, and because the port established
-that a command column can carry algebraic-loop samples that never flew.
+than papered over: this runner's header is the F-16's eleven columns verbatim
+and then the X-31's fourteen, seven commanded and seven flown, so nothing is
+dropped and nothing is zero-padded. The command and the actuator output are
+separate because the actuator dynamics lag the command, and because the port
+established that a command column can carry algebraic-loop samples that never
+flew. The channel order comes from `host_controllers.CONTROL_CHANNELS`, which
+for the X-31 IS the CSV control column order; for the F-16 it is the LQR
+four-vector's order instead, because that CSV has no control columns at all.
+
+Every run starts at the spawn `data/planes/x31/x31.json` declares, which is
+`trim.pos + [n_m, e_m, -d_m]`: north and east offsets, and a height ABOVE the
+datum that the minus turns into a decrease of the NED down coordinate. The
+declaration is load-bearing, not documentation.
 """
 from __future__ import annotations
 
@@ -35,13 +43,13 @@ import numpy as np
 from host_controllers import control_channels, resolve_controller
 from x31_sim import (
     PlaneDataError,
-    SURFACES,
     column_name,
     load_plane,
     plane_data_path,
     run_scenario,
     scenario,
     scenarios,
+    surfaces,
 )
 
 _PLANE = "x31"
@@ -69,11 +77,14 @@ def _die(message: str) -> None:
 
 
 def header() -> tuple[str, ...]:
-    """The full CSV header: the F-16's columns, then the X-31's seven channel pairs."""
+    """The full CSV header: the F-16's columns, then the X-31's seven channels twice.
+
+    Commanded first, then flown, in `host_controllers.CONTROL_CHANNELS` order.
+    """
     controls = tuple(
         column_name(surface, command)
         for command in (True, False)
-        for surface, _ in SURFACES
+        for surface in surfaces()
     )
     return _STATE_HEADER + controls
 

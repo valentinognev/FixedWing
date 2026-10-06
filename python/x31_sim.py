@@ -42,6 +42,7 @@ from pathlib import Path
 
 import numpy as np
 
+from host_controllers import control_channels
 import x31_numpy_compat  # noqa: F401  restores numpy's removed short trig aliases
 from x31 import actuators, dynamics, gain_schedule, ndi, simulate
 from x31.ode45 import Ode45Error, ode45
@@ -53,18 +54,23 @@ _STATE_KEYS = ("pos", "vel", "q", "w")
 _COMMAND_KEYS = ("V", "Chi", "Gamma")
 _PLANT = "plant"
 
-# Command versus actuator output, in CSV column order. The two differ: the
-# actuator dynamics lag the command, and a port defect once flew algebraic-loop
-# spikes that only the command columns carried.
-SURFACES = (
-    ("aileron", "aileron"),
-    ("canard", "canard"),
-    ("flap", "flap"),
-    ("rudder", "rudder"),
-    ("thrust", "thrust"),
-    ("thrust_pitch", "thrust_pitch"),
-    ("thrust_yaw", "thrust_yaw"),
-)
+
+def surfaces() -> tuple[str, ...]:
+    """The X-31's seven control channels, in CSV control column order.
+
+    `host_controllers.CONTROL_CHANNELS` owns that order and this is the only
+    other place it is read, so there is one copy of it. Whether a column is the
+    command or the actuator output is `column_name`'s `command` flag, which is
+    why no list of (command, output) pairs exists: the port's `SurfaceCommand`
+    carries the same seven attribute names for both, so a pair list would be
+    seven identity pairs carrying no information.
+
+    The port's own `SurfaceCommand` field order is aileron, rudder, canard,
+    flap, thrust, thrust_pitch, thrust_yaw. That order is the port's, for its
+    own `_MODEL` walk, and it is deliberately not this one: the CSV column
+    order is FixedWing's to choose.
+    """
+    return control_channels(_PLANE)
 
 
 class PlaneDataError(ValueError):
@@ -129,7 +135,27 @@ def load_plane(path: Path | str | None = None) -> dict:
             previous = at
             for name in _COMMAND_KEYS:
                 _scalar(step, name)
+            _ramp(step, key, index)
     return payload
+
+
+def _ramp(step: dict, scenario_key: str, index: int) -> float:
+    """A step's `ramp_s`, or 0.0. `None` is an explicit "no ramp".
+
+    A negative or unusable `ramp_s` is refused rather than read as "no ramp":
+    silently dropping it would fly a step the file did not ask for.
+    """
+    if "ramp_s" not in step:
+        return 0.0
+    value = step["ramp_s"]
+    if value is None:
+        return 0.0
+    ramp = _scalar(step, "ramp_s")
+    if ramp < 0.0:
+        raise PlaneDataError(
+            f"scenario {scenario_key!r} step {index} ramp_s {ramp} is negative"
+        )
+    return ramp
 
 
 def scenarios(payload: dict) -> tuple[str, ...]:
@@ -147,17 +173,44 @@ def scenario(payload: dict, name: str) -> dict:
 
 
 def spawn_ned(payload: dict) -> tuple[float, float, float]:
+    """The spawn the data file declares, as `(n_m, e_m, d_m)`.
+
+    This is the default every run starts from, so a file that declares one is
+    a file whose declaration is read. `n_m` and `e_m` are the NED north and east
+    offsets from the trim datum. `d_m` is the height ABOVE the datum, not a
+    down coordinate: see `initial_state` for why the sign is what it is.
+    """
     body = payload["spawn"]
     return tuple(float(body[name]) for name in ("n_m", "e_m", "d_m"))
 
 
 def initial_state(payload: dict, spawn: tuple[float, float, float] | None = None) -> tuple:
-    """`(pos, vel, q, w)` at the trim point, optionally offset by an NED spawn."""
+    """`(pos, vel, q, w)` at the trim point, offset by an NED spawn.
+
+    `spawn` defaults to the file's own declared `spawn`, so a run starts where
+    the data file says it does. An explicit `spawn` overrides that, including
+    `(0, 0, 0)` for a run at the bare trim datum.
+
+    The offset is applied as `pos + [n_m, e_m, -d_m]`, and the minus on the
+    third term is the NED convention rather than a stray sign. The port's
+    `dynamics.rates` returns `vel_dot = force_e / mass + [0, 0, _G]`: gravity
+    is a POSITIVE earth-z acceleration, so `pos[2]` is a down coordinate and it
+    grows as the aircraft descends. A declared `d_m` is therefore a height above
+    the datum and has to DECREASE that down coordinate, which is the whole
+    content of the `-d_m`. (The F-16 spells the same conversion
+    `f16/units.py:ned_m_to_f16_m`, which returns `-d` as the altitude.)
+
+    This was once reported as a sign-inverted spawn. It is not: the arithmetic
+    above follows from the port's own gravity term, and an earlier review
+    reached the opposite conclusion without that derivation. The tests derive
+    this from `dynamics.rates` rather than from this function's output.
+    """
     trim = payload["trim"]
     pos = np.array(trim["pos"], dtype=float)
-    if spawn is not None:
-        n_m, e_m, d_m = spawn
-        pos = pos + np.array([n_m, e_m, -d_m], dtype=float)
+    if spawn is None:
+        spawn = spawn_ned(payload)
+    n_m, e_m, d_m = spawn
+    pos = pos + np.array([n_m, e_m, -d_m], dtype=float)
     return (
         pos,
         np.array(trim["vel"], dtype=float),
@@ -180,31 +233,72 @@ def controller_states(controller: str) -> int:
 def command_at(steps: list, t: float) -> dict:
     """The held maneuver-generator demand at `t`.
 
-    A step with a positive `ramp_s` is reached by a linear ramp that starts at
-    the previous step's time, so a demand can be asked for gradually instead of
-    instantaneously. The ramp interpolates the command only; no physics is
-    involved, and a step with `ramp_s` absent or zero is a plain hold.
+    `t_s` is a knot, exactly as upstream. `x31/maneuver.py`'s `command` reads
+    an exported Signal Builder table and `np.interp`s over its rows: each row is
+    a knot at a time, the value commanded AT that knot time is that row's value,
+    and the demand between knots is linear. There is no ramp concept upstream,
+    so a step with `ramp_s` absent or zero is a plain hold at its knot.
+
+    `ramp_s` is FixedWing's own addition and it means one thing: begin moving
+    toward this knot's value `ramp_s` before `t_s`, and arrive exactly at
+    `t_s`. The window is therefore `[t_s - ramp_s, t_s]`.
+
+    That window is clamped so it never opens before the previous knot's time.
+    The table describes nothing before its own first row, so a window reaching
+    back past the previous value would interpolate between two values the
+    table does not describe and extrapolate backwards before the one it does;
+    the previous value is held until the window opens instead. `ramp_s` is
+    never stretched to reach `t_s` and never silently ignored: a step whose
+    window was clamped reaches its value exactly at `t_s`, over the clamped
+    span.
+
+    The clamp is also what makes consecutive ramped steps continuous by
+    construction. Each ramp ends at its own `t_s` holding the value it reached,
+    the next one's window cannot open before that `t_s`, and it begins from the
+    value actually reached, so there is no step at the junction.
+
+    The ramp interpolates the command only; no physics is involved.
     """
     query = float(t)
-    chosen = steps[0]
     index = 0
     for position, step in enumerate(steps):
-        if float(step["t_s"]) <= query:
-            chosen = step
+        if query >= _window_opens(steps, position):
             index = position
         else:
             break
-    ramp = float(chosen.get("ramp_s", 0.0) or 0.0)
-    if ramp <= 0.0 or index == 0:
-        return {name: float(chosen[name]) for name in _COMMAND_KEYS}
-    start_time = float(steps[index - 1]["t_s"])
-    span = max(ramp, float(chosen["t_s"]) - start_time)
-    fraction = min(max((query - start_time) / span, 0.0), 1.0)
+    if index == 0:
+        return {name: float(steps[0][name]) for name in _COMMAND_KEYS}
     previous = steps[index - 1]
+    chosen = steps[index]
+    at = float(chosen["t_s"])
+    if query >= at:
+        return {name: float(chosen[name]) for name in _COMMAND_KEYS}
+    span = _window_span(steps, index)
+    fraction = (query - _window_opens(steps, index)) / span
     return {
         name: float(previous[name]) + fraction * (float(chosen[name]) - float(previous[name]))
         for name in _COMMAND_KEYS
     }
+
+
+def _window_span(steps: list, index: int) -> float:
+    """The clamped width of step `index`'s ramp window. 0.0 when it has no ramp."""
+    ramp = float(steps[index].get("ramp_s", 0.0) or 0.0)
+    if ramp <= 0.0:
+        return 0.0
+    gap = float(steps[index]["t_s"]) - float(steps[index - 1]["t_s"])
+    return min(ramp, gap)
+
+
+def _window_opens(steps: list, index: int) -> float:
+    """The time step `index`'s demand starts moving, `t_s - ramp_s`, clamped.
+
+    The first step has no previous knot and simply holds from its own `t_s`.
+    """
+    at = float(steps[index]["t_s"])
+    if index == 0:
+        return at
+    return at - _window_span(steps, index)
 
 
 def run_scenario(
@@ -221,9 +315,11 @@ def run_scenario(
 
     Returns the sample times plus, per sample, the NED position, airspeed,
     aerodynamic angles, 3-2-1 attitude, the seven actuator outputs, and the
-    seven commands that drove them. `stopped_at` and `stop_reason` are set only
-    when the port's 85 deg alpha / 80 deg beta diagram limit ended the run; a
-    run that reaches its duration leaves them None.
+    seven commands that drove them. `spawn` defaults to the data file's
+    declared spawn and an explicit one overrides it. `stopped_at` and
+    `stop_reason` are set only when the port's 85 deg alpha / 80 deg beta
+    diagram limit ended the run; a run that reaches its duration leaves them
+    None.
     """
     body = scenario(payload, scenario_name)
     if duration is None:
@@ -351,9 +447,9 @@ def _columns(
     if n == 0:
         for name in ("n_m", "e_m", "d_m", "vt_mps", "alpha", "beta", "phi", "theta", "psi"):
             out[name] = np.zeros(0)
-        for command_attr, output_attr in SURFACES:
-            out[column_name(command_attr, command=True)] = np.zeros(0)
-            out[column_name(output_attr, command=False)] = np.zeros(0)
+        for surface in surfaces():
+            out[column_name(surface, command=True)] = np.zeros(0)
+            out[column_name(surface, command=False)] = np.zeros(0)
         return out
 
     pos = np.zeros((n, 3))
@@ -362,8 +458,9 @@ def _columns(
     vt = np.zeros(n)
     alpha = np.zeros(n)
     beta = np.zeros(n)
-    commands = {name: np.zeros(n) for name, _ in SURFACES}
-    outputs = {name: np.zeros(n) for name, _ in SURFACES}
+    channels = surfaces()
+    commands = {name: np.zeros(n) for name in channels}
+    outputs = {name: np.zeros(n) for name in channels}
 
     for index in range(n):
         p, v, q_i, w, act, ctrl = simulate._split(states[index], n_act, n_ctrl)
@@ -383,9 +480,9 @@ def _columns(
         vt[index] = measured["V"]
         alpha[index] = measured["alpha"]
         beta[index] = measured["beta"]
-        for command_attr, output_attr in SURFACES:
-            commands[command_attr][index] = float(getattr(command, command_attr))
-            outputs[output_attr][index] = float(getattr(surface, output_attr))
+        for name in channels:
+            commands[name][index] = float(getattr(command, name))
+            outputs[name][index] = float(getattr(surface, name))
 
     out["n_m"] = pos[:, 0]
     out["e_m"] = pos[:, 1]
@@ -396,13 +493,19 @@ def _columns(
     out["phi"] = euler[:, 0]
     out["theta"] = euler[:, 1]
     out["psi"] = euler[:, 2]
-    for command_attr, output_attr in SURFACES:
-        out[column_name(command_attr, command=True)] = commands[command_attr]
-        out[column_name(output_attr, command=False)] = outputs[output_attr]
+    for name in channels:
+        out[column_name(name, command=True)] = commands[name]
+        out[column_name(name, command=False)] = outputs[name]
     return out
 
 
 def column_name(surface: str, command: bool) -> str:
+    """The CSV column name for one channel, commanded or flown.
+
+    This `command` flag is the whole of the command/output split. There is no
+    second table and no list of pairs: `surfaces()` names the channels once and
+    this says which of the two each column carries.
+    """
     unit = "kn" if surface == "thrust" else "deg"
     stem = f"{surface}_cmd" if command else surface
     return f"{stem}_{unit}"
