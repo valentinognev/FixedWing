@@ -3545,15 +3545,20 @@ def _identity_clause(identity: Sequence[dict[str, Any]]) -> str:
     applies nowhere in the same sentence -- which is what Tornado's file did, because
     its ``cd0`` came from the source file, carries no solver value, and so never enters
     ``identity_negated`` at all.
+
+    The ``on <slots>`` suffix is added only where the identity names no slot of its own:
+    ``_ARRAY_IDENTITY['czq']`` is already ``czq[0] = -CL_q``, and following it with
+    ``on czq[0]`` states the one slot twice in five words.
     """
     groups: dict[str, list[str]] = {}
     for item in identity:
         array, _, index = item["slot"].partition("[")
         groups.setdefault(array, []).append(f"{array}[{index.rstrip(']')}]")
-    return "; ".join(
-        f"{_ARRAY_IDENTITY.get(array, array)} on {_prose_list(slots)}"
-        for array, slots in groups.items()
-    )
+    clauses = []
+    for array, slots in groups.items():
+        name = _ARRAY_IDENTITY.get(array, array)
+        clauses.append(name if "[" in name else f"{name} on {_prose_list(slots)}")
+    return "; ".join(clauses)
 
 
 def _zeroed_linear_slots(
@@ -3596,6 +3601,21 @@ def _cx_derivative_gap(
         f" without a provenance.missing entry are: {_prose_list(zeroed)}"
     )
     return sentence, zeroed
+
+
+def _cx_mapping_gap_lines(run: TornadoRun | CrossCheckRun) -> list[str]:
+    """The ``cx[1]`` / ``cx[3]`` mapping gap, worded ONCE for all five files.
+
+    Every generated file ships those two slots at 0.0, so every header has to say why,
+    and four hand-written copies of the sentence had drifted into claiming the opposite
+    thing two lines away from each other.  One derived source, one rendering: the
+    string is the run's own ``provenance.zeroed_slots.CD_alpha``, wrapped to the
+    ``//`` column so no header can paraphrase it.
+    """
+    sentence, _ = _cx_derivative_gap(
+        run.coefficients, [item["slot"] for item in run.provenance["missing"]]
+    )
+    return _wrap_note(sentence)
 
 
 def _invariant_band_note(coefficients: dict[str, list[float]]) -> str:
@@ -3751,26 +3771,18 @@ def _slot_lines(run: TornadoRun | CrossCheckRun) -> list[str]:
             f"//   {entry['slot']:<9s} {entry['field']:<10s} {state:<14s} "
             f"{origin} -> mapped {mapped} -> written {value}"
         )
-    zeroed = _zeroed_linear_slots(
-        run.coefficients, [item["slot"] for item in run.provenance["missing"]]
+    lines.append(
+        "//   every slot in plane.groups.nonlinear_index is exactly 0.0.  Among the LINEAR"
+        " slots, exactly one pair"
     )
     lines.append(
-        "//   every slot in plane.groups.nonlinear_index is exactly 0.0; cx[1] (CD_alpha)"
-        " and cx[3] (CD_de)"
+        "//   is 0.0 for a reason of its own, and the flight model's two drag terms both"
+        " sit in it:"
     )
+    lines += _cx_mapping_gap_lines(run)
     lines.append(
-        "//   are real schema slots the flight model evaluates, but DerivativeSet has no"
-        " field for either"
+        "//    provenance.zeroed_slots.CD_alpha carries the same fact in full."
     )
-    lines.append(
-        "//   derivative and SLOT_MAP maps only ('cx', ((0, 'cd0'),)), so both ship 0.0 --"
-        " named here rather"
-    )
-    lines.append(
-        f"//   than declared in provenance.missing: {_prose_list(zeroed)}."
-        "  provenance.zeroed_slots.CD_alpha"
-    )
-    lines.append("//   carries the same fact in full.")
     return lines
 
 
@@ -3788,6 +3800,7 @@ def header_comment(
     v_trim = float(run.trim["cruise_mps"])
     span_m = geometry.b_ref_m
     rate_ratio = v_trim / geometry.as_mps
+    wind_axis_cl_q = float(run.provenance["cd_q_convention"]["wind_axis_cl_q"])
     tornado_cd0_slot = next(
         entry["slot"] for entry in run.provenance["mapping"] if entry["field"] == "cd0"
     )
@@ -3953,19 +3966,21 @@ def header_comment(
         " sound speed it uses is in",
         "//    ft/s too -- so this is NOT a unit error inside Tornado; it is a"
         " flight-condition mismatch, and",
-        f"//    its effect is that dp-hat/dP is {2.0 * geometry.as_mps / span_m:.5f} in Tornado"
-        f" against {2.0 * v_trim / span_m:.5f} in the",
-        f"//    model, a factor of {rate_ratio:.5f}.  The written rate derivatives are therefore"
-        f" {rate_ratio:.2f}x smaller",
-        "//    than the derivative with respect to the model's own phat, i.e. the model's"
-        " rate-damping terms are",
-        f"//    {rate_ratio:.2f}x weaker than the solver's numbers imply at the trimmed speed,"
-        " and the pitch-rate slot's own",
-        "//    two numbers are printed from provenance.cd_q_convention immediately below.  NOT"
-        " rescaled here: the plan",
-        "//    fixes the flight condition from the source AERO, and rescaling it is a physics"
-        " decision for a later",
-        "//    task.",
+        f"//    its effect is that dp-hat/dP is {span_m / (2.0 * geometry.as_mps):.5f} in"
+        " Tornado against",
+        f"//    {span_m / (2.0 * v_trim):.5f} in the model, so the model's p-hat scaling is"
+        f" {rate_ratio:.2f}x weaker.  The written rate",
+        f"//    derivatives are therefore {rate_ratio:.2f}x smaller than the derivative with"
+        " respect to the",
+        "//    model's own phat, i.e. the model's rate-damping terms are that much weaker"
+        " than the solver's",
+        f"//    numbers imply at the trimmed speed, and CL_Q = {wind_axis_cl_q:.3f} is not a"
+        " textbook per-q-hat",
+        "//    value; the pitch-rate slot's own two numbers are printed from"
+        " provenance.cd_q_convention",
+        "//    immediately below.  NOT rescaled here: the plan fixes the flight condition"
+        " from the source AERO,",
+        "//    and rescaling it is a physics decision for a later task.",
         "//",
         *_q_convention_lines(run),
         "//",
@@ -4009,9 +4024,6 @@ def cross_check_header(
     geometry = run.geometry
     condition = run.provenance["flight_condition"]
     model = run.model
-    cx_zeroed = _zeroed_linear_slots(
-        run.coefficients, [item["slot"] for item in run.provenance["missing"]]
-    )
     if model == "datcom":
         handbook = run.provenance["handbook_cross_check"]
         tail_slope = handbook["lateral_corrected"]
@@ -4160,12 +4172,12 @@ def cross_check_header(
             "//    provenance.missing so this list cannot go stale against the slot table"
             " below:",
             *_gap_lines(run),
-            "//    Every other slot is real output.  cx[1] (CD_alpha) and cx[3] (CD_de) are"
-            " real schema",
-            "//    slots the flight model evaluates, but DerivativeSet has no field for either"
-            " derivative",
-            f"//    and SLOT_MAP maps only ('cx', ((0, 'cd0'),)), so both ship 0.0 -- named here"
-            f" rather than declared: {_prose_list(cx_zeroed)}.",
+            "//    Nothing else is absent, but some LINEAR slots are 0.0 for a different"
+            " reason -- this",
+            "//    converter has no DerivativeSet field to map them into rather than a"
+            " solver declining",
+            "//    to produce them:",
+            *_cx_mapping_gap_lines(run),
             "//    provenance.zeroed_slots.CD_alpha carries the same fact in full.",
         ]
     elif model == "avl":
@@ -4285,15 +4297,15 @@ def cross_check_header(
             "//    this run's own mapping.",
         ]
         gaps = [
-            "//    NO SLOT IS ABSENT: AVL produces all 25, including cnda[0] and cy[1], which"
-            " DATCOM cannot.",
-            "//    cx[1] (CD_alpha) and cx[3] (CD_de) are real schema slots the flight model"
-            " evaluates, but",
-            "//    DerivativeSet has no field for either derivative and SLOT_MAP maps only"
-            " ('cx', ((0, 'cd0'),)),",
-            f"//    so both ship 0.0 -- named here rather than declared: {_prose_list(cx_zeroed)}."
-            "  provenance.",
-            "//    zeroed_slots.CD_alpha carries the same fact in full.",
+            "//    NO SLOT IS DECLARED ABSENT: AVL produces all 25, including cnda[0] and"
+            " cy[1], which",
+            "//    DATCOM cannot, so provenance.missing is empty.  Some of those slots are"
+            " still 0.0 anyway,",
+            "//    for a different reason -- this converter has no DerivativeSet field to"
+            " map them into",
+            "//    rather than AVL declining to produce them:",
+            *_cx_mapping_gap_lines(run),
+            "//    provenance.zeroed_slots.CD_alpha carries the same fact in full.",
             *_gap_lines(run),
         ]
     else:
@@ -4433,15 +4445,10 @@ def cross_check_header(
             " sideslip, rate",
             "//    and control coefficients are cross-checks too and not zeroed stand-ins.  The"
             f" {len(coverage['absent'])} absent",
-            "//    slots named above are the whole of what this runner does not reach.",
-            "//    cx[1] (CD_alpha) and cx[3] (CD_de) are the two slots nothing here can fill,"
-            " and NOT",
-            "//    because the schema lacks them: it has both, and f16/aero_morelli.py"
-            " evaluates Cx0 = cx[0] +",
-            "//    cx[1]*alpha + ... + cx[3]*de.  DerivativeSet has no field for either"
-            " derivative and SLOT_MAP",
-            f"//    maps only ('cx', ((0, 'cd0'),)), so both ship 0.0: the linear slots left at"
-            f" 0.0 undeclared are {_prose_list(cx_zeroed)}.",
+            "//    slots named above are the declared gaps, and they are not the whole of"
+            " what is zeroed:",
+            "//    some linear slots are 0.0 for the mapping reason below.",
+            *_cx_mapping_gap_lines(run),
             "//    provenance.zeroed_slots.CD_alpha carries the same fact in full.  flow5 DOES"
             " produce the",
             "//    elevator drag derivative (provenance.not_a_field.cd_de keeps it, and"
@@ -4611,7 +4618,9 @@ def _gap_lines(run: CrossCheckRun) -> list[str]:
             f" {item['reason']}"
         )
     if not lines:
-        lines.append("//      (none: this solver filled every slot in the schema)")
+        lines.append("//      (none: no field of this solver is zeroed and declared -- it"
+                     " produced a value")
+        lines.append("//       for every one of them in the schema)")
     flipped = sorted(run.provenance["flipped"])
     if flipped:
         # This used to be appended with no lead-in, so it read as a FOURTH absent slot

@@ -163,11 +163,16 @@
 //    The file is much wider than that, though: it takes 21 of the 25 slots from
 //    that runner, every one of them named in the produced list above, so the sideslip, rate
 //    and control coefficients are cross-checks too and not zeroed stand-ins.  The 4 absent
-//    slots named above are the whole of what this runner does not reach.
-//    cx[1] (CD_alpha) and cx[3] (CD_de) are the two slots nothing here can fill, and NOT
-//    because the schema lacks them: it has both, and f16/aero_morelli.py evaluates Cx0 = cx[0] +
-//    cx[1]*alpha + ... + cx[3]*de.  DerivativeSet has no field for either derivative and SLOT_MAP
-//    maps only ('cx', ((0, 'cd0'),)), so both ship 0.0: the linear slots left at 0.0 undeclared are cx[1] and cx[3].
+//    slots named above are the declared gaps, and they are not the whole of what is zeroed:
+//    some linear slots are 0.0 for the mapping reason below.
+//      cx[1] (CD_alpha) and cx[3] (CD_de) are real schema slots: LINEAR_INDEX
+//      lists cx's linear indexes as (0, 1, 3) and f16/aero_morelli.py
+//      evaluates Cx0 = cx[0] + cx[1]*alpha + ... + cx[3]*de, so the flight
+//      model reads both terms. They ship 0.0 because DerivativeSet has no
+//      field for either derivative and aero_convert/morelli.py's SLOT_MAP
+//      maps only ('cx', ((0, 'cd0'),)) -- a MAPPING gap, not a schema gap.
+//      The linear slots this file leaves at 0.0 without a provenance.missing
+//      entry are: cx[1] and cx[3]
 //    provenance.zeroed_slots.CD_alpha carries the same fact in full.  flow5 DOES produce the
 //    elevator drag derivative (provenance.not_a_field.cd_de keeps it, and provenance.control_rows
 //    holds the row); it maps to nothing because that field does not exist.  It is NOT carried in
@@ -205,11 +210,17 @@
 //   cmq[0]    cm_q       missing        ABSENT -- flow5 polar / aid.flow5_controls (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
 //   cxq[0]    cd_q       missing        ABSENT -- flow5 polar / aid.flow5_controls (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
 //   cy[1]     cy_da      missing        ABSENT -- flow5 polar / aid.flow5_controls (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
-//   every slot in plane.groups.nonlinear_index is exactly 0.0; cx[1] (CD_alpha) and cx[3] (CD_de)
-//   are real schema slots the flight model evaluates, but DerivativeSet has no field for either
-//   derivative and SLOT_MAP maps only ('cx', ((0, 'cd0'),)), so both ship 0.0 -- named here rather
-//   than declared in provenance.missing: cx[1] and cx[3].  provenance.zeroed_slots.CD_alpha
-//   carries the same fact in full.
+//   every slot in plane.groups.nonlinear_index is exactly 0.0.  Among the LINEAR slots, exactly one pair
+//   is 0.0 for a reason of its own, and the flight model's two drag terms both sit in it:
+//      cx[1] (CD_alpha) and cx[3] (CD_de) are real schema slots: LINEAR_INDEX
+//      lists cx's linear indexes as (0, 1, 3) and f16/aero_morelli.py
+//      evaluates Cx0 = cx[0] + cx[1]*alpha + ... + cx[3]*de, so the flight
+//      model reads both terms. They ship 0.0 because DerivativeSet has no
+//      field for either derivative and aero_convert/morelli.py's SLOT_MAP
+//      maps only ('cx', ((0, 'cd0'),)) -- a MAPPING gap, not a schema gap.
+//      The linear slots this file leaves at 0.0 without a provenance.missing
+//      entry are: cx[1] and cx[3]
+//    provenance.zeroed_slots.CD_alpha carries the same fact in full.
 //    THE REST OF THIS SOLVER'S RAW, UNCONVERTED OUTPUT IS IN geometry.jsonc, under raw_cross_checks.flow5
 //    -- the Fortran's own for006 table and AID's pre-correction handbook rows for
 //    DATCOM, the per-alpha .st rows for AVL, the deck and the polar for flow5.

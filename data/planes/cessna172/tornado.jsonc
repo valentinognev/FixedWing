@@ -120,13 +120,14 @@
 //    23.1146 m/s at the trim over the same 3.6576 m span.  Both scalings are
 //    internally consistent -- Tornado works in feet and ft/s throughout, and the sound speed it uses is in
 //    ft/s too -- so this is NOT a unit error inside Tornado; it is a flight-condition mismatch, and
-//    its effect is that dp-hat/dP is 1.70122 in Tornado against 12.63921 in the
-//    model, a factor of 7.42948.  The written rate derivatives are therefore 7.43x smaller
-//    than the derivative with respect to the model's own phat, i.e. the model's rate-damping terms are
-//    7.43x weaker than the solver's numbers imply at the trimmed speed, and the pitch-rate slot's own
-//    two numbers are printed from provenance.cd_q_convention immediately below.  NOT rescaled here: the plan
-//    fixes the flight condition from the source AERO, and rescaling it is a physics decision for a later
-//    task.
+//    its effect is that dp-hat/dP is 0.58781 in Tornado against
+//    0.07912 in the model, so the model's p-hat scaling is 7.43x weaker.  The written rate
+//    derivatives are therefore 7.43x smaller than the derivative with respect to the
+//    model's own phat, i.e. the model's rate-damping terms are that much weaker than the solver's
+//    numbers imply at the trimmed speed, and CL_Q = 9.591 is not a textbook per-q-hat
+//    value; the pitch-rate slot's own two numbers are printed from provenance.cd_q_convention
+//    immediately below.  NOT rescaled here: the plan fixes the flight condition from the source AERO,
+//    and rescaling it is a physics decision for a later task.
 //
 //    THE PITCH-RATE SLOT IS BODY-AXIS, not standard-aero.  Written out from
 //    provenance.cd_q_convention so it cannot drift from what shipped:
@@ -165,11 +166,17 @@
 //   cndr[0]   cn_dr      flipped        solver tornado_controls[rudder].Cn = 0.00319877 -> mapped 0.183276 -> written -0.183276
 //   cz[5]     cl_de      normalised     solver tornado_controls[elevator].CL = 0.00647969 -> mapped -0.371259 -> written -0.371259
 //   cm[2]     cm_de      normalised     solver tornado_controls[elevator].Cm = -0.0298079 -> mapped -1.16154 -> written -1.16154
-//   every slot in plane.groups.nonlinear_index is exactly 0.0; cx[1] (CD_alpha) and cx[3] (CD_de)
-//   are real schema slots the flight model evaluates, but DerivativeSet has no field for either
-//   derivative and SLOT_MAP maps only ('cx', ((0, 'cd0'),)), so both ship 0.0 -- named here rather
-//   than declared in provenance.missing: cx[1] and cx[3].  provenance.zeroed_slots.CD_alpha
-//   carries the same fact in full.
+//   every slot in plane.groups.nonlinear_index is exactly 0.0.  Among the LINEAR slots, exactly one pair
+//   is 0.0 for a reason of its own, and the flight model's two drag terms both sit in it:
+//      cx[1] (CD_alpha) and cx[3] (CD_de) are real schema slots: LINEAR_INDEX
+//      lists cx's linear indexes as (0, 1, 3) and f16/aero_morelli.py
+//      evaluates Cx0 = cx[0] + cx[1]*alpha + ... + cx[3]*de, so the flight
+//      model reads both terms. They ship 0.0 because DerivativeSet has no
+//      field for either derivative and aero_convert/morelli.py's SLOT_MAP
+//      maps only ('cx', ((0, 'cd0'),)) -- a MAPPING gap, not a schema gap.
+//      The linear slots this file leaves at 0.0 without a provenance.missing
+//      entry are: cx[1] and cx[3]
+//    provenance.zeroed_slots.CD_alpha carries the same fact in full.
 //
 // 8. HOW TO REGENERATE THIS FILE
 //    cd python && python3 scripts/build_cessna172_aero.py
