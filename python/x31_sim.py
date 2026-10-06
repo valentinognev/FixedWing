@@ -259,11 +259,16 @@ def controller_states(mode: str) -> int:
 def command_at(steps: list, t: float) -> dict:
     """The held maneuver-generator demand at `t`.
 
-    `t_s` is a knot, exactly as upstream. `x31/maneuver.py`'s `command` reads
-    an exported Signal Builder table and `np.interp`s over its rows: each row is
-    a knot at a time, the value commanded AT that knot time is that row's value,
-    and the demand between knots is linear. There is no ramp concept upstream,
-    so a step with `ramp_s` absent or zero is a plain hold at its knot.
+    `t_s` is a knot: the value commanded AT that knot time is that row's value.
+    Between knots FixedWing HOLDS that value. A step with `ramp_s` absent or
+    zero is therefore a plain hold, and its demand steps to the next knot's
+    value at that knot's `t_s`.
+
+    Upstream is not this: `x31/maneuver.py`'s `command` reads an exported Signal
+    Builder table and `np.interp`s over its rows, so the upstream demand is
+    LINEAR between knots, and it has no ramp concept at all. That table is one
+    stored waveform read by `group`; a scenario is a step table, and holding to
+    the next knot is what makes two back-to-back ramps continuous.
 
     `ramp_s` is FixedWing's own addition and it means one thing: begin moving
     toward this knot's value `ramp_s` before `t_s`, and arrive exactly at

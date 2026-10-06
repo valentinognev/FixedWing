@@ -506,12 +506,13 @@ class TestPlantLoadsAndSteps(unittest.TestCase):
 class TestCommandSchedule(unittest.TestCase):
     """`ramp_s` reaches its knot exactly at `t_s`, and opens `ramp_s` before it.
 
-    `t_s` is a knot, exactly as upstream: `x31/maneuver.py`'s `command` reads a
-    Signal Builder table and `np.interp`s over its rows, so the value commanded
-    at a row's time is that row's value and the demand is linear in between.
-    There is no ramp upstream. `ramp_s` is FixedWing's own addition and it
-    means one thing: begin moving toward this knot's value `ramp_s` before
-    `t_s`, and arrive exactly at `t_s`.
+    `t_s` is a knot: the value commanded at a row's time is that row's value,
+    and the demand is HELD there until the next knot moves it, so a step with
+    no `ramp_s` steps its value in at its own `t_s`. Upstream is linear between
+    knots instead (`x31/maneuver.py`'s `command` `np.interp`s one exported
+    Signal Builder table) and has no ramp. `ramp_s` is FixedWing's own addition
+    and it means one thing: begin moving toward this knot's value `ramp_s`
+    before `t_s`, and arrive exactly at `t_s`.
 
     The window is `[t_s - ramp_s, t_s]` clamped so it never opens before the
     previous knot's time. The port's table describes nothing before its first
