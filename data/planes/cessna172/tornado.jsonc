@@ -2,10 +2,10 @@
 // data/planes/cessna172/tornado.jsonc for the Cessna 172 source analysis, generated -- do not hand-edit.
 //
 // 1. SOLVER, MESH, FLIGHT CONDITION
-//    Solver: Tornado, via the sibling package aid.tornado (imported from ../USAF_DATCOM/AircraftIntuitiveDesign/Python/src,
+//    Solver: Tornado, via the sibling package aid.tornado (imported from ../../../../../../mnt/VirtualMachine/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Python/src,
 //    a path relative to THIS repository's root so the bytes do not depend on which
 //    mount point the repo is reached through; see provenance.aid_src.
-//    Sibling commit: e0d2b992003fe7c81682dabcf31777f187961228.  It is recorded
+//    Sibling commit: b6921558abfce291a029a0809b283c7978da2d3c.  It is recorded
 //    because an upstream commit has broken this converter twice, silently both times -- a rebuild
 //    that moves it should be a one-line diff in this field and nothing else.
 //    Mesh: 10 chordwise x 5 spanwise (the AID batch default).  NP[0],
@@ -377,10 +377,10 @@
       "10",
       "5"
     ],
-    "source": "../USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
-    "aid_src": "../USAF_DATCOM/AircraftIntuitiveDesign/Python/src",
-    "aid_src_from_env": false,
-    "aid_src_commit": "e0d2b992003fe7c81682dabcf31777f187961228",
+    "source": "../../../../../../mnt/VirtualMachine/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
+    "aid_src": "../../../../../../mnt/VirtualMachine/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Python/src",
+    "aid_src_from_env": true,
+    "aid_src_commit": "b6921558abfce291a029a0809b283c7978da2d3c",
     "extra_panel_cl_share": 0.09623417874693013,
     "flight_condition": {
       "mach": 0.03,

@@ -2557,6 +2557,11 @@ def avl_run(source: Path | None = None) -> CrossCheckRun:
             for surface in ("aileron", "elevator", "rudder")
         },
         "control_surfaces_available": sorted(by_surface),
+        # The shared header prints item 2's 1/3-scale comparison from this key, and
+        # cross_check_header splices that helper in for every cross-check model, so
+        # AVL must carry the planform exactly as datcom_run does or write_model
+        # raises KeyError and build_all cannot reach avl.jsonc at all.
+        "planform": _planform(ac, 0.0),
     }
 
     collector.put(
@@ -2881,6 +2886,11 @@ def flow5_run(source: Path | None = None) -> CrossCheckRun:
                              "aileron Cl and Cn would arrive with the wrong sign",
         "cog_m": cog,
         "beta_flat": sorted(FLOW5_BETA_FLAT),
+        # The shared header prints item 2's 1/3-scale comparison from this key, and
+        # cross_check_header splices that helper in for every cross-check model, so
+        # flow5 must carry the planform exactly as datcom_run does or write_model
+        # raises KeyError and build_all cannot reach flow5.jsonc at all.
+        "planform": _planform(ac, 0.0),
     }
     # --- longitudinal static ---------------------------------------------------
     cza = float(polar["CZa"])
@@ -4458,7 +4468,7 @@ def cross_check_header(
             f" where it means {geometry.as_mps:.4f} m/s.",
             f"//    The rate factor is 1 for the {len(rate_filled)} rate slots this file does have"
             f" ({', '.join(rate_filled)}), and the {len(rate_absent)} it does not",
-            f"//    ({', '.join(rate_absent)}) are the declared gaps above, because flow5's",
+            f"//    ({', '.join(rate_absent)}) are the declared gaps below, because flow5's",
             "//    StabDerivatives are per unit of p-hat / r-hat taken at the",
             "//    source speed and are NOT rescaled -- the same treatment as the other three",
             "//    files, for the same reason, and recorded the same way.",

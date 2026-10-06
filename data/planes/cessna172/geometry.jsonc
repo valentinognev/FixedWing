@@ -2,10 +2,10 @@
 // data/planes/cessna172/geometry.jsonc for the Cessna 172 source analysis, generated -- do not hand-edit.
 //
 // 1. SOLVER, MESH, FLIGHT CONDITION
-//    Solver: Tornado, via the sibling package aid.tornado (imported from ../USAF_DATCOM/AircraftIntuitiveDesign/Python/src,
+//    Solver: Tornado, via the sibling package aid.tornado (imported from ../../../../../../mnt/VirtualMachine/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Python/src,
 //    a path relative to THIS repository's root so the bytes do not depend on which
 //    mount point the repo is reached through; see provenance.aid_src.
-//    Sibling commit: e0d2b992003fe7c81682dabcf31777f187961228.  It is recorded
+//    Sibling commit: b6921558abfce291a029a0809b283c7978da2d3c.  It is recorded
 //    because an upstream commit has broken this converter twice, silently both times -- a rebuild
 //    that moves it should be a one-line diff in this field and nothing else.
 //    Mesh: 10 chordwise x 5 spanwise (the AID batch default).  NP[0],
@@ -187,8 +187,8 @@
 //    the rest of each solver's output would not be re-derivable from the committed
 //    tree without re-running the solver:
 //      datcom  raw_cross_checks.datcom: 30 keys -- aid_CL0_as_reported, aid_CL_level_flight, aid_CLa_as_reported, aid_Cm0_as_reported, aid_Cma_as_reported, aid_K, aid_drag_CD0, aid_lateral_as_reported, aid_longitudinal_dynamic_CLq, aid_x_cg, datcom_alt, datcom_cd, datcom_cl, datcom_cla_per_degree, datcom_clb_per_degree, datcom_cm, datcom_cma_per_degree, datcom_cn, datcom_cnb_per_degree, datcom_cyb_per_degree, datcom_mach, datcom_table_alpha_deg, handbook_controls_per_degree, lateral_corrected, lateral_dynamic_as_reported, planform, section7, solver_alpha_deg, solver_alpha_index, solver_alpha_schedule_deg
-//      avl     raw_cross_checks.avl: 11 keys -- alpha_deg, alpha_index, alpha_schedule_deg, avl_axes, control_rows_per_degree, control_surfaces_available, mesh, reference_case, sb_geometry_axis, st_alpha_rows, x_reference_ft
-//      flow5   raw_cross_checks.flow5: 23 keys -- CD, CDind, CDvis, CL, CLa, Cm, Cma, Cx, Cz, alpha_deg, alpha_index, alpha_schedule_deg, beta_flat, cog_m, control_row_frame, control_rows_per_degree, deck_polar, deck_wings, entry_point, frame, mesh, output_keys, stab_derivatives
+//      avl     raw_cross_checks.avl: 12 keys -- alpha_deg, alpha_index, alpha_schedule_deg, avl_axes, control_rows_per_degree, control_surfaces_available, mesh, planform, reference_case, sb_geometry_axis, st_alpha_rows, x_reference_ft
+//      flow5   raw_cross_checks.flow5: 24 keys -- CD, CDind, CDvis, CL, CLa, Cm, Cma, Cx, Cz, alpha_deg, alpha_index, alpha_schedule_deg, beta_flat, cog_m, control_row_frame, control_rows_per_degree, deck_polar, deck_wings, entry_point, frame, mesh, output_keys, planform, stab_derivatives
 //    Every per-degree number in them is UNCONVERTED: the model files carry the
 //    x 57.29577951308232 step and the sign normalisation, those blocks do not.
 //    flow5 has none -- its deck and polar are already SI and per radian -- which is
@@ -196,7 +196,7 @@
 // ==========================================================================
 {
   "model": "geometry",
-  "source": "../USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
+  "source": "../../../../../../mnt/VirtualMachine/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
   "units": {
     "length": "m",
     "mass": "kg",
@@ -497,10 +497,10 @@
       "10",
       "5"
     ],
-    "source": "../USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
-    "aid_src": "../USAF_DATCOM/AircraftIntuitiveDesign/Python/src",
-    "aid_src_from_env": false,
-    "aid_src_commit": "e0d2b992003fe7c81682dabcf31777f187961228",
+    "source": "../../../../../../mnt/VirtualMachine/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
+    "aid_src": "../../../../../../mnt/VirtualMachine/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Python/src",
+    "aid_src_from_env": true,
+    "aid_src_commit": "b6921558abfce291a029a0809b283c7978da2d3c",
     "moment_reference": {
       "reference_point": [
         0.0,
@@ -1171,7 +1171,65 @@
         "elevator",
         "flap",
         "rudder"
-      ]
+      ],
+      "planform": {
+        "wing": {
+          "chord_root_ft": 2.0,
+          "chord_break_ft": 2.5,
+          "chord_tip_ft": 2.0,
+          "span_ft": 6.0,
+          "area_ft2": 24.0,
+          "aspect_ratio": 5.991777208527443,
+          "panel_count": 1,
+          "dihedral_deg": 3.0,
+          "root_quarter_chord_sweep_deg": 0.0,
+          "x_station_ft": 2.2,
+          "airfoil": [
+            "2412",
+            "2412"
+          ]
+        },
+        "horizontal_tail": {
+          "chord_root_ft": 1.3,
+          "chord_break_ft": 1.3,
+          "chord_tip_ft": 0.8,
+          "span_ft": 2.5,
+          "area_ft2": 5.25,
+          "aspect_ratio": 4.761904761904762,
+          "panel_count": 1,
+          "dihedral_deg": 0.0,
+          "root_quarter_chord_sweep_deg": 11.309932474020213,
+          "x_station_ft": 8.75,
+          "airfoil": "0012"
+        },
+        "vertical_tail": {
+          "chord_root_ft": 5.0,
+          "chord_break_ft": 2.0,
+          "chord_tip_ft": 1.0,
+          "span_ft": 2.0,
+          "area_ft2": 8.8,
+          "aspect_ratio": 0.39999999999999997,
+          "panel_count": 3,
+          "dihedral_deg": 0.0,
+          "root_quarter_chord_sweep_deg": 77.614257524752,
+          "x_station_ft": 5.0,
+          "airfoil": "0012"
+        },
+        "extra_panel": {
+          "name": "NP[0]",
+          "chord_root_ft": 0.3,
+          "chord_tip_ft": 0.3,
+          "span_ft": 5.0,
+          "area_ft2": 3.0,
+          "aspect_ratio": 33.333333333333336,
+          "dihedral_deg": 17.0,
+          "x_station_ft": 2.5,
+          "airfoil": "2412",
+          "in_lattice": true,
+          "cl_share_at_trim": 0.0,
+          "kept_because": "the user ruled it in: excluding it is explicitly out of scope"
+        }
+      }
     },
     "flow5": {
       "mesh": [
@@ -1364,7 +1422,6 @@
       ],
       "beta_flat": [
         "CXa",
-        "CY",
         "CYb",
         "CYp",
         "CYr",
@@ -1375,10 +1432,66 @@
         "Cnb",
         "Cnp",
         "Cnr",
-        "Cx",
-        "Cz",
         "XNP"
-      ]
+      ],
+      "planform": {
+        "wing": {
+          "chord_root_ft": 2.0,
+          "chord_break_ft": 2.5,
+          "chord_tip_ft": 2.0,
+          "span_ft": 6.0,
+          "area_ft2": 24.0,
+          "aspect_ratio": 5.991777208527443,
+          "panel_count": 1,
+          "dihedral_deg": 3.0,
+          "root_quarter_chord_sweep_deg": 0.0,
+          "x_station_ft": 2.2,
+          "airfoil": [
+            "2412",
+            "2412"
+          ]
+        },
+        "horizontal_tail": {
+          "chord_root_ft": 1.3,
+          "chord_break_ft": 1.3,
+          "chord_tip_ft": 0.8,
+          "span_ft": 2.5,
+          "area_ft2": 5.25,
+          "aspect_ratio": 4.761904761904762,
+          "panel_count": 1,
+          "dihedral_deg": 0.0,
+          "root_quarter_chord_sweep_deg": 11.309932474020213,
+          "x_station_ft": 8.75,
+          "airfoil": "0012"
+        },
+        "vertical_tail": {
+          "chord_root_ft": 5.0,
+          "chord_break_ft": 2.0,
+          "chord_tip_ft": 1.0,
+          "span_ft": 2.0,
+          "area_ft2": 8.8,
+          "aspect_ratio": 0.39999999999999997,
+          "panel_count": 3,
+          "dihedral_deg": 0.0,
+          "root_quarter_chord_sweep_deg": 77.614257524752,
+          "x_station_ft": 5.0,
+          "airfoil": "0012"
+        },
+        "extra_panel": {
+          "name": "NP[0]",
+          "chord_root_ft": 0.3,
+          "chord_tip_ft": 0.3,
+          "span_ft": 5.0,
+          "area_ft2": 3.0,
+          "aspect_ratio": 33.333333333333336,
+          "dihedral_deg": 17.0,
+          "x_station_ft": 2.5,
+          "airfoil": "2412",
+          "in_lattice": true,
+          "cl_share_at_trim": 0.0,
+          "kept_because": "the user ruled it in: excluding it is explicitly out of scope"
+        }
+      }
     }
   }
 }

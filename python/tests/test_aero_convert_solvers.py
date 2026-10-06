@@ -34,10 +34,13 @@ rather than assumed, so each test states the solver's real capability:
   ``CY`` (so ``cy_da``).  They are ``None`` and declared, never zeros -- that
   is the fail-closed answer, not a gap to be papered over.
 
-The counts in this paragraph are checked against the runs by
-``CrossCheckAdapterTest.test_18_hand_written_counts_match_the_data``, because
-that is the whole defect class this file was rewritten for: a sentence about a
-computed quantity goes stale the moment the computation changes.
+The coverage counts in this paragraph are recorded in each generated header,
+not checked from here: ``test_18_hand_written_counts_in_the_headers_must_match_the_data``
+parses the built ``//`` block and checks the claims it still makes -- the
+flipped-slot list, the identity-negated set, and the header's
+``N OF THE m SLOTS ARE ABSENT`` count -- against the run.  The per-solver
+coverage figures above are printed by the build into item 1 of each file
+instead, so a stale count here cannot silently disagree with a generated one.
 """
 from __future__ import annotations
 

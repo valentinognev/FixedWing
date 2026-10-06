@@ -4,7 +4,7 @@
 // 1. SOLVER, MESH, FLIGHT CONDITION
 //    Solver: AVL, via aid.avl_io.run_avl_full for the stability sweep and
 //    aid.avl_controls.avl_controls for the control derivatives, both from the
-//    sibling package imported from ../USAF_DATCOM/AircraftIntuitiveDesign/Python/src, a path relative to this
+//    sibling package imported from ../../../../../../mnt/VirtualMachine/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Python/src, a path relative to this
 //    repository's root so the bytes do not depend on which mount point the repo is reached
 //    through; see provenance.aid_src.
 //    Mesh: 10 spanwise x 10 chordwise.  aid/avl_controls.py's own default, so the
@@ -382,10 +382,10 @@
       "10",
       "10"
     ],
-    "source": "../USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
-    "aid_src": "../USAF_DATCOM/AircraftIntuitiveDesign/Python/src",
-    "aid_src_from_env": false,
-    "aid_src_commit": "e0d2b992003fe7c81682dabcf31777f187961228",
+    "source": "../../../../../../mnt/VirtualMachine/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
+    "aid_src": "../../../../../../mnt/VirtualMachine/FlightSimulation/USAF_DATCOM/AircraftIntuitiveDesign/Python/src",
+    "aid_src_from_env": true,
+    "aid_src_commit": "b6921558abfce291a029a0809b283c7978da2d3c",
     "flight_condition": {
       "mach": 0.03,
       "alt_ft": 0.0,
