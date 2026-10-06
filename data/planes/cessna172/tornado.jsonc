@@ -392,7 +392,7 @@
       "as_mps": 3.1111988050453054,
       "as_ftps": 10.207345160909794,
       "rho_kg_m3": 1.2250558830000002,
-      "speed_note": "Tornado's state[\"AS\"] is in FT/S (aid.atmosphere.atmosphere(0)['a'] = 1116.288876590643 ft/s, _build_state divides by 3.28084), so as_mps is as_ftps x 0.3048 and as_ftps carries the solver's own number.  This is the Mach-0.03 SOURCE speed, not the trimmed cruise speed in provenance.trim.cruise_mps."
+      "speed_note": "Tornado's state[\"AS\"] is in FT/S (aid.atmosphere.atmosphere(0)['a'] = 1116.288876590643 ft/s, _build_state divides by 3.28084), so as_mps is as_ftps x 0.3048 and as_ftps carries the solver's own number.  This is the Mach-0.03 SOURCE speed, not the trimmed cruise speed in the trim block this note is shipped beside."
     },
     "moment_reference": {
       "reference_point": [
@@ -414,7 +414,7 @@
     "sign_convention": {
       "tornado_axes": "x forward, y right, z DOWN, as RETURNED -- coeff_create ends with `return to_frd(\"tornado\", out)` and aid/axes.py is the sibling's single home for solver signs",
       "frame_conversion_applied": "none: the sibling already returns plane/dynamics.py's own frame, so no moment and no force needs its sign changed for frame reasons",
-      "only_surviving_negations": "the plane/dynamics.py sign-convention `cz = -CL` on cz[1], cz[0] and cz[5], and on nothing else: that file's own sign convention (its body +z axis points down), not a conversion.  Derived from provenance.mapping, which is the same source item 6 of this file's header prints its count from",
+      "only_surviving_negations": "the plane/dynamics.py sign-convention `cz = -CL` on cz[1], cz[0] and cz[5], and on nothing else: that file's own sign convention (its body +z axis points down), not a conversion.  Derived from the per-slot mapping, which is the same source item 6 of this file's header prints its count from",
       "dynamics_axes": "x forward, y right, z down (plane/dynamics.py)",
       "cz": "cz = -CL on cz[1], cz[0] and cz[5] and on nothing else; the slots provenance.flipped names are the ones the invariant table reverses, and cx[0] carries the negated parasite magnitude from provenance.cd0, which is not a solver value at all -- every other slot is read as the solver reported it",
       "rate_derivatives": "none: coeff_create returns F-R-D for every channel, including the p/r columns, and Tornado's own Cl_P and Cn_R now AGREE with AVL's (which is unmapped and therefore natively F-R-D). The former claim that Tornado's P and R columns came back component-sense inverted no longer applies and was removed",

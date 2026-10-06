@@ -15,8 +15,8 @@
 //    evaluated at alpha = 4 deg (the middle of AERO.ALSCHD), V = 3.1112 m/s,
 //    rho = 1.225056 kg/m^3.  Tornado's state["AS"] is in FT/S -- it is 10.2073 ft/s, and AID works in feet
 //    throughout (aid.atmosphere.atmosphere(0)['a'] = 1116.288876590643 ft/s) -- so the m/s figure above
-//    is that value x 0.3048, and both are recorded in provenance.flight_condition.  This is the SOURCE Mach-0.03 speed;
-//    the trimmed cruise speed the model actually flies at is in provenance.trim.cruise_mps.
+//    is that value x 0.3048, and both are recorded in flight_condition.  This is the SOURCE Mach-0.03 speed;
+//    the trimmed cruise speed the model actually flies at is in trim.cruise_mps.
 //
 // 2. THE SOURCE PLANFORM IS A CESSNA 172 AT ROUGHLY 1/3 LINEAR SCALE
 //    span 12 ft against a real 36.1 ft, chord 2 ft against 4.89 ft, area 24 ft^2
@@ -89,7 +89,7 @@
 //
 //    3 negations survive, and none is a frame conversion.  Each is a SIGN-CONVENTION identity that the schema
 //    itself requires -- `cz = -CL` on cz[1], cz[0] and cz[5] -- its body +z axis points down, not a change
-//    of axis.  Listed from provenance.mapping:
+//    of axis.  Listed from tornado.jsonc's provenance.mapping:
 //      cz[1] from CL_a = 5.148013 -> -5.148013 per radian
 //      cz[0] from CL(alpha=0) = 0.168285 -> -0.168285
 //      cz[5] from tornado_controls[elevator].CL = 0.006480 per degree -> -0.371259 per radian
@@ -125,12 +125,12 @@
 //    derivatives are therefore 7.43x smaller than the derivative with respect to the
 //    model's own phat, i.e. the model's rate-damping terms are that much weaker than the solver's
 //    numbers imply at the trimmed speed, and CL_Q = 9.591 is not a textbook per-q-hat
-//    value; the pitch-rate slot's own two numbers are printed from provenance.cd_q_convention
+//    value; the pitch-rate slot's own two numbers are printed from tornado.jsonc's provenance.cd_q_convention
 //    immediately below.  NOT rescaled here: the plan fixes the flight condition from the source AERO,
 //    and rescaling it is a physics decision for a later task.
 //
 //    THE PITCH-RATE SLOT IS BODY-AXIS, not standard-aero.  Written out from
-//    provenance.cd_q_convention so it cannot drift from what shipped:
+//    tornado.jsonc's provenance.cd_q_convention so it cannot drift from what shipped:
 //      shipped:      czq[0] = coeff_create['CZ_Q'] and cxq[0] = coeff_create['CX_Q'], the BODY-axis pitch-rate coefficients, read unnegated
 //      why:          the schema ADDS both slots to the body-axis cz and cx, so the body-axis coefficient is what they mean.  The sibling returns both in Forward-Right-Down, so no identity and no conversion apply
 //      czq[0] writes -9.615046 (CZ_Q, body axis)
@@ -176,7 +176,7 @@
 //      maps only ('cx', ((0, 'cd0'),)) -- a MAPPING gap, not a schema gap.
 //      The linear slots this file leaves at 0.0 without a provenance.missing
 //      entry are: cx[1] and cx[3]
-//    provenance.zeroed_slots.CD_alpha carries the same fact in full.
+//    tornado.jsonc's provenance.zeroed_slots.CD_alpha carries the same fact in full.
 //
 // 8. HOW TO REGENERATE THIS FILE
 //    cd python && python3 scripts/build_cessna172_aero.py
@@ -290,7 +290,7 @@
     "as_mps": 3.1111988050453054,
     "as_ftps": 10.207345160909794,
     "rho_kg_m3": 1.2250558830000002,
-    "speed_note": "Tornado's state[\"AS\"] is in FT/S (aid.atmosphere.atmosphere(0)['a'] = 1116.288876590643 ft/s, _build_state divides by 3.28084), so as_mps is as_ftps x 0.3048 and as_ftps carries the solver's own number.  This is the Mach-0.03 SOURCE speed, not the trimmed cruise speed in provenance.trim.cruise_mps."
+    "speed_note": "Tornado's state[\"AS\"] is in FT/S (aid.atmosphere.atmosphere(0)['a'] = 1116.288876590643 ft/s, _build_state divides by 3.28084), so as_mps is as_ftps x 0.3048 and as_ftps carries the solver's own number.  This is the Mach-0.03 SOURCE speed, not the trimmed cruise speed in the trim block this note is shipped beside."
   },
   "mesh": [
     "10",
@@ -523,7 +523,7 @@
     "sign_convention": {
       "tornado_axes": "x forward, y right, z DOWN, as RETURNED -- coeff_create ends with `return to_frd(\"tornado\", out)` and aid/axes.py is the sibling's single home for solver signs",
       "frame_conversion_applied": "none: the sibling already returns plane/dynamics.py's own frame, so no moment and no force needs its sign changed for frame reasons",
-      "only_surviving_negations": "the plane/dynamics.py sign-convention `cz = -CL` on cz[1], cz[0] and cz[5], and on nothing else: that file's own sign convention (its body +z axis points down), not a conversion.  Derived from provenance.mapping, which is the same source item 6 of this file's header prints its count from",
+      "only_surviving_negations": "the plane/dynamics.py sign-convention `cz = -CL` on cz[1], cz[0] and cz[5], and on nothing else: that file's own sign convention (its body +z axis points down), not a conversion.  Derived from the per-slot mapping, which is the same source item 6 of this file's header prints its count from",
       "dynamics_axes": "x forward, y right, z down (plane/dynamics.py)",
       "cz": "cz = -CL on cz[1], cz[0] and cz[5] and on nothing else; the slots provenance.flipped names are the ones the invariant table reverses, and cx[0] carries the negated parasite magnitude from provenance.cd0, which is not a solver value at all -- every other slot is read as the solver reported it",
       "rate_derivatives": "none: coeff_create returns F-R-D for every channel, including the p/r columns, and Tornado's own Cl_P and Cn_R now AGREE with AVL's (which is unmapped and therefore natively F-R-D). The former claim that Tornado's P and R columns came back component-sense inverted no longer applies and was removed",

@@ -429,7 +429,7 @@
         "10",
         "10"
       ],
-      "why_pinned": "flow5's Clb is MESH-DEPENDENT and the sibling records it: -0.0736 at ('5','3'), +0.0018 at ('10','5'), -0.0530 at ('10','10'), -0.0593 at ('20','10'), against AVL's -0.059 and Tornado's -0.054.  At ('10','5') it goes POSITIVE and |Clb| is ~30x too small, which reads as a sign flip rather than a convergence failure.  ('10','10') is the sibling's own default and the only one of the four that agrees with AVL, so it is pinned by test_16_flow5_mesh_is_pinned because the hazard is a silent sign inversion, not a precision loss"
+      "why_pinned": "flow5's Clb is MESH-DEPENDENT and the sibling records it: -0.0736 at ('5','3'), +0.0018 at ('10','5'), -0.0530 at ('10','10'), -0.0593 at ('20','10').  At ('10','5') it goes POSITIVE and |Clb| is ~30x too small, which reads as a sign flip rather than a convergence failure.  ('10','10') is the sibling's own default and is pinned by test_16_flow5_mesh_is_pinned because the hazard is a silent sign inversion, not a precision loss.  How the shipped Clb compares with the other three solvers' is a comparison between runs rather than a fact about this one, and each of avl.jsonc, datcom.jsonc and tornado.jsonc prints its own cl[0]"
     },
     "source": "../USAF_DATCOM/AircraftIntuitiveDesign/Analyses/Cessna172.jsonc",
     "aid_src": "../USAF_DATCOM/AircraftIntuitiveDesign/Python/src",

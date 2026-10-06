@@ -131,9 +131,9 @@
 //    flight-condition speed touches.
 //
 //    NO SLOT IS DECLARED ABSENT: AVL produces all 25, including cnda[0] and cy[1], which
-//    DATCOM cannot, so provenance.missing is empty.  Some of those slots are still 0.0 anyway,
-//    for a different reason -- this converter has no DerivativeSet field to map them into
-//    rather than AVL declining to produce them:
+//    DATCOM cannot, so provenance.missing is empty.  Some LINEAR slots outside that set are
+//    still 0.0, for a different reason -- this converter has no DerivativeSet field to map them
+//    into rather than AVL declining to produce them:
 //      cx[1] (CD_alpha) and cx[3] (CD_de) are real schema slots: LINEAR_INDEX
 //      lists cx's linear indexes as (0, 1, 3) and f16/aero_morelli.py
 //      evaluates Cx0 = cx[0] + cx[1]*alpha + ... + cx[3]*de, so the flight
@@ -504,7 +504,7 @@
         "tornado_key": "AVL .st CLA at alpha = 4 deg",
         "solver_value": 5.007369,
         "mapped_value": -5.007369,
-        "conversion": "cz = -CL_alpha; AVL's axes already match plane/dynamics.py, so this is the only negation in the whole adapter",
+        "conversion": "cz = -CL_alpha; AVL's axes already match plane/dynamics.py, so no axis mapping applies -- this is the plane/dynamics.py sign-convention identity cz = -CL (its body +z axis points down), not a frame conversion, and item 6 lists every slot it still negates, derived from provenance.mapping",
         "role": "slope",
         "value": -5.007369,
         "state": "normalised",

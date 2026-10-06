@@ -193,8 +193,10 @@ rather than inherited, each with the measurement that shows it:
   The correction is a multiply by ``DEG_TO_RAD`` because that is the numerical
   reciprocal of the bad division; it is **not** a per-degree-to-per-radian
   conversion, and the two descriptions only coincide numerically.  The evidence it
-  is a defect: AID's ``Clb`` is -0.0031 against the sibling's own AVL gold -0.065868
-  for the same planform, while the corrected -0.0690 is within 5 % of that gold.
+  is a defect: AID's ``Clb`` is far too small against the sibling's own AVL gold
+  ``Clb`` for the same planform, while the correction lands back on that gold.
+  Both numbers, the factor between them and the per cent are read out of the two
+  runs every time ``datcom.jsonc`` is written, so read them there rather than here.
 * ``aid/lateral.py:616`` returns a hardcoded ``0.1`` for both ``Clda`` and
   ``Cnda``, and ``aid/handbook_controls.py`` has no aileron ``CY`` or ``Cn``
   column at all.  The placeholders are not used; the slots are ``None``, zeroed
@@ -1306,8 +1308,8 @@ def tornado_run(source: Path | None = None) -> TornadoRun:
                 "Tornado's state[\"AS\"] is in FT/S (aid.atmosphere.atmosphere(0)['a'] "
                 "= 1116.288876590643 ft/s, _build_state divides by 3.28084), so as_mps is "
                 f"as_ftps x {FT_TO_M} and as_ftps carries the solver's own number.  This "
-                "is the Mach-0.03 SOURCE speed, not the trimmed cruise speed in "
-                "provenance.trim.cruise_mps."
+                "is the Mach-0.03 SOURCE speed, not the trimmed cruise speed in the trim "
+                "block this note is shipped beside."
             ),
         },
         "moment_reference": {
@@ -2066,12 +2068,14 @@ def datcom_run(source: Path | None = None) -> CrossCheckRun:
     rates = _datcom_section7(ac, lateral_fixed["cy_beta"], float(stability["CL"]),
                              sweep_c4_deg=_sweep_c4_deg(ac), vt_a_per_rad=vt_a_per_rad)
     # The neutral-deflection row is the one taken, so the record names delta = 0
-    # rather than whatever `iter_rows` happened to return last.
-    all_rows = handbook_controls(ac)
+    # rather than whatever `iter_rows` happened to return last.  A surface with no
+    # neutral row is a KeyError below, exactly as on the Tornado path: the
+    # alternative -- falling back to the deflected row -- would make every control
+    # derivative a central difference about a moved surface, silently.
     rows = {
-        row["surface"]: row for row in all_rows
+        row["surface"]: row for row in handbook_controls(ac)
         if float(row["delta_deg"]) == 0.0
-    } or {row["surface"]: row for row in all_rows}
+    }
 
     index = _source_alpha_index(ac)
     raw: dict[str, Any] = {
@@ -2510,8 +2514,10 @@ def avl_run(source: Path | None = None) -> CrossCheckRun:
     collector.put(
         "cl_alpha", -at("CLa"), tornado_key=f"AVL .st CLA at alpha = {geometry.alpha_deg:g} deg",
         solver_value=at("CLa"),
-        conversion="cz = -CL_alpha; AVL's axes already match plane/dynamics.py, so this is "
-                   "the only negation in the whole adapter",
+        conversion="cz = -CL_alpha; AVL's axes already match plane/dynamics.py, so no axis "
+                   "mapping applies -- this is the plane/dynamics.py sign-convention identity "
+                   "cz = -CL (its body +z axis points down), not a frame conversion, and item 6 "
+                   "lists every slot it still negates, derived from provenance.mapping",
         role="slope",
     )
     collector.put(
@@ -3006,13 +3012,16 @@ def flow5_run(source: Path | None = None) -> CrossCheckRun:
                 "value": list(FLOW5_MESH),
                 "why_pinned": "flow5's Clb is MESH-DEPENDENT and the sibling records it: "
                               "-0.0736 at ('5','3'), +0.0018 at ('10','5'), -0.0530 at "
-                              "('10','10'), -0.0593 at ('20','10'), against AVL's -0.059 and "
-                              "Tornado's -0.054.  At ('10','5') it goes POSITIVE and |Clb| is "
-                              "~30x too small, which reads as a sign flip rather than a "
-                              "convergence failure.  ('10','10') is the sibling's own default "
-                              "and the only one of the four that agrees with AVL, so it is "
-                              "pinned by test_16_flow5_mesh_is_pinned because the hazard is a "
-                              "silent sign inversion, not a precision loss",
+                              "('10','10'), -0.0593 at ('20','10').  At ('10','5') it goes "
+                              "POSITIVE and |Clb| is ~30x too small, which reads as a sign "
+                              "flip rather than a convergence failure.  ('10','10') is the "
+                              "sibling's own default and is pinned by "
+                              "test_16_flow5_mesh_is_pinned because the hazard is a silent "
+                              "sign inversion, not a precision loss.  How the shipped Clb "
+                              "compares with the other three solvers' is a comparison "
+                              "between runs rather than a fact about this one, and each of "
+                              "avl.jsonc, datcom.jsonc and tornado.jsonc prints its own "
+                              "cl[0]",
             },
             "drag_split": {
                 "CD_at_alpha0": cd_at_zero,
@@ -3355,7 +3364,7 @@ def _flipped_rate_slots(flipped: list[str]) -> list[str]:
     return [name for name in flipped if not name.endswith(("_da", "_dr", "_de"))]
 
 
-def _q_convention_lines(run: TornadoRun | CrossCheckRun) -> list[str]:
+def _q_convention_lines(run: TornadoRun | CrossCheckRun, cd_q_pointer: str) -> list[str]:
     """Item 6's pitch-rate convention paragraph, derived from the run's own data.
 
     This paragraph used to assert, in hand-written words, that ``czq[0]`` holds
@@ -3373,7 +3382,7 @@ def _q_convention_lines(run: TornadoRun | CrossCheckRun) -> list[str]:
         ]
     lines = [
         "//    THE PITCH-RATE SLOT IS BODY-AXIS, not standard-aero.  Written out from",
-        "//    provenance.cd_q_convention so it cannot drift from what shipped:",
+        f"//    {cd_q_pointer} so it cannot drift from what shipped:",
         f"//      shipped:      {convention['shipped']}",
         f"//      why:          {convention['why']}",
         f"//      czq[0] writes {float(convention['body_axis_cz_q_shipped']):.6f}"
@@ -3701,7 +3710,7 @@ def _tornado_sign_convention(
         "only_surviving_negations": (
             f"the plane/dynamics.py sign-convention {_identity_clause(identity)}, and on"
             " nothing else: that file's own sign convention (its body +z axis points"
-            " down), not a conversion.  Derived from provenance.mapping, which is the"
+            " down), not a conversion.  Derived from the per-slot mapping, which is the"
             " same source item 6 of this file's header prints its count from"
         ),
         "cz": (
@@ -3714,7 +3723,9 @@ def _tornado_sign_convention(
     }
 
 
-def identity_lines(run: TornadoRun | CrossCheckRun) -> list[str]:
+def identity_lines(
+    run: TornadoRun | CrossCheckRun, mapping_pointer: str = "provenance.mapping"
+) -> list[str]:
     """Header lines naming the ``cz = -CL`` survivors, with their real numbers."""
     found = identity_negated(run)
     if not found:
@@ -3730,7 +3741,7 @@ def identity_lines(run: TornadoRun | CrossCheckRun) -> list[str]:
         " that the schema",
         f"//    itself requires -- {_identity_clause(found)} -- its body +z axis points"
         " down, not a change",
-        "//    of axis.  Listed from provenance.mapping:",
+        f"//    of axis.  Listed from {mapping_pointer}:",
     ]
     for item in found:
         if item["per_degree"]:
@@ -3748,7 +3759,10 @@ def identity_lines(run: TornadoRun | CrossCheckRun) -> list[str]:
     return lines
 
 
-def _slot_lines(run: TornadoRun | CrossCheckRun) -> list[str]:
+def _slot_lines(
+    run: TornadoRun | CrossCheckRun,
+    zeroed_pointer: str = "provenance.zeroed_slots.CD_alpha",
+) -> list[str]:
     """One line per coefficient slot: what the solver said, and what was done to it.
 
     Three numbers per slot, never two: the solver's own value, the value after
@@ -3781,13 +3795,37 @@ def _slot_lines(run: TornadoRun | CrossCheckRun) -> list[str]:
     )
     lines += _cx_mapping_gap_lines(run)
     lines.append(
-        "//    provenance.zeroed_slots.CD_alpha carries the same fact in full."
+        f"//    {zeroed_pointer} carries the same fact in full."
     )
     return lines
 
 
+# A header pointer must name a key the file it is printed in actually carries, because
+# these five files are the only documentation a future agent gets and a dead end is
+# worse than no pointer at all.  ``tornado.jsonc`` carries the run's whole
+# ``provenance``; ``geometry.jsonc`` keeps a 13-key whitelist and puts ``trim`` and
+# ``flight_condition`` at the TOP level, so its pointers are spelled the way it spells
+# them, and everything the whitelist leaves out is named in the file that does carry
+# it rather than in a key this one has not got.
+_POINTERS_MODEL_RECORD = {
+    "trim": "provenance.trim.cruise_mps",
+    "flight_condition": "provenance.flight_condition",
+    "mapping": "provenance.mapping",
+    "cd_q": "provenance.cd_q_convention",
+    "zeroed_slots": "provenance.zeroed_slots.CD_alpha",
+}
+_POINTERS_GEOMETRY_RECORD = {
+    "trim": "trim.cruise_mps",
+    "flight_condition": "flight_condition",
+    "mapping": "tornado.jsonc's provenance.mapping",
+    "cd_q": "tornado.jsonc's provenance.cd_q_convention",
+    "zeroed_slots": "tornado.jsonc's provenance.zeroed_slots.CD_alpha",
+}
+
+
 def header_comment(
-    run: TornadoRun, kind: str, cross_runs: Sequence[CrossCheckRun] = ()
+    run: TornadoRun, kind: str, cross_runs: Sequence[CrossCheckRun] = (),
+    *, carries_model_record: bool = True,
 ) -> str:
     """The eight-item ``//`` block every generated file opens with.
 
@@ -3795,11 +3833,18 @@ def header_comment(
     planform is a Cessna 172 at roughly 1/3 linear scale, that AID's per-degree
     helpers were not trusted, that Tornado's x axis is aft-positive, and that
     ``cz = -CL``.
+
+    ``carries_model_record`` says whether the payload being described is the model
+    file (``tornado.jsonc``, which carries the whole ``provenance``) or the geometry
+    block (``geometry.jsonc``, which keeps a whitelist and puts ``trim`` and
+    ``flight_condition`` at the top level), and it chooses which spelling of each
+    pointer the header prints.
     """
     geometry = run.geometry
     v_trim = float(run.trim["cruise_mps"])
     span_m = geometry.b_ref_m
     rate_ratio = v_trim / geometry.as_mps
+    pointers = _POINTERS_MODEL_RECORD if carries_model_record else _POINTERS_GEOMETRY_RECORD
     wind_axis_cl_q = float(run.provenance["cd_q_convention"]["wind_axis_cl_q"])
     tornado_cd0_slot = next(
         entry["slot"] for entry in run.provenance["mapping"] if entry["field"] == "cd0"
@@ -3831,9 +3876,9 @@ def header_comment(
         "//    throughout (aid.atmosphere.atmosphere(0)['a'] = 1116.288876590643 ft/s) --"
         " so the m/s figure above",
         f"//    is that value x {FT_TO_M}, and both are recorded in"
-        " provenance.flight_condition.  This is the SOURCE Mach-0.03 speed;",
+        f" {pointers['flight_condition']}.  This is the SOURCE Mach-0.03 speed;",
         "//    the trimmed cruise speed the model actually flies at is in"
-        " provenance.trim.cruise_mps.",
+        f" {pointers['trim']}.",
         "//",
         "// 2. THE SOURCE PLANFORM IS A CESSNA 172 AT ROUGHLY 1/3 LINEAR SCALE",
         "//    span 12 ft against a real 36.1 ft, chord 2 ft against 4.89 ft, area 24 ft^2",
@@ -3934,7 +3979,7 @@ def header_comment(
         "//    number, and the P and R columns need no flip because they no longer arrive"
         " inverted.",
         "//",
-        *identity_lines(run),
+        *identity_lines(run, pointers["mapping"]),
         "//",
         "//    Everything else is unnegated, including czq[0] = CZ_Q and cxq[0] = CX_Q, which are",
         "//    the body-axis coefficients the schema actually adds to cz and cx.",
@@ -3977,12 +4022,12 @@ def header_comment(
         f"//    numbers imply at the trimmed speed, and CL_Q = {wind_axis_cl_q:.3f} is not a"
         " textbook per-q-hat",
         "//    value; the pitch-rate slot's own two numbers are printed from"
-        " provenance.cd_q_convention",
+        f" {pointers['cd_q']}",
         "//    immediately below.  NOT rescaled here: the plan fixes the flight condition"
         " from the source AERO,",
         "//    and rescaling it is a physics decision for a later task.",
         "//",
-        *_q_convention_lines(run),
+        *_q_convention_lines(run, pointers["cd_q"]),
         "//",
         "// 7. PER-SLOT PROVENANCE (all 19 arrays; real solver output vs zeroed)",
     ]
@@ -3995,7 +4040,7 @@ def header_comment(
         *_raw_output_lines(cross_runs),
         "// " + "=" * 74,
     ]
-    return "\n".join(common + _slot_lines(run) + tail)
+    return "\n".join(common + _slot_lines(run, pointers["zeroed_slots"]) + tail)
 
 
 def cross_check_header(
@@ -4299,11 +4344,11 @@ def cross_check_header(
         gaps = [
             "//    NO SLOT IS DECLARED ABSENT: AVL produces all 25, including cnda[0] and"
             " cy[1], which",
-            "//    DATCOM cannot, so provenance.missing is empty.  Some of those slots are"
-            " still 0.0 anyway,",
-            "//    for a different reason -- this converter has no DerivativeSet field to"
-            " map them into",
-            "//    rather than AVL declining to produce them:",
+            "//    DATCOM cannot, so provenance.missing is empty.  Some LINEAR slots outside"
+            " that set are",
+            "//    still 0.0, for a different reason -- this converter has no DerivativeSet"
+            " field to map them",
+            "//    into rather than AVL declining to produce them:",
             *_cx_mapping_gap_lines(run),
             "//    provenance.zeroed_slots.CD_alpha carries the same fact in full.",
             *_gap_lines(run),
@@ -4771,7 +4816,9 @@ def write_all(
 
     ``cross_runs`` are folded into ``geometry.jsonc`` as ``raw_cross_checks``, which
     is what makes the plan's "the unconverted per-degree solver output" requirement
-    true for the other three solvers and not only for Tornado.
+    true for the other three solvers and not only for Tornado.  Its header says so
+    through ``carries_model_record=False``: that payload keeps a provenance whitelist
+    and puts ``trim`` at the top level, so its pointers are spelled for it.
     """
     directory = Path(out_dir) if out_dir is not None else DEFAULT_OUT_DIR
     written = {
@@ -4783,7 +4830,10 @@ def write_all(
         "geometry.jsonc": write_jsonc(
             directory / "geometry.jsonc",
             geometry_block(run, cross_runs),
-            header_comment(run, "data/planes/cessna172/geometry.jsonc", cross_runs),
+            header_comment(
+                run, "data/planes/cessna172/geometry.jsonc", cross_runs,
+                carries_model_record=False,
+            ),
         ),
     }
     return {name: str(path) for name, path in written.items()}
