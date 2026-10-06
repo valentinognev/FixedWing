@@ -11,6 +11,15 @@ integrator (`ode45`). Only the loop around them is new, because the port's own
 `simulate.simulate` drives one stored MATLAB export and this drives a
 committed scenario in `data/planes/x31/x31.json`.
 
+What runs is named `mode`, not `controller`, because not everything here is a
+controller. `gain_schedule` and `ndi` are the X-31's two controllers;
+`open_loop` is the port's Simulink Manual Switch — a constant open-loop input
+with no measurement, no feedback and no integrator — and it lives in
+`host_controllers.INPUT_MODES` rather than in `CONTROLLERS`. The scenario
+demand never reaches it, so every scenario ends at the same instant on it.
+`host_controllers.resolve_mode` is the single place that distinction is
+enforced.
+
 Two facts about that reuse are load-bearing and worth stating plainly:
 
 * Both controllers accept a `command_slow` mapping as readily as a Signal
@@ -42,7 +51,7 @@ from pathlib import Path
 
 import numpy as np
 
-from host_controllers import control_channels
+from host_controllers import control_channels, resolve_mode
 import x31_numpy_compat  # noqa: F401  restores numpy's removed short trig aliases
 from x31 import actuators, dynamics, gain_schedule, ndi, simulate
 from x31.ode45 import Ode45Error, ode45
@@ -52,7 +61,7 @@ from x31.types import ActuatorState, PlantState
 _PLANE = "x31"
 _STATE_KEYS = ("pos", "vel", "q", "w")
 _COMMAND_KEYS = ("V", "Chi", "Gamma")
-_PLANT = "plant"
+_OPEN_LOOP = "open_loop"
 
 
 def surfaces() -> tuple[str, ...]:
@@ -219,15 +228,24 @@ def initial_state(payload: dict, spawn: tuple[float, float, float] | None = None
     )
 
 
-def controller_states(controller: str) -> int:
-    """How many states `controller` integrates, read from the port itself."""
-    if controller == "gain_schedule":
+def controller_states(mode: str) -> int:
+    """How many states `mode` integrates, read from the port itself.
+
+    `open_loop` integrates nothing because it is not a controller: it is the
+    port's diagram Manual Switch, a constant input, so there is no loop to
+    carry an integrator. The count comes from `gain_schedule._STATES` and
+    `ndi._INTEGRATORS` rather than being written down again here.
+    """
+    if mode == "gain_schedule":
         return len(gain_schedule._STATES)
-    if controller == "ndi":
+    if mode == "ndi":
         return len(ndi._INTEGRATORS)
-    if controller == _PLANT:
+    if mode == _OPEN_LOOP:
         return 0
-    raise ValueError(f"unknown x31 controller {controller!r}")
+    raise ValueError(
+        f"unknown x31 mode {mode!r}; it runs a controller from "
+        f"host_controllers.CONTROLLERS or the open_loop input mode"
+    )
 
 
 def command_at(steps: list, t: float) -> dict:
@@ -302,7 +320,7 @@ def _window_opens(steps: list, index: int) -> float:
 
 
 def run_scenario(
-    controller: str,
+    mode: str,
     payload: dict,
     scenario_name: str,
     duration: float | None = None,
@@ -311,9 +329,11 @@ def run_scenario(
     rtol: float = 1e-3,
     atol: float = 1e-6,
 ) -> dict:
-    """Integrate one scenario on `controller` and return CSV-ready columns.
+    """Integrate one scenario under `mode` and return CSV-ready columns.
 
-    Returns the sample times plus, per sample, the NED position, airspeed,
+    `mode` is resolved through `host_controllers.resolve_mode`, so it is
+    either one of the plane's controllers or its `open_loop` input mode and
+    nothing else. Returns the sample times plus, per sample, the NED position, airspeed,
     aerodynamic angles, 3-2-1 attitude, the seven actuator outputs, and the
     seven commands that drove them. `spawn` defaults to the data file's
     declared spawn and an explicit one overrides it. `stopped_at` and
@@ -321,6 +341,11 @@ def run_scenario(
     diagram limit ended the run; a run that reaches its duration leaves them
     None.
     """
+    mode = (
+        resolve_mode(_PLANE, open_loop=True)
+        if mode == _OPEN_LOOP
+        else resolve_mode(_PLANE, mode)
+    )
     body = scenario(payload, scenario_name)
     if duration is None:
         duration = float(body["duration_s"])
@@ -331,13 +356,13 @@ def run_scenario(
 
     pos, vel, q, w = initial_state(payload, spawn)
     n_act = int(actuators.initial_state().x.size)
-    n_ctrl = controller_states(controller)
+    n_ctrl = controller_states(mode)
     y0 = simulate._pack(pos, vel, q, w, n_ctrl=n_ctrl)
 
     # The port's own hold on the gain-schedule measurements: 5 ms, at trim speed.
     delay = (
         simulate._MeasurementDelay(float(np.linalg.norm(vel)))
-        if controller == "gain_schedule"
+        if mode == "gain_schedule"
         else None
     )
     steps = list(body["steps"])
@@ -347,7 +372,7 @@ def run_scenario(
     stop_reason = None
     try:
         solution = ode45(
-            lambda t, y: _rhs(t, y, n_act, n_ctrl, controller, steps, delay),
+            lambda t, y: _rhs(t, y, n_act, n_ctrl, mode, steps, delay),
             (0.0, duration),
             y0,
             rtol=rtol,
@@ -372,7 +397,7 @@ def run_scenario(
         stop_reason = f"integrator: {exc}"
 
     return _columns(
-        controller, result_t, result_y, n_act, n_ctrl, steps, stopped_at, stop_reason
+        mode, result_t, result_y, n_act, n_ctrl, steps, stopped_at, stop_reason
     )
 
 
@@ -381,7 +406,7 @@ def _rhs(
     y: np.ndarray,
     n_act: int,
     n_ctrl: int,
-    controller: str,
+    mode: str,
     steps: list,
     delay,
 ) -> np.ndarray:
@@ -393,17 +418,19 @@ def _rhs(
     of steps and the demand is a function of `t`. Everything else is the port's
     own sequence, unchanged and in the port's order: split, sample the plant,
     hold the gain-schedule measurements for 5 ms, ask the controller, drive the
-    seven actuators, concatenate. The `plant` controller takes the port's
-    `_plant_rhs` with the diagram's manual-switch constant.
+    seven actuators, concatenate. The `open_loop` input mode takes the port's
+    `_plant_rhs` with the diagram's manual-switch constant, which is why the
+    scenario demand cannot reach it: every scenario ends at the same instant on
+    that mode.
     """
-    if controller == _PLANT:
+    if mode == _OPEN_LOOP:
         return simulate._plant_rhs(t, y, n_act, simulate._PLANT_COMMAND, None)
     pos, vel, q, w, act, ctrl = simulate._split(y, n_act, n_ctrl)
     qn, _surf, rates, measured = simulate._plant_sample(float(t), pos, vel, q, w, act)
     if delay is not None:
         delay.record(float(t), measured, q_to_body_321(qn))
         measured = simulate._held_measurement(delay, float(t), measured)
-    command, dots = _module(controller).surface(
+    command, dots = _module(mode).surface(
         float(t), measured, command_at(steps, t), ctrl
     )
     act_dot = actuators.derivative(ActuatorState(x=act), command)
@@ -412,8 +439,8 @@ def _rhs(
     )
 
 
-def _module(controller: str):
-    return gain_schedule if controller == "gain_schedule" else ndi
+def _module(mode: str):
+    return gain_schedule if mode == "gain_schedule" else ndi
 
 
 def _grid(t0: float, t1: float, step: float) -> np.ndarray:
@@ -428,7 +455,7 @@ def _grid(t0: float, t1: float, step: float) -> np.ndarray:
 
 
 def _columns(
-    controller: str,
+    mode: str,
     times: np.ndarray,
     states: np.ndarray,
     n_act: int,
@@ -440,7 +467,7 @@ def _columns(
     n = int(times.size)
     out = {
         "t": np.asarray(times, dtype=float).reshape(-1).copy(),
-        "controller": controller,
+        "mode": mode,
         "stopped_at": stopped_at,
         "stop_reason": stop_reason,
     }
@@ -473,7 +500,7 @@ def _columns(
             None,
         )
         measured = simulate._measured(q_n, v, w, surface, rates)
-        command = _command(controller, float(times[index]), measured, ctrl, steps)
+        command = _command(mode, float(times[index]), measured, ctrl, steps)
         pos[index] = p
         vel[index] = v
         euler[index] = q_to_body_321(q_n)
@@ -543,15 +570,13 @@ def _vector(body: dict, name: str, size: int) -> np.ndarray:
     return vector
 
 
-def _command(controller: str, t: float, measured: dict, ctrl: np.ndarray, steps: list) -> object:
+def _command(mode: str, t: float, measured: dict, ctrl: np.ndarray, steps: list) -> object:
     """The surface command at one sample, on the same seam the RHS used.
 
-    The `plant` controller has none: the port's diagram feeds its manual switch
-    a fixed canard, so the command is that constant for every sample.
+    The `open_loop` input mode has none: the port's diagram feeds its manual
+    switch a fixed canard, so the command is that constant for every sample.
     """
-    if controller == _PLANT:
+    if mode == _OPEN_LOOP:
         return simulate._PLANT_COMMAND
-    command, _dots = _module(controller).surface(
-        t, measured, command_at(steps, t), ctrl
-    )
+    command, _dots = _module(mode).surface(t, measured, command_at(steps, t), ctrl)
     return command

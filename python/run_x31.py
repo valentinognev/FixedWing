@@ -6,8 +6,16 @@ after the LQR. Which controller drives which plane is stated, not inferred:
 `host_controllers.CONTROLLERS` pairs them, `--controller` names one, and asking
 for a controller that is not the plane's own exits 2 rather than substituting
 one. The F-16 keeps its LQR over four channels; the X-31 runs the port's
-nonlinear gain schedule, its nonlinear dynamic inversion, or the plant on the
-diagram's manual switch, over seven channels.
+nonlinear gain schedule or its nonlinear dynamic inversion over seven channels.
+
+`--open-loop` is not a third controller and is not in that table. It is the
+port's Simulink Manual Switch: a constant open-loop input to the plant with no
+measurement, no feedback and no integrator, kept in
+`host_controllers.INPUT_MODES` under the honest name `open_loop`. It is
+runnable because it is a real baseline, and it is named apart because
+`CONTROLLERS` is where a user looks to see what controllers exist. `--controller
+open_loop` is therefore a refusal that points here, and giving both `--controller`
+and `--open-loop` is a refusal too.
 
 On the CSV shape: the F-16's header stops at `mode` and carries no control
 column at all, so `run_f16.py` leaves all four of its channels — elevator,
@@ -40,7 +48,7 @@ if str(_PY) not in sys.path:
 
 import numpy as np
 
-from host_controllers import control_channels, resolve_controller
+from host_controllers import control_channels, input_modes_for, resolve_mode
 from x31_sim import (
     PlaneDataError,
     column_name,
@@ -106,7 +114,7 @@ def write_csv(path: Path, out: dict) -> int:
         count = 0
         for index in range(int(out["t"].size)):
             row = [out[name][index] for name in _STATE_COLUMNS]
-            row.append(out["controller"])
+            row.append(out["mode"])
             row.extend(float(out[name][index]) for name in columns[len(_STATE_HEADER) :])
             writer.writerow(row)
             count += 1
@@ -136,16 +144,28 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Host-only X-31 runner (NED-metre CSV)")
     parser.add_argument("--data", default=str(plane_data_path()))
     parser.add_argument("--maneuver", default=None, help="scenario from the x31 data file")
-    parser.add_argument("--controller", default=None, help="gain_schedule, ndi, or plant")
+    parser.add_argument("--controller", default=None, help="gain_schedule or ndi")
+    parser.add_argument(
+        "--open-loop",
+        action="store_true",
+        help="fly the port's Manual Switch constant instead of a controller "
+        "(not a controller: no loop, no integrator)",
+    )
     parser.add_argument("--duration", type=float, default=None)
     parser.add_argument("--step", type=float, default=_DEFAULT_STEP)
     parser.add_argument("--csv", default=None)
     args = parser.parse_args(argv)
 
     try:
-        resolved = resolve_controller(_PLANE, args.controller)
+        resolved = resolve_mode(_PLANE, args.controller, open_loop=args.open_loop)
     except ValueError as exc:
-        _die(f"bad controller: {exc}")
+        label = "bad open-loop request" if args.open_loop else "bad controller"
+        hint = ""
+        if not args.open_loop and input_modes_for(_PLANE):
+            # The open-loop input is not a controller, so `--controller` cannot
+            # reach it. Say which flag does rather than leaving it to be guessed.
+            hint = f"; use --open-loop for the {'/'.join(input_modes_for(_PLANE))} input mode"
+        _die(f"{label}: {exc}{hint}")
 
     try:
         payload = load_plane(args.data)
@@ -178,7 +198,8 @@ def main(argv: list[str] | None = None) -> int:
 
     target = csv_path(args.csv)
     rows = write_csv(target, out)
-    print(f"controller {resolved} on plane {_PLANE}: {args.maneuver} "
+    kind = "input mode" if args.open_loop else "controller"
+    print(f"{kind} {resolved} on plane {_PLANE}: {args.maneuver} "
           f"({len(control_channels(_PLANE))} channels), data duration {body['duration_s']:g} s")
     _report(out)
     if out["stopped_at"] is not None and rows == 0:

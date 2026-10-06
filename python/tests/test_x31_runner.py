@@ -102,6 +102,25 @@ class TestRunnerCsv(unittest.TestCase):
                 mode = rows[0].index("mode")
                 self.assertEqual({row[mode] for row in rows[1:]}, {controller})
 
+    def test_the_open_loop_input_mode_is_its_own_flag_not_a_controller(self):
+        rows = self._run_to_csv("--maneuver", "trim_hold", "--duration", "0.5", "--open-loop")
+        mode = rows[0].index("mode")
+        self.assertEqual({row[mode] for row in rows[1:]}, {"open_loop"})
+        for name in ("plant", "open_loop"):
+            with self.subTest(controller=name):
+                result = _run(
+                    "--maneuver", "trim_hold", "--duration", "0.5",
+                    "--controller", name, expect=2,
+                )
+                self.assertIn("--open-loop", result.stderr)
+
+    def test_both_a_controller_and_the_open_loop_flag_is_refused(self):
+        result = _run(
+            "--maneuver", "trim_hold", "--controller", "ndi", "--open-loop", expect=2
+        )
+        self.assertIn("open_loop", result.stderr)
+        self.assertIn("ndi", result.stderr)
+
     def test_the_first_row_is_the_data_files_trim_point_offset_by_its_spawn(self):
         rows = self._run_to_csv("--maneuver", "trim_hold", "--duration", "0.2")
         index = {name: position for position, name in enumerate(rows[0])}
@@ -204,7 +223,10 @@ class TestRunnerDefaults(unittest.TestCase):
 
     def test_help_lists_the_runner_flags(self):
         result = _run("--help")
-        for flag in ("--data", "--maneuver", "--controller", "--duration", "--step", "--csv"):
+        for flag in (
+            "--data", "--maneuver", "--controller", "--open-loop",
+            "--duration", "--step", "--csv",
+        ):
             self.assertIn(flag, result.stdout)
 
 

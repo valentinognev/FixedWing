@@ -20,11 +20,14 @@ import numpy as np
 from host_controllers import (  # noqa: E402
     CONTROLLERS,
     DEFAULT_CONTROLLER,
+    INPUT_MODES,
     control_channels,
     controllers_for,
     default_controller,
+    input_modes_for,
     planes,
     resolve_controller,
+    resolve_mode,
 )
 import x31_sim  # noqa: E402
 from x31_sim import (  # noqa: E402
@@ -223,15 +226,73 @@ class TestPlaneData(unittest.TestCase):
             _validated_copy(lambda payload: payload.__setitem__("plane", "f16"))
 
 
-
 class TestControllerDispatch(unittest.TestCase):
     """Which controller drives which plane is stated, not inferred."""
-
 
     def test_the_table_names_both_planes_and_their_controllers(self):
         self.assertEqual(set(planes()), {"f16", "x31"})
         self.assertEqual(controllers_for("f16"), ("lqr",))
-        self.assertEqual(controllers_for("x31"), ("gain_schedule", "ndi", "plant"))
+        self.assertEqual(controllers_for("x31"), ("gain_schedule", "ndi"))
+
+    def test_the_open_loop_input_is_not_a_controller(self):
+        # It is not a controller and must never be listed as one: `CONTROLLERS`
+        # is the one place a user looks to see what controllers exist, and the
+        # captain's intent was "another controller". What it actually is is the
+        # port's Simulink Manual Switch -- a constant open-loop input to the
+        # plant, with no measurement, no feedback and no integrator -- so it
+        # lives in `INPUT_MODES` under the honest name `open_loop`.
+        for plane in planes():
+            with self.subTest(plane=plane):
+                self.assertNotIn("plant", controllers_for(plane))
+                self.assertNotIn("open_loop", controllers_for(plane))
+        self.assertNotIn("plant", DEFAULT_CONTROLLER.values())
+        with self.assertRaises(ValueError):
+            resolve_controller("x31", "plant")
+        with self.assertRaises(ValueError):
+            resolve_controller("x31", "open_loop")
+
+    def test_the_open_loop_input_mode_is_named_and_separate(self):
+        self.assertEqual(input_modes_for("x31"), ("open_loop",))
+        self.assertEqual(input_modes_for("f16"), ())
+        self.assertEqual(resolve_mode("x31"), default_controller("x31"))
+        self.assertEqual(resolve_mode("x31", open_loop=True), "open_loop")
+        self.assertEqual(resolve_mode("x31", "ndi"), "ndi")
+        with self.assertRaises(ValueError) as caught:
+            resolve_mode("x31", "ndi", open_loop=True)
+        self.assertIn("ndi", str(caught.exception))
+        self.assertIn("open_loop", str(caught.exception))
+        with self.assertRaises(ValueError):
+            resolve_mode("f16", open_loop=True)
+
+    def test_the_two_namespaces_agree_on_planes_and_never_overlap(self):
+        self.assertEqual(set(CONTROLLERS), set(INPUT_MODES))
+        for plane in planes():
+            with self.subTest(plane=plane):
+                self.assertEqual(
+                    set(controllers_for(plane)) & set(input_modes_for(plane)), set()
+                )
+        # Derived from the tables, so adding a name to one that is also in the
+        # other fails here rather than in a user's reading of the dispatch.
+        controllers = {name for row in CONTROLLERS.values() for name in row}
+        modes = {name for row in INPUT_MODES.values() for name in row}
+        self.assertEqual(controllers & modes, set())
+
+    def test_the_open_loop_input_is_the_ports_own_manual_switch(self):
+        # Not an assertion about intent: the port's own name for it, and the
+        # fact that the demand cannot reach it. `_plant_rhs` is handed
+        # `_PLANT_COMMAND` and never reads the scenario, which is why every
+        # scenario stops at the same instant on this mode.
+        import x31_numpy_compat  # noqa: F401
+        from x31 import simulate
+
+        self.assertTrue(simulate._PLANT_COMMAND)
+        import inspect
+
+        source = inspect.getsource(simulate._plant_rhs)
+        self.assertNotIn("command_slow", source)
+        self.assertNotIn("measured", source)
+
+
 
 
     def test_each_plane_has_one_unambiguous_default(self):
@@ -252,7 +313,7 @@ class TestControllerDispatch(unittest.TestCase):
 
 
     def test_asking_the_f16_for_an_x31_controller_is_refused(self):
-        for controller in ("gain_schedule", "ndi", "plant"):
+        for controller in ("gain_schedule", "ndi", "open_loop", "plant"):
             with self.subTest(controller=controller):
                 with self.assertRaises(ValueError):
                     resolve_controller("f16", controller)
@@ -427,14 +488,19 @@ class TestPlantLoadsAndSteps(unittest.TestCase):
 
         self.assertEqual(controller_states("gain_schedule"), len(gain_schedule._STATES))
         self.assertEqual(controller_states("ndi"), len(ndi._INTEGRATORS))
-        self.assertEqual(controller_states("plant"), 0)
+        self.assertEqual(controller_states("open_loop"), 0)
         self.assertEqual(controller_states("gain_schedule"), 15)
         self.assertEqual(controller_states("ndi"), 11)
 
 
-    def test_an_unknown_controller_is_refused(self):
-        with self.assertRaises(ValueError):
-            controller_states("lqr")
+    def test_an_unknown_or_demoted_mode_is_refused(self):
+        for mode in ("lqr", "plant", "pid"):
+            with self.subTest(mode=mode):
+                with self.assertRaises(ValueError):
+                    controller_states(mode)
+
+    def test_the_open_loop_mode_integrates_nothing(self):
+        self.assertEqual(controller_states("open_loop"), 0)
 
 
 class TestCommandSchedule(unittest.TestCase):
@@ -692,13 +758,11 @@ class TestShortClosedLoop(unittest.TestCase):
 
     def test_every_scenario_holds_all_seven_channels_and_stays_finite(self):
         for name in scenarios(self.payload):
-            for controller in ("gain_schedule", "ndi", "plant"):
-                if controller == "gain_schedule" and name != "trim_hold":
+            for mode in ("gain_schedule", "ndi", "open_loop"):
+                if mode == "gain_schedule" and name != "trim_hold":
                     continue  # the other scenarios are covered by the runner tests
-                with self.subTest(scenario=name, controller=controller):
-                    out = run_scenario(
-                        controller, self.payload, name, duration=0.5
-                    )
+                with self.subTest(scenario=name, mode=mode):
+                    out = run_scenario(mode, self.payload, name, duration=0.5)
                     for surface in surfaces():
                         for command in (True, False):
                             column = out[column_name(surface, command)]
@@ -744,8 +808,8 @@ class TestShortClosedLoop(unittest.TestCase):
             self.assertIn(column_name(surface, False), columns)
 
 
-    def test_the_uncontrolled_plant_reports_the_diagrams_angle_limit(self):
-        out = run_scenario("plant", self.payload, "trim_hold", duration=10.0)
+    def test_the_open_loop_input_reports_the_diagrams_angle_limit(self):
+        out = run_scenario("open_loop", self.payload, "trim_hold", duration=10.0)
         self.assertIsNotNone(out["stopped_at"])
         self.assertIn("85 degree", out["stop_reason"])
         self.assertLess(out["stopped_at"], out["t"][-1] + 1e-9)
