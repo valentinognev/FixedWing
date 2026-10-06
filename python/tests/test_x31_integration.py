@@ -783,6 +783,70 @@ class TestShortClosedLoop(unittest.TestCase):
         )
 
 
+    def test_the_logged_command_is_the_command_the_plant_was_driven_with(self):
+        # The port holds the gain-schedule measurements for 5 ms before the
+        # controller sees them, and it logs the command it computes from that
+        # same held measurement (`simulate.simulate` hands `_plant_channels`
+        # `_held_measurement(delay, t, meas)`). A logging pass that handed the
+        # controller the instantaneous measurement instead would write a
+        # command into every `*_cmd_*` cell that never flew, so the whole
+        # column is re-derived here from the port's own helpers and compared
+        # sample by sample.
+        from unittest import mock
+
+        from x31 import actuators as port_actuators
+        from x31 import gain_schedule as port_gain_schedule
+        from x31 import simulate as port_simulate
+
+        delays = []
+        held_cls = port_simulate._MeasurementDelay
+
+        class _KeepTheHold(held_cls):
+            def __init__(self, speed):
+                super().__init__(speed)
+                delays.append(self)
+
+        real_ode45 = x31_sim.ode45
+        flown = {}
+
+        def _spy(*args, **kwargs):
+            solution = real_ode45(*args, **kwargs)
+            flown["t"] = solution.t.copy()
+            flown["y"] = solution.y.copy()
+            return solution
+
+        with mock.patch.object(port_simulate, "_MeasurementDelay", _KeepTheHold):
+            with mock.patch.object(x31_sim, "ode45", _spy):
+                out = run_scenario(
+                    "gain_schedule", self.payload, "trim_hold", duration=1.0
+                )
+
+        self.assertEqual(len(delays), 1)
+        delay = delays[0]
+        n_act = int(port_actuators.initial_state().x.size)
+        n_ctrl = controller_states("gain_schedule")
+        steps = list(scenario(self.payload, "trim_hold")["steps"])
+        for index, t in enumerate(flown["t"]):
+            pos, vel, q, w, act, ctrl = port_simulate._split(
+                flown["y"][index], n_act, n_ctrl
+            )
+            _qn, _surf, _rates, measured = port_simulate._plant_sample(
+                float(t), pos, vel, q, w, act
+            )
+            held = port_simulate._held_measurement(delay, float(t), measured)
+            command, _dots = port_gain_schedule.surface(
+                float(t), held, command_at(steps, float(t)), ctrl
+            )
+            for name in surfaces():
+                with self.subTest(t=float(t), channel=name):
+                    self.assertAlmostEqual(
+                        float(out[column_name(name, True)][index]),
+                        float(getattr(command, name)),
+                        places=9,
+                        msg=f"{name} at t={float(t):g} is not the command the plant saw",
+                    )
+
+
     def test_the_commanded_and_flown_surfaces_are_separate_columns(self):
         # The actuator dynamics lag the command, so canard and thrust cannot be
         # the same numbers twice. Aileron, flap, rudder and thrust-yaw stay at

@@ -34,10 +34,10 @@ Two facts about that reuse are load-bearing and worth stating plainly:
 
 Private port helpers are used deliberately, so this module is pinned to the
 vendored commit rather than to the port's public surface:
-`simulate._pack` / `_split` / `_closed_rhs` / `_measured` / `_MeasurementDelay` /
-`_ZERO`, `gain_schedule._STATES`, and `ndi._INTEGRATORS`. Reimplementing any of
-them here would be a second copy of measured physics, which is the one thing
-that must not happen to a vendored port.
+`simulate._pack` / `_split` / `_closed_rhs` / `_measured` / `_held_measurement` /
+`_MeasurementDelay` / `_ZERO`, `gain_schedule._STATES`, and `ndi._INTEGRATORS`.
+Reimplementing any of them here would be a second copy of measured physics,
+which is the one thing that must not happen to a vendored port.
 
 Frames and units are the port's own: earth NED with +z down, body FRD, metres,
 metres per second, radians, degrees for the surfaces and kN for the throttle.
@@ -337,9 +337,10 @@ def run_scenario(
     aerodynamic angles, 3-2-1 attitude, the seven actuator outputs, and the
     seven commands that drove them. `spawn` defaults to the data file's
     declared spawn and an explicit one overrides it. `stopped_at` and
-    `stop_reason` are set only when the port's 85 deg alpha / 80 deg beta
-    diagram limit ended the run; a run that reaches its duration leaves them
-    None.
+    `stop_reason` are set only when the run ended early, which is either the
+    port's 85 deg alpha / 80 deg beta diagram limit or, with an "integrator: "
+    reason, a tolerance the integrator could not meet; a run that reaches its
+    duration leaves them None.
     """
     mode = (
         resolve_mode(_PLANE, open_loop=True)
@@ -397,7 +398,7 @@ def run_scenario(
         stop_reason = f"integrator: {exc}"
 
     return _columns(
-        mode, result_t, result_y, n_act, n_ctrl, steps, stopped_at, stop_reason
+        mode, result_t, result_y, n_act, n_ctrl, steps, delay, stopped_at, stop_reason
     )
 
 
@@ -461,6 +462,7 @@ def _columns(
     n_act: int,
     n_ctrl: int,
     steps: list,
+    delay,
     stopped_at: float | None,
     stop_reason: str | None,
 ) -> dict:
@@ -500,7 +502,7 @@ def _columns(
             None,
         )
         measured = simulate._measured(q_n, v, w, surface, rates)
-        command = _command(mode, float(times[index]), measured, ctrl, steps)
+        command = _command(mode, float(times[index]), measured, ctrl, steps, delay)
         pos[index] = p
         vel[index] = v
         euler[index] = q_to_body_321(q_n)
@@ -570,13 +572,24 @@ def _vector(body: dict, name: str, size: int) -> np.ndarray:
     return vector
 
 
-def _command(mode: str, t: float, measured: dict, ctrl: np.ndarray, steps: list) -> object:
+def _command(
+    mode: str, t: float, measured: dict, ctrl: np.ndarray, steps: list, delay
+) -> object:
     """The surface command at one sample, on the same seam the RHS used.
 
     The `open_loop` input mode has none: the port's diagram feeds its manual
     switch a fixed canard, so the command is that constant for every sample.
+
+    `delay` is the 5 ms hold the RHS recorded into, read here on the logging
+    pass rather than on the integration seam: `simulate.simulate` hands its own
+    `_plant_channels` the very same `_held_measurement(delay, t, meas)`, and a
+    transport delay only reads samples at or before `t - 5 ms`, so reading the
+    finished history reproduces what the controller was given. The unheld
+    `measured` stays the source of the `vt_mps` / `alpha` / `beta` columns,
+    which the port also logs from the instantaneous sample.
     """
     if mode == _OPEN_LOOP:
         return simulate._PLANT_COMMAND
-    command, _dots = _module(mode).surface(t, measured, command_at(steps, t), ctrl)
+    held = simulate._held_measurement(delay, t, measured)
+    command, _dots = _module(mode).surface(t, held, command_at(steps, t), ctrl)
     return command
