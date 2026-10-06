@@ -240,15 +240,18 @@ in the file rather than left to a reader to rediscover.  Its twelve
 ``CLa``/``Cma`` are polar OLS slopes that *do* follow beta; we fly beta = 0, so
 nothing is wrong today.  And its ``Clb`` is **mesh-dependent to the point of
 inverting sign**: -0.0736 at ``("5","3")``, **+0.0018** at ``("10","5")``, -0.0530 at
-``("10","10")``, -0.0593 at ``("20","10")``, against AVL's -0.045756.  The positive
+``("10","10")`` and -0.0593 at ``("20","10")``.  Those are flow5's own numbers, and
+the other runs' ``Clb`` is not quoted beside them: a comparison between runs is
+something each file's own ``provenance`` records, not a fact this docstring can hold
+still.  The positive
 value at ``("10","5")`` would pass a sign-only invariant table while being badly
 wrong, which is why ``FLOW5_MESH`` is pinned by a test rather than left to a comment.
 
 Rate derivatives and the flight condition
 -----------------------------------------
-The nine genuinely per-``p-hat`` / per-``q-hat`` / per-``r-hat`` slots
-(``cyp[0]``, ``cyr[0]``, ``czq[0]``, ``cmq[0]``, ``clp[0]``, ``clr[0]``,
-``cnp[0]``, ``cnr[0]``, ``cxq[0]``) are **not rescaled**, exactly as
+The slots in ``RATE_DERIVATIVE_FIELDS`` -- the genuinely per-``p-hat`` / per-``q-hat`` /
+per-``r-hat`` ones (``cyp[0]``, ``cyr[0]``, ``czq[0]``, ``cmq[0]``, ``clp[0]``,
+``clr[0]``, ``cnp[0]``, ``cnr[0]``, ``cxq[0]``) -- are **not rescaled**, exactly as
 ``tornado.jsonc`` records: the plan fixes the flight condition from the source
 ``AERO`` and calls rescaling a physics decision for a later task.  ``cy[1]`` and
 ``cy[2]`` are not in that list -- they are per radian of CONTROL DEFLECTION.
@@ -392,6 +395,16 @@ _CROSS_CHECK_RUNNERS = {"datcom": "datcom_run", "avl": "avl_run", "flow5": "flow
 LBF_PER_KG = 2.2046226
 PLAN_STANDARD_GRAVITY_FT_S2 = 32.0
 
+# The full-scale aeroplane the source planform is compared against in item 2 of every
+# generated header.  Named here rather than typed into five copies of that item, because
+# the comparison is a quotient -- the model's wing loading over its own wing area against
+# 2300 lbf over 174 ft^2 -- and a typed pair of figures cannot be re-derived from
+# anything.
+REAL_C172_WEIGHT_LBF = 2300.0
+REAL_C172_SPAN_FT = 36.1
+REAL_C172_CHORD_FT = 4.89
+REAL_C172_AREA_FT2 = 174.0
+
 
 def source_mass_kg(aero: dict) -> float:
     """``mass_kg`` from the source's ``AERO.WT``, on the plan's ``g = 32.0 ft/s^2``.
@@ -406,6 +419,29 @@ def source_mass_kg(aero: dict) -> float:
     """
     weight_lbf = float(_first(aero["WT"])) * PLAN_STANDARD_GRAVITY_FT_S2
     return math.floor(weight_lbf / LBF_PER_KG * 1000.0) / 1000.0
+
+
+def _plan_mass_shortfall_percent(geometry: Geometry) -> float:
+    """How far the plan's truncated mass sits below the source's own slug conversion.
+
+    One expression for the percentage item 3 of every header states and both
+    ``provenance.mass`` notes quote, because the four Cessna files derive the same
+    number and must not reach it by four different routes.
+    """
+    slug_conversion_kg = geometry.weight_slug * SLUG_TO_KG
+    return 100.0 * (slug_conversion_kg - geometry.mass_kg) / slug_conversion_kg
+
+
+def _wing_loading_psf(weight_slug: float, wing_area_ft2: float) -> float:
+    """Wing loading in lbf/ft^2, on the PLAN's gravity rather than the source's.
+
+    ``AERO.WT`` slugs times ``PLAN_STANDARD_GRAVITY_FT_S2`` over the wing planform's
+    own area.  The gravity is the plan's 32.0, not the source's 32.174, for the reason
+    ``_plan_mass_shortfall_percent`` states: the weight item 3 already derived the mass
+    from is on 32.0, and mixing the two inflates this figure by exactly the discrepancy
+    item 3 reports.
+    """
+    return weight_slug * PLAN_STANDARD_GRAVITY_FT_S2 / wing_area_ft2
 
 
 # Radius-of-gyration rules of thumb, per the plan's "Mass, inertia, thrust, and
@@ -1403,7 +1439,7 @@ def tornado_run(source: Path | None = None) -> TornadoRun:
                 f"{LBF_PER_KG} lbf/kg, i.e. it assumes a standard gravity of "
                 f"{PLAN_STANDARD_GRAVITY_FT_S2} ft/s^2.  That figure appears nowhere "
                 f"in the source (G_FT_S2 = {G_FT_S2} here), so the plan is "
-                f"{100.0 * (geometry.weight_slug * SLUG_TO_KG - geometry.mass_kg) / (geometry.weight_slug * SLUG_TO_KG):.2f} % "
+                f"{_plan_mass_shortfall_percent(geometry):.2f} % "
                 "low.  The plan's number ships because its approved design fixes it "
                 "and plan test 6 pins it verbatim in this file's header; weight, "
                 "trim qbar, V and t_max_n are therefore all that much low."
@@ -1506,12 +1542,22 @@ def _radii(geometry: Geometry) -> tuple[float, float, float]:
 # instead of by hand.  cm0 is the one field SIGN_INVARIANTS deliberately omits.
 ALL_DERIVATIVE_FIELDS = tuple(SIGN_INVARIANTS) + ("cm0",)
 
+# The fields every solver quotes per p*b/(2V), q*cbar/(2V) or r*b/(2V): the only
+# slots a flight-condition speed touches, and so the only ones the rate-derivative
+# caveat is about.  Named ONCE here because four separate places used to state how
+# many there are -- a header in each of two builders, the note below, and flow5's
+# item 1 -- and each carried its own copy of the number.
+RATE_DERIVATIVE_FIELDS = (
+    "cy_p", "cy_r", "cl_q", "cm_q", "cl_p", "cl_r", "cn_p", "cn_r", "cd_q",
+)
+
 
 def _rate_derivative_note(geometry: Geometry, trim_block: dict, source_speed_mps: float) -> str:
     """The flight-condition caveat on every per-p-hat / per-q-hat / per-r-hat slot.
 
-    Nine slots are genuinely rates: ``cyp[0]``, ``cyr[0]``, ``czq[0]``,
-    ``cmq[0]``, ``clp[0]``, ``clr[0]``, ``cnp[0]``, ``cnr[0]``, ``cxq[0]``.  All
+    The slots that are genuinely rates are ``RATE_DERIVATIVE_FIELDS`` (``cyp[0]``,
+    ``cyr[0]``, ``czq[0]``, ``cmq[0]``, ``clp[0]``, ``clr[0]``, ``cnp[0]``,
+    ``cnr[0]``, ``cxq[0]``).  All
     three solvers quote them per ``p*b/(2V)``, ``q*cbar/(2V)`` or ``r*b/(2V)`` at
     the SOURCE Mach-0.03 condition, while ``f16/aero_morelli.py`` forms ``phat``
     at the model's own speed.  The result is that the model's rate damping is
@@ -1534,7 +1580,8 @@ def _rate_derivative_note(geometry: Geometry, trim_block: dict, source_speed_mps
         f"p*b/(2V), q*cbar/(2V) or r*b/(2V) at the SOURCE Mach-0.03 speed V = "
         f"{source_speed_mps:.4f} m/s, while f16/aero_morelli.py forms phat = p*b_m/(2*V) at the "
         f"trimmed cruise V = {v_trim:.4f} m/s.  Restoring the solver's physical dC/dq would "
-        f"mean multiplying the nine per-hat slots by V_trim/V_source = "
+        f"mean multiplying the {len(RATE_DERIVATIVE_FIELDS)} per-hat slots by"
+        " V_trim/V_source = "
         f"{v_trim / source_speed_mps:.5f}, because czq[0]*cbar/(2*V_trim) must equal "
         f"CL_q*cbar/(2*V_source); the model's rate-damping terms are that much weaker than the "
         f"solver implies.  Note the plan writes that factor as AS_source/V_trim, which is the "
@@ -1684,7 +1731,8 @@ def _mass_provenance(geometry: Geometry) -> dict[str, Any]:
             f"{geometry.mass_kg} kg, which is AERO.WT * {PLAN_STANDARD_GRAVITY_FT_S2} ft/s^2 "
             f"over {LBF_PER_KG} lbf/kg, i.e. it assumes a standard gravity of "
             f"{PLAN_STANDARD_GRAVITY_FT_S2} ft/s^2.  That figure appears nowhere in the source "
-            f"(G_FT_S2 = {G_FT_S2} here), so the plan is 0.54 % low.  The plan's number ships "
+            f"(G_FT_S2 = {G_FT_S2} here), so the plan is"
+            f" {_plan_mass_shortfall_percent(geometry):.2f} % low.  The plan's number ships "
             "because its approved design fixes it and plan test 6 pins it verbatim in the "
             "header; weight, trim qbar, V and t_max_n are therefore all that much low.  All "
             "four Cessna files derive it the same way, so they are consistent with each other"
@@ -3785,14 +3833,6 @@ def _slot_lines(
             f"//   {entry['slot']:<9s} {entry['field']:<10s} {state:<14s} "
             f"{origin} -> mapped {mapped} -> written {value}"
         )
-    lines.append(
-        "//   every slot in plane.groups.nonlinear_index is exactly 0.0.  Among the LINEAR"
-        " slots, exactly one pair"
-    )
-    lines.append(
-        "//   is 0.0 for a reason of its own, and the flight model's two drag terms both"
-        " sit in it:"
-    )
     lines += _cx_mapping_gap_lines(run)
     lines.append(
         f"//    {zeroed_pointer} carries the same fact in full."
@@ -3821,6 +3861,30 @@ _POINTERS_GEOMETRY_RECORD = {
     "cd_q": "tornado.jsonc's provenance.cd_q_convention",
     "zeroed_slots": "tornado.jsonc's provenance.zeroed_slots.CD_alpha",
 }
+
+
+def _planform_scale_lines(run: TornadoRun | CrossCheckRun) -> list[str]:
+    """Item 2's 1/3-scale comparison, every figure in it derived from the run.
+
+    Both header builders print this item, so it is worded and computed ONCE.  The
+    wing-loading pair is the run's own weight over its own wing area against
+    ``REAL_C172_WEIGHT_LBF`` over ``REAL_C172_AREA_FT2``; typed, it was the one part of
+    either header whose numbers no longer followed from the weight the same header
+    derives in item 3.
+    """
+    geometry = run.geometry
+    wing_area_ft2 = float(run.raw["planform"]["wing"]["area_ft2"])
+    return [
+        "// 2. THE SOURCE PLANFORM IS A CESSNA 172 AT ROUGHLY 1/3 LINEAR SCALE",
+        f"//    span {geometry.b_ref_m / FT_TO_M:g} ft against a real"
+        f" {REAL_C172_SPAN_FT:g} ft, chord {geometry.c_ref_m / FT_TO_M:g} ft against"
+        f" {REAL_C172_CHORD_FT:g} ft, area {wing_area_ft2:g} ft^2",
+        f"//    against {REAL_C172_AREA_FT2:g} ft^2.  Wing loading is therefore"
+        f" {_wing_loading_psf(geometry.weight_slug, wing_area_ft2):.2f} lbf/ft^2"
+        " where a real C172 is",
+        f"//    {REAL_C172_WEIGHT_LBF / REAL_C172_AREA_FT2:.3g}."
+        "  Nothing in this file may be compared with a full-scale figure.",
+    ]
 
 
 def header_comment(
@@ -3880,10 +3944,7 @@ def header_comment(
         "//    the trimmed cruise speed the model actually flies at is in"
         f" {pointers['trim']}.",
         "//",
-        "// 2. THE SOURCE PLANFORM IS A CESSNA 172 AT ROUGHLY 1/3 LINEAR SCALE",
-        "//    span 12 ft against a real 36.1 ft, chord 2 ft against 4.89 ft, area 24 ft^2",
-        "//    against 174 ft^2.  Wing loading is therefore 6.70 lbf/ft^2 where a real C172 is",
-        "//    13.2.  Nothing in this file may be compared with a full-scale figure.",
+        *_planform_scale_lines(run),
         "//",
         "// 3. MASS",
         f"//    mass_kg = {geometry.mass_kg} is derived from the source's own"
@@ -3897,8 +3958,9 @@ def header_comment(
         f"  A slug is a mass unit, so the source's WT converts instead as",
         f"//    AERO.WT * SLUG_TO_KG = {geometry.weight_slug * SLUG_TO_KG:.5f} kg;"
         f" the plan's figure assumes g = {PLAN_STANDARD_GRAVITY_FT_S2} ft/s^2, which",
-        f"//    appears nowhere in the source (its own G_FT_S2 is {G_FT_S2}), so the plan"
-        " is 0.54 % low and everything derived from the weight is too.",
+        f"//    appears nowhere in the source (its own G_FT_S2 is {G_FT_S2}), so the plan is"
+        f" {_plan_mass_shortfall_percent(geometry):.2f} % low and everything derived from"
+        " the weight is too.",
         "//    This is NOT a geometrically similar 1/3 scale C172,",
         "//    which would weigh about 53.5 kg, so no scaling of a published full-scale number"
         " is self-",
@@ -3995,8 +4057,9 @@ def header_comment(
         "//    final authority, and each is a slot whose SIGN the two in-tree reference files",
         "//    disagree on.  cm0 carries no invariant and is recorded as not-normalised.",
         "//",
-        "//    A CAVEAT on the NINE genuinely per-phat / per-qhat / per-rhat slots:",
-        "//    cyp[0], cyr[0], czq[0], cmq[0], clp[0], clr[0], cnp[0], cnr[0], cxq[0].",
+        f"//    A CAVEAT on the {len(RATE_DERIVATIVE_FIELDS)} genuinely per-phat / per-qhat /"
+ " per-rhat slots:",
+        f"//    {', '.join(FIELD_SLOT[name] for name in RATE_DERIVATIVE_FIELDS)}.",
         "//    cy[1] and cy[2] are NOT in that list: they are cy_da and cy_dr, the",
         "//    aileron and rudder side force per radian of CONTROL DEFLECTION, which no",
         "//    flight-condition speed touches.  Inherited from the flight condition and",
@@ -4217,13 +4280,6 @@ def cross_check_header(
             "//    provenance.missing so this list cannot go stale against the slot table"
             " below:",
             *_gap_lines(run),
-            "//    Nothing else is absent, but some LINEAR slots are 0.0 for a different"
-            " reason -- this",
-            "//    converter has no DerivativeSet field to map them into rather than a"
-            " solver declining",
-            "//    to produce them:",
-            *_cx_mapping_gap_lines(run),
-            "//    provenance.zeroed_slots.CD_alpha carries the same fact in full.",
         ]
     elif model == "avl":
         item1 = [
@@ -4342,18 +4398,16 @@ def cross_check_header(
             "//    this run's own mapping.",
         ]
         gaps = [
-            "//    NO SLOT IS DECLARED ABSENT: AVL produces all 25, including cnda[0] and"
-            " cy[1], which",
-            "//    DATCOM cannot, so provenance.missing is empty.  Some LINEAR slots outside"
-            " that set are",
-            "//    still 0.0, for a different reason -- this converter has no DerivativeSet"
-            " field to map them",
-            "//    into rather than AVL declining to produce them:",
-            *_cx_mapping_gap_lines(run),
-            "//    provenance.zeroed_slots.CD_alpha carries the same fact in full.",
+            f"//    NO SLOT IS DECLARED ABSENT: AVL produces all"
+            f" {len(ALL_DERIVATIVE_FIELDS)}, including cnda[0] and",
+            "//    cy[1], which DATCOM cannot, so provenance.missing is empty.",
             *_gap_lines(run),
         ]
     else:
+        coverage = run.provenance["coverage"]
+        produced = coverage["produced"]
+        rate_filled = [f for f in RATE_DERIVATIVE_FIELDS if f in coverage["produced"]]
+        rate_absent = [f for f in RATE_DERIVATIVE_FIELDS if f in coverage["absent"]]
         item1 = [
             "//    Solver: flow5, via aid.flow5_io.write_flow5_deck / run_flow5(ac, mesh) and",
             f"//    aid.flow5_controls.flow5_controls, from the sibling package imported from"
@@ -4371,7 +4425,7 @@ def cross_check_header(
             " though it is",
             "//    not in avl.jsonc (AVL keeps at most three surfaces).",
             f"//    The runner emits {len(run.raw['output_keys'])} keys and this file fills"
-            f" {len(run.provenance['coverage']['produced'])} of the 25 slots from them:",
+            f" {len(produced)} of the {len(ALL_DERIVATIVE_FIELDS)} slots from them:",
             f"//      {', '.join(run.raw['output_keys'])}",
             "//    The frame is settled in ONE call, aid.flow5_io.run_flow5, which is",
             "//    to_frd('flow5', run_flow5_native(...)).  Hand-applying the sign map would be",
@@ -4402,8 +4456,10 @@ def cross_check_header(
             f" {geometry.v_true_mps:.4f} really is {geometry.v_true_mps:.4f} m/s,",
             f"//    while the other two feed {SOURCE_SPEED_AS_REPORTED:.4f} into a FEET frame,"
             f" where it means {geometry.as_mps:.4f} m/s.",
-            "//    The rate factor is 1 for three of the four rate slots this file does have,",
-            "//    because flow5's StabDerivatives are per unit of p-hat / r-hat taken at the",
+            f"//    The rate factor is 1 for the {len(rate_filled)} rate slots this file does have"
+            f" ({', '.join(rate_filled)}), and the {len(rate_absent)} it does not",
+            f"//    ({', '.join(rate_absent)}) are the declared gaps above, because flow5's",
+            "//    StabDerivatives are per unit of p-hat / r-hat taken at the",
             "//    source speed and are NOT rescaled -- the same treatment as the other three",
             "//    files, for the same reason, and recorded the same way.",
         ]
@@ -4468,8 +4524,6 @@ def cross_check_header(
             "//    Every sign is decided mechanically by aero_convert.units.normalise_sign"
             " against SIGN_INVARIANTS.",
         ]
-        produced = run.provenance["coverage"]["produced"]
-        coverage = run.provenance["coverage"]
         gaps = [
             f"//    {len(run.provenance['missing'])} OF THE {len(ALL_DERIVATIVE_FIELDS)} SLOTS"
             " ARE ABSENT -- zeroed and declared",
@@ -4490,12 +4544,7 @@ def cross_check_header(
             " sideslip, rate",
             "//    and control coefficients are cross-checks too and not zeroed stand-ins.  The"
             f" {len(coverage['absent'])} absent",
-            "//    slots named above are the declared gaps, and they are not the whole of"
-            " what is zeroed:",
-            "//    some linear slots are 0.0 for the mapping reason below.",
-            *_cx_mapping_gap_lines(run),
-            "//    provenance.zeroed_slots.CD_alpha carries the same fact in full.  flow5 DOES"
-            " produce the",
+            "//    slots named above are the declared gaps, and flow5 DOES produce the",
             "//    elevator drag derivative (provenance.not_a_field.cd_de keeps it, and"
             " provenance.control_rows",
             "//    holds the row); it maps to nothing because that field does not exist.  It is"
@@ -4513,10 +4562,7 @@ def cross_check_header(
         "// 1. SOLVER, MESH, FLIGHT CONDITION",
         *item1,
         "//",
-        "// 2. THE SOURCE PLANFORM IS A CESSNA 172 AT ROUGHLY 1/3 LINEAR SCALE",
-        "//    span 12 ft against a real 36.1 ft, chord 2 ft against 4.89 ft, area 24 ft^2",
-        "//    against 174 ft^2.  Wing loading is therefore 6.70 lbf/ft^2 where a real C172 is",
-        "//    13.2.  Nothing in this file may be compared with a full-scale figure.",
+        *_planform_scale_lines(run),
         "//",
         "// 3. MASS",
         f"//    mass_kg = {geometry.mass_kg} is derived from the source's own"
@@ -4530,7 +4576,7 @@ def cross_check_header(
         f" {geometry.weight_slug * SLUG_TO_KG:.5f} kg; the plan's figure assumes"
         f" g = {PLAN_STANDARD_GRAVITY_FT_S2} ft/s^2, which",
         f"//    appears nowhere in the source (its own G_FT_S2 is {G_FT_S2}), so the plan is"
-        " 0.54 % low and",
+        f" {_plan_mass_shortfall_percent(geometry):.2f} % low and",
         "//    everything derived from the weight is too.",
         "//    This is NOT a geometrically similar 1/3 scale C172, which would weigh about"
         " 53.5 kg, so no",
@@ -4587,8 +4633,9 @@ def cross_check_header(
         " normalised against",
         "//    its invariant row) and `not-normalised` (cm0).",
         "//",
-        "//    A CAVEAT on the NINE genuinely per-phat / per-qhat / per-rhat slots:",
-        "//    cyp[0], cyr[0], czq[0], cmq[0], clp[0], clr[0], cnp[0], cnr[0], cxq[0].",
+        f"//    A CAVEAT on the {len(RATE_DERIVATIVE_FIELDS)} genuinely per-phat / per-qhat /"
+ " per-rhat slots:",
+        f"//    {', '.join(FIELD_SLOT[name] for name in RATE_DERIVATIVE_FIELDS)}.",
         *_wrap_note(condition["rate_derivative_note"]),
         "//    cy[1] and cy[2] are NOT in that list: they are cy_da and cy_dr, the aileron",        "//    and rudder side force per radian of CONTROL DEFLECTION, which no",
         "//    flight-condition speed touches.",

@@ -29,7 +29,7 @@
 //
 // 2. THE SOURCE PLANFORM IS A CESSNA 172 AT ROUGHLY 1/3 LINEAR SCALE
 //    span 12 ft against a real 36.1 ft, chord 2 ft against 4.89 ft, area 24 ft^2
-//    against 174 ft^2.  Wing loading is therefore 6.70 lbf/ft^2 where a real C172 is
+//    against 174 ft^2.  Wing loading is therefore 6.67 lbf/ft^2 where a real C172 is
 //    13.2.  Nothing in this file may be compared with a full-scale figure.
 //
 // 3. MASS
@@ -113,36 +113,25 @@
 //    all three are recorded: `missing` (field None, slot 0.0), `flipped` (sign normalised against
 //    its invariant row) and `not-normalised` (cm0).
 //
-//    A CAVEAT on the NINE genuinely per-phat / per-qhat / per-rhat slots:
+//    A CAVEAT on the 9 genuinely per-phat / per-qhat / per-rhat slots:
 //    cyp[0], cyr[0], czq[0], cmq[0], clp[0], clr[0], cnp[0], cnr[0], cxq[0].
 //      NOT rescaled, as in tornado.jsonc. This solver quotes every rate
 //      derivative per p*b/(2V), q*cbar/(2V) or r*b/(2V) at the SOURCE
 //      Mach-0.03 speed V = 3.1112 m/s, while f16/aero_morelli.py forms phat =
 //      p*b_m/(2*V) at the trimmed cruise V = 23.1144 m/s. Restoring the
-//      solver's physical dC/dq would mean multiplying the nine per-hat slots
-//      by V_trim/V_source = 7.42940, because czq[0]*cbar/(2*V_trim) must
-//      equal CL_q*cbar/(2*V_source); the model's rate-damping terms are that
-//      much weaker than the solver implies. Note the plan writes that factor
-//      as AS_source/V_trim, which is the INVERSE of the direction that
-//      restores dC/dq; nothing is rescaled here either way, so the question
-//      is only ever a note.
+//      solver's physical dC/dq would mean multiplying the 9 per-hat slots by
+//      V_trim/V_source = 7.42940, because czq[0]*cbar/(2*V_trim) must equal
+//      CL_q*cbar/(2*V_source); the model's rate-damping terms are that much
+//      weaker than the solver implies. Note the plan writes that factor as
+//      AS_source/V_trim, which is the INVERSE of the direction that restores
+//      dC/dq; nothing is rescaled here either way, so the question is only
+//      ever a note.
 //    cy[1] and cy[2] are NOT in that list: they are cy_da and cy_dr, the aileron
 //    and rudder side force per radian of CONTROL DEFLECTION, which no
 //    flight-condition speed touches.
 //
-//    NO SLOT IS DECLARED ABSENT: AVL produces all 25, including cnda[0] and cy[1], which
-//    DATCOM cannot, so provenance.missing is empty.  Some LINEAR slots outside that set are
-//    still 0.0, for a different reason -- this converter has no DerivativeSet field to map them
-//    into rather than AVL declining to produce them:
-//      cx[1] (CD_alpha) and cx[3] (CD_de) are real schema slots: LINEAR_INDEX
-//      lists cx's linear indexes as (0, 1, 3) and f16/aero_morelli.py
-//      evaluates Cx0 = cx[0] + cx[1]*alpha + ... + cx[3]*de, so the flight
-//      model reads both terms. They ship 0.0 because DerivativeSet has no
-//      field for either derivative and aero_convert/morelli.py's SLOT_MAP
-//      maps only ('cx', ((0, 'cd0'),)) -- a MAPPING gap, not a schema gap.
-//      The linear slots this file leaves at 0.0 without a provenance.missing
-//      entry are: cx[1] and cx[3]
-//    provenance.zeroed_slots.CD_alpha carries the same fact in full.
+//    NO SLOT IS DECLARED ABSENT: AVL produces all 25, including cnda[0] and
+//    cy[1], which DATCOM cannot, so provenance.missing is empty.
 //      (none: no field of this solver is zeroed and declared -- it produced a value
 //       for every one of them in the schema)
 
@@ -177,8 +166,6 @@
 //   cldr[0]   cl_dr      flipped        solver aid.avl_controls[rudder].Cl = -0.000876 -> mapped -0.0501911 -> written 0.0501911
 //   cy[2]     cy_dr      flipped        solver aid.avl_controls[rudder].CY = -0.006586 -> mapped -0.37735 -> written 0.37735
 //   cndr[0]   cn_dr      flipped        solver aid.avl_controls[rudder].Cn = 0.003556 -> mapped 0.203744 -> written -0.203744
-//   every slot in plane.groups.nonlinear_index is exactly 0.0.  Among the LINEAR slots, exactly one pair
-//   is 0.0 for a reason of its own, and the flight model's two drag terms both sit in it:
 //      cx[1] (CD_alpha) and cx[3] (CD_de) are real schema slots: LINEAR_INDEX
 //      lists cx's linear indexes as (0, 1, 3) and f16/aero_morelli.py
 //      evaluates Cx0 = cx[0] + cx[1]*alpha + ... + cx[3]*de, so the flight
@@ -413,7 +400,7 @@
       "a_sound_ftps": 1116.288876590643,
       "v_true_mps": 10.20734548754484,
       "speed_unit_note": "AID's drivers hand over `mach * atm['a'] / 3.28084` = 10.207345 and label it ft/s (Tornado, AVL), which is why v_source_mps is that number x 0.3048.  The same expression in SI -- which is what flow5's deck actually used -- is the physical speed 10.2073 m/s at a sound speed of 1116.2889 ft/s.  Both readings are recorded and neither is reconciled away",
-      "rate_derivative_note": "NOT rescaled, as in tornado.jsonc.  This solver quotes every rate derivative per p*b/(2V), q*cbar/(2V) or r*b/(2V) at the SOURCE Mach-0.03 speed V = 3.1112 m/s, while f16/aero_morelli.py forms phat = p*b_m/(2*V) at the trimmed cruise V = 23.1144 m/s.  Restoring the solver's physical dC/dq would mean multiplying the nine per-hat slots by V_trim/V_source = 7.42940, because czq[0]*cbar/(2*V_trim) must equal CL_q*cbar/(2*V_source); the model's rate-damping terms are that much weaker than the solver implies.  Note the plan writes that factor as AS_source/V_trim, which is the INVERSE of the direction that restores dC/dq; nothing is rescaled here either way, so the question is only ever a note."
+      "rate_derivative_note": "NOT rescaled, as in tornado.jsonc.  This solver quotes every rate derivative per p*b/(2V), q*cbar/(2V) or r*b/(2V) at the SOURCE Mach-0.03 speed V = 3.1112 m/s, while f16/aero_morelli.py forms phat = p*b_m/(2*V) at the trimmed cruise V = 23.1144 m/s.  Restoring the solver's physical dC/dq would mean multiplying the 9 per-hat slots by V_trim/V_source = 7.42940, because czq[0]*cbar/(2*V_trim) must equal CL_q*cbar/(2*V_source); the model's rate-damping terms are that much weaker than the solver implies.  Note the plan writes that factor as AS_source/V_trim, which is the INVERSE of the direction that restores dC/dq; nothing is rescaled here either way, so the question is only ever a note."
     },
     "moment_reference": {
       "solver_station_ft": 2.94,

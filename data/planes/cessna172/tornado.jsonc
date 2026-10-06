@@ -20,7 +20,7 @@
 //
 // 2. THE SOURCE PLANFORM IS A CESSNA 172 AT ROUGHLY 1/3 LINEAR SCALE
 //    span 12 ft against a real 36.1 ft, chord 2 ft against 4.89 ft, area 24 ft^2
-//    against 174 ft^2.  Wing loading is therefore 6.70 lbf/ft^2 where a real C172 is
+//    against 174 ft^2.  Wing loading is therefore 6.67 lbf/ft^2 where a real C172 is
 //    13.2.  Nothing in this file may be compared with a full-scale figure.
 //
 // 3. MASS
@@ -108,7 +108,7 @@
 //    final authority, and each is a slot whose SIGN the two in-tree reference files
 //    disagree on.  cm0 carries no invariant and is recorded as not-normalised.
 //
-//    A CAVEAT on the NINE genuinely per-phat / per-qhat / per-rhat slots:
+//    A CAVEAT on the 9 genuinely per-phat / per-qhat / per-rhat slots:
 //    cyp[0], cyr[0], czq[0], cmq[0], clp[0], clr[0], cnp[0], cnr[0], cxq[0].
 //    cy[1] and cy[2] are NOT in that list: they are cy_da and cy_dr, the
 //    aileron and rudder side force per radian of CONTROL DEFLECTION, which no
@@ -166,8 +166,6 @@
 //   cndr[0]   cn_dr      flipped        solver tornado_controls[rudder].Cn = 0.00319877 -> mapped 0.183276 -> written -0.183276
 //   cz[5]     cl_de      normalised     solver tornado_controls[elevator].CL = 0.00647969 -> mapped -0.371259 -> written -0.371259
 //   cm[2]     cm_de      normalised     solver tornado_controls[elevator].Cm = -0.0298079 -> mapped -1.16154 -> written -1.16154
-//   every slot in plane.groups.nonlinear_index is exactly 0.0.  Among the LINEAR slots, exactly one pair
-//   is 0.0 for a reason of its own, and the flight model's two drag terms both sit in it:
 //      cx[1] (CD_alpha) and cx[3] (CD_de) are real schema slots: LINEAR_INDEX
 //      lists cx's linear indexes as (0, 1, 3) and f16/aero_morelli.py
 //      evaluates Cx0 = cx[0] + cx[1]*alpha + ... + cx[3]*de, so the flight

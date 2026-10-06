@@ -104,8 +104,9 @@ FLOW5_NEWLY_PRODUCED = (
 # flow5's Clb against four meshes, as the sibling records it.  At ("10","5") it goes
 # POSITIVE and |Clb| is ~30x too small, which reads as a silent sign inversion
 # rather than as a convergence failure -- that is why FLOW5_MESH is pinned by a
-# test instead of left to a comment.  AVL's own Clb is -0.045756 and Tornado's
-# -0.053721, so ("10","10") is the only one of the four meshes in family.
+# test instead of left to a comment.  How each mesh compares with the OTHER runs is
+# a comparison between runs, so it is not written here; the pin is against the one
+# mesh this table records.
 FLOW5_CLB_BY_MESH = {
     ("5", "3"): -0.0736,
     ("10", "5"): 0.0018,
@@ -295,9 +296,11 @@ class TornadoAdapterTest(unittest.TestCase):
         """missing / flipped / not-normalised are three distinct, separately recorded states.
 
         Unlike Tornado, none of the three cross-check solvers needs a flip for
-        ``cm0`` and the three states are still all recorded: DATCOM flips four
-        slots, AVL seven, and flow5 none -- flow5's mapped values already land on
-        the invariant side, which is a fact about the data, not a missing record.
+        ``cm0`` and the three states are still all recorded.  How many slots each
+        solver had to reverse is a fact about the data, so it is read back from
+        ``provenance.flipped`` and asserted below rather than written here -- which
+        run flips how many is exactly the kind of number a stale sentence gets
+        wrong.
         """
         provenance = self.solver_run.provenance
         self.assertEqual(provenance["missing"], [])
@@ -906,9 +909,11 @@ class CrossCheckAdapterTest(unittest.TestCase):
         """missing / flipped / not-normalised are three distinct, separately recorded states.
 
         Unlike Tornado, none of the three cross-check solvers needs a flip for
-        ``cm0`` and the three states are still all recorded: DATCOM flips four
-        slots, AVL seven, and flow5 none -- flow5's mapped values already land on
-        the invariant side, which is a fact about the data, not a missing record.
+        ``cm0`` and the three states are still all recorded.  How many slots each
+        solver had to reverse is a fact about the data, so it is read back from
+        ``provenance.flipped`` and asserted below rather than written here -- which
+        run flips how many is exactly the kind of number a stale sentence gets
+        wrong.
         """
         for model in MODEL_NAMES:
             run = self.runs[model]
@@ -1278,13 +1283,19 @@ class CrossCheckAdapterTest(unittest.TestCase):
         checks each claim against the run's own data.  It does not re-derive the prose --
         it checks the prose against ``len()``.
 
-        Cheap on purpose.  Four mechanical claims:
+        Cheap on purpose.  Three mechanical claims, each against a GENERATED artifact
+        this module's own build writes:
 
         1. the flipped-list literal in item 6 equals ``provenance.flipped``;
         2. the identity-negation lines name exactly ``identity_negated(run)``;
         3. the "N OF THE m SLOTS ARE ABSENT" count equals ``len(provenance["missing"])``
-           and ``m`` equals the real schema size;
-        4. the module docstring's coverage table equals each run's filled count.
+           and ``m`` equals the real schema size.
+
+        It used to carry a fourth claim, over the coverage table in this module's own
+        docstring.  That one asserted over implementation source rather than over a
+        generated artifact, so a behaviour-preserving reword of the prose broke it and
+        it proved nothing about the adapters; the coverage claim each generated file
+        already makes in its own header is the one that belongs here.
         """
         import re
         import tempfile
@@ -1395,25 +1406,6 @@ class CrossCheckAdapterTest(unittest.TestCase):
                         "the 'OF THE n SLOTS' total must be the real schema size",
                     )
 
-        # (4) the module docstring's coverage table, against the runs
-        docstring = solvers.__doc__ or ""
-        table = dict(re.findall(r"^``(\w+)\.jsonc``\s+(\d+)\s", docstring, re.M))
-        self.assertEqual(
-            set(table), set(runs),
-            "the docstring coverage table must name all four models",
-        )
-        for model, run in runs.items():
-            with self.subTest(model=model, claim="docstring coverage count"):
-                produced = [
-                    field for field in solvers.ALL_DERIVATIVE_FIELDS
-                    if getattr(run.derivatives, field) is not None
-                ]
-                self.assertEqual(
-                    int(table[model]), len(produced),
-                    f"the docstring says {table[model]} of 25 for {model}, "
-                    f"the run fills {len(produced)}",
-                )
-
     def test_16_flow5_mesh_is_pinned_because_clb_flips_sign_at_ten_by_five(self) -> None:
         """FLOW5_MESH must stay ("10","10"): flow5's Clb changes SIGN across meshes.
 
@@ -1425,9 +1417,10 @@ class CrossCheckAdapterTest(unittest.TestCase):
         would sail through a sign-only invariant table while being badly wrong.
 
         So the mesh is pinned by a test.  Three assertions, in increasing strength:
-        the constant itself; that the shipped Clb is in family with AVL's and
-        Tornado's; and that it is nowhere near the ("10","5") trap, i.e. that the
-        pin would actually notice if someone changed the mesh to the bad one.
+        the constant itself; that the shipped Clb carries the same sideslip sign as
+        AVL's and DATCOM's; and that it is nowhere near the ("10","5") trap, i.e.
+        that the pin would actually notice if someone changed the mesh to the bad
+        one.
         """
         from aero_convert.solvers import FLOW5_MESH
 
