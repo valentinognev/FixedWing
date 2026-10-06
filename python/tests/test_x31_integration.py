@@ -737,6 +737,29 @@ class TestCommandSchedule(unittest.TestCase):
         self.assertEqual(command_at(steps, 2.0)["V"], 80.0)
 
 
+    def test_a_ramp_on_the_first_step_is_refused_rather_than_flown_as_a_hold(self):
+        # The first step's demand is held from t = 0, so a ramp there has no
+        # previous knot to move away from and would be dropped: the file would
+        # fly a value at t = 0 that it declared as only reached at t_s. It is
+        # refused instead. A zero or null ramp on that step is still a hold and
+        # stays legal.
+        with self.assertRaises(PlaneDataError):
+            _validated_copy(
+                lambda payload: payload["scenarios"]["speed_step"]["steps"][0].update(
+                    {"ramp_s": 2.0}
+                )
+            )
+        for ramp in (0.0, None):
+            with self.subTest(ramp_s=ramp):
+                payload = _validated_copy(
+                    lambda payload: payload["scenarios"]["speed_step"]["steps"][0].update(
+                        {"ramp_s": ramp}
+                    )
+                )
+                steps = payload["scenarios"]["speed_step"]["steps"]
+                self.assertEqual(command_at(steps, 0.0)["V"], 50.0)
+
+
 class TestShortClosedLoop(unittest.TestCase):
     def setUp(self):
         self.payload = load_plane()

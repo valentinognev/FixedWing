@@ -152,7 +152,10 @@ def _ramp(step: dict, scenario_key: str, index: int) -> float:
     """A step's `ramp_s`, or 0.0. `None` is an explicit "no ramp".
 
     A negative or unusable `ramp_s` is refused rather than read as "no ramp":
-    silently dropping it would fly a step the file did not ask for.
+    silently dropping it would fly a step the file did not ask for. A ramp on
+    the FIRST step is refused for the same reason: it has no previous knot to
+    move away from, so `command_at` would hold its value from `t = 0` and the
+    declared ramp would never be flown.
     """
     if "ramp_s" not in step:
         return 0.0
@@ -163,6 +166,11 @@ def _ramp(step: dict, scenario_key: str, index: int) -> float:
     if ramp < 0.0:
         raise PlaneDataError(
             f"scenario {scenario_key!r} step {index} ramp_s {ramp} is negative"
+        )
+    if index == 0 and ramp > 0.0:
+        raise PlaneDataError(
+            f"scenario {scenario_key!r} step 0 ramp_s {ramp} has no previous "
+            "knot to ramp from; the first step's demand is held from t = 0"
         )
     return ramp
 
