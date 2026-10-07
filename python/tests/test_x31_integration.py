@@ -215,10 +215,15 @@ class TestPlaneData(unittest.TestCase):
 
 
     def test_a_backwards_step_table_is_rejected(self):
-        with self.assertRaises(PlaneDataError):
+        # The knots collide rather than run backwards, so the refusal is the
+        # ordering rule and not the first-knot-at-zero rule beside it.
+        with self.assertRaises(PlaneDataError) as caught:
             _validated_copy(
-                lambda payload: payload["scenarios"]["speed_step"]["steps"].reverse()
+                lambda payload: payload["scenarios"]["speed_step"]["steps"][1].update(
+                    {"t_s": 0.0}
+                )
             )
+        self.assertIn("increasing", str(caught.exception))
 
 
     def test_a_wrong_plane_name_is_rejected(self):
@@ -779,6 +784,43 @@ class TestShortClosedLoop(unittest.TestCase):
         self.assertLess(float(np.max(np.abs(out["alpha"]))), math.radians(85.0))
         self.assertLess(float(np.max(np.abs(out["beta"]))), math.radians(80.0))
 
+    def test_a_first_knot_above_zero_is_refused_rather_than_flown_from_t_zero(self):
+        # The demand is held from t = 0, so a first step at t_s = 2 would fly
+        # that row's value from the start of the run while the file declared it
+        # began at 2 s. `load_plane` refuses it instead, the same way it
+        # refuses a first-step ramp. A first knot at t_s = 0 still flies, and
+        # holds its own value until the next knot moves it.
+        for at in (2.0, 1e-9, 8.0):
+            with self.subTest(t_s=at):
+                with self.assertRaises(PlaneDataError) as caught:
+                    _validated_copy(
+                        lambda payload: payload["scenarios"]["speed_step"]["steps"][0].update(
+                            {"t_s": at}
+                        )
+                    )
+                self.assertIn("t_s = 0", str(caught.exception))
+        payload = _validated_copy(
+            lambda payload: payload["scenarios"]["speed_step"]["steps"][0].update(
+                {"t_s": 0.0}
+            )
+        )
+        steps = payload["scenarios"]["speed_step"]["steps"]
+        for t in (0.0, 0.5, 1.0):
+            with self.subTest(t=t):
+                self.assertEqual(command_at(steps, t)["V"], 50.0)
+        self.assertEqual(command_at(steps, 2.0)["V"], 80.0)
+
+    def test_a_shipped_scenario_starts_at_zero_and_flys_its_first_knot(self):
+        # The shipped tables are the ones a run flies, so the rule is asserted
+        # on them: every first knot at t = 0, and the demand that flies from
+        # t = 0 is that row's value rather than a later one.
+        payload = load_plane()
+        for name in scenarios(payload):
+            steps = scenario(payload, name)["steps"]
+            with self.subTest(scenario=name):
+                self.assertEqual(float(steps[0]["t_s"]), 0.0)
+                self.assertEqual(command_at(steps, 0.0)["V"], float(steps[0]["V"]))
+
 
     def test_every_scenario_holds_all_seven_channels_and_stays_finite(self):
         for name in scenarios(self.payload):
@@ -808,20 +850,24 @@ class TestShortClosedLoop(unittest.TestCase):
 
 
     def test_the_logged_command_is_the_command_the_plant_was_driven_with(self):
-        # The port holds the gain-schedule measurements for 5 ms before the
-        # controller sees them, and it logs the command it computes from that
-        # same held measurement (`simulate.simulate` hands `_plant_channels`
-        # `_held_measurement(delay, t, meas)`). A logging pass that handed the
-        # controller the instantaneous measurement instead would write a
-        # command into every `*_cmd_*` cell that never flew, so the whole
-        # column is re-derived here from the port's own helpers and compared
-        # sample by sample.
+        # The plant integrates `actuators.derivative`, which clips every channel
+        # through the port's own `_saturated_command` before it reaches the
+        # transfer function, so a column carrying the controller's raw demand
+        # would report a number no channel ever saw: the gain schedule asks for
+        # up to 90.5 deg canard on `trim_hold` where the block allows 30.0. The
+        # column is re-derived here from the port's own helpers -- held
+        # measurement, controller, then the same Saturate block the plant's
+        # derivative applies -- and compared sample by sample.
         from unittest import mock
 
         from x31 import actuators as port_actuators
         from x31 import gain_schedule as port_gain_schedule
         from x31 import simulate as port_simulate
 
+        limits = {
+            channel.attr: (channel.lo, channel.hi)
+            for channel in port_actuators._MODEL
+        }
         delays = []
         held_cls = port_simulate._MeasurementDelay
 
@@ -850,6 +896,7 @@ class TestShortClosedLoop(unittest.TestCase):
         n_act = int(port_actuators.initial_state().x.size)
         n_ctrl = controller_states("gain_schedule")
         steps = list(scenario(self.payload, "trim_hold")["steps"])
+        clipped = 0
         for index, t in enumerate(flown["t"]):
             pos, vel, q, w, act, ctrl = port_simulate._split(
                 flown["y"][index], n_act, n_ctrl
@@ -858,17 +905,29 @@ class TestShortClosedLoop(unittest.TestCase):
                 float(t), pos, vel, q, w, act
             )
             held = port_simulate._held_measurement(delay, float(t), measured)
-            command, _dots = port_gain_schedule.surface(
+            raw, _dots = port_gain_schedule.surface(
                 float(t), held, command_at(steps, float(t)), ctrl
             )
-            for name in surfaces():
+            for channel in port_actuators._MODEL:
+                name = channel.attr
+                lo, hi = limits[name]
+                demand = float(getattr(raw, name))
+                clipped += not lo <= demand <= hi
+                logged = float(out[column_name(name, True)][index])
                 with self.subTest(t=float(t), channel=name):
                     self.assertAlmostEqual(
-                        float(out[column_name(name, True)][index]),
-                        float(getattr(command, name)),
+                        logged,
+                        port_actuators._saturated_command(raw, channel),
                         places=9,
-                        msg=f"{name} at t={float(t):g} is not the command the plant saw",
+                        msg=f"{name} at t={float(t):g} is not the input {name} saw",
                     )
+                    self.assertGreaterEqual(logged, lo)
+                    self.assertLessEqual(logged, hi)
+        self.assertTrue(
+            clipped,
+            "no sample of this run left a channel's limits, so the comparison "
+            "above cannot tell a saturated column from a raw demand",
+        )
 
 
     def test_the_commanded_and_flown_surfaces_are_separate_columns(self):

@@ -4,12 +4,15 @@ This is FixedWing's integration layer, not port code. `python/x31/` stays
 vendored third-party source, so everything the port already implements is
 called rather than reimplemented: the rigid-body derivative
 (`dynamics.derivative`), the seven actuator transfer functions
-(`actuators`), the maneuver-generator command triplet (`maneuver`), the two
-controllers (`gain_schedule.surface` and `ndi.surface`), the measurement vector
-the controllers are handed (`simulate._measured`), and the MATLAB-compatible
-integrator (`ode45`). Only the loop around them is new, because the port's own
-`simulate.simulate` drives one stored MATLAB export and this drives a
-committed scenario in `data/planes/x31/x31.json`.
+(`actuators`), the two controllers (`gain_schedule.surface` and
+`ndi.surface`), the measurement vector the controllers are handed
+(`simulate._measured`), and the MATLAB-compatible integrator (`ode45`). The
+maneuver generator is replaced rather than called: the port's `maneuver`
+interpolates one stored Signal Builder export, while `command_at` below reads
+the committed scenario table instead, so no export is needed. Only the loop
+around them is new, because the port's own `simulate.simulate` drives one
+stored MATLAB export and this drives a committed scenario in
+`data/planes/x31/x31.json`.
 
 What runs is named `mode`, not `controller`, because not everything here is a
 controller. `gain_schedule` and `ndi` are the X-31's two controllers;
@@ -34,8 +37,9 @@ Two facts about that reuse are load-bearing and worth stating plainly:
 
 Private port helpers are used deliberately, so this module is pinned to the
 vendored commit rather than to the port's public surface:
-`simulate._pack` / `_split` / `_closed_rhs` / `_measured` / `_held_measurement` /
-`_MeasurementDelay` / `_ZERO`, `gain_schedule._STATES`, and `ndi._INTEGRATORS`.
+`simulate._pack` / `_split` / `_plant_sample` / `_measured` /
+`_held_measurement` / `_MeasurementDelay` / `_ZERO`,
+`actuators._saturated_command`, `gain_schedule._STATES`, and `ndi._INTEGRATORS`.
 Reimplementing any of them here would be a second copy of measured physics,
 which is the one thing that must not happen to a vendored port.
 
@@ -56,7 +60,7 @@ import x31_numpy_compat  # noqa: F401  restores numpy's removed short trig alias
 from x31 import actuators, dynamics, gain_schedule, ndi, simulate
 from x31.ode45 import Ode45Error, ode45
 from x31.quaternion import q_to_body_321
-from x31.types import ActuatorState, PlantState
+from x31.types import ActuatorState, PlantState, SurfaceCommand
 
 _PLANE = "x31"
 _STATE_KEYS = ("pos", "vel", "q", "w")
@@ -115,12 +119,10 @@ def load_plane(path: Path | str | None = None) -> dict:
         raise PlaneDataError(f"{path} must be an object")
     if payload.get("plane") != _PLANE:
         raise PlaneDataError(f"{path} declares plane {payload.get('plane')!r}, not {_PLANE!r}")
-    for name in ("spawn", "trim", "command", "scenarios"):
+    for name in ("spawn", "trim", "scenarios"):
         _section(payload, name)
     for name in _STATE_KEYS:
         _vector(payload["trim"], name, 3 if name != "q" else 4)
-    for name in _COMMAND_KEYS:
-        _scalar(payload["command"], name)
     for name in ("n_m", "e_m", "d_m"):
         _scalar(payload["spawn"], name)
     for key, body in payload["scenarios"].items():
@@ -137,6 +139,11 @@ def load_plane(path: Path | str | None = None) -> dict:
             if not isinstance(step, dict):
                 raise PlaneDataError(f"scenario {key!r} step {index} must be an object")
             at = _scalar(step, "t_s")
+            if index == 0 and at != 0.0:
+                raise PlaneDataError(
+                    f"scenario {key!r} step 0 t_s {at} is not 0; the first "
+                    "knot's demand is held from t = 0, so start it at t_s = 0"
+                )
             if at < 0.0 or at > duration:
                 raise PlaneDataError(f"scenario {key!r} step {index} t_s {at} is outside 0..{duration}")
             if at <= previous:
@@ -278,7 +285,10 @@ def command_at(steps: list, t: float) -> dict:
     The table describes nothing before its own first row, so a window reaching
     back past the previous value would interpolate between two values the
     table does not describe and extrapolate backwards before the one it does;
-    the previous value is held until the window opens instead. `ramp_s` is
+    the previous value is held until the window opens instead. That previous
+    value is the first row's, which is why `load_plane` refuses a first step
+    whose `t_s` is not 0: the demand is held from `t = 0`, so the first row is
+    the value flown from the start of the run. `ramp_s` is
     never stretched to reach `t_s` and never silently ignored: a step whose
     window was clamped reaches its value exactly at `t_s`, over the clamped
     span.
@@ -324,7 +334,8 @@ def _window_span(steps: list, index: int) -> float:
 def _window_opens(steps: list, index: int) -> float:
     """The time step `index`'s demand starts moving, `t_s - ramp_s`, clamped.
 
-    The first step has no previous knot and simply holds from its own `t_s`.
+    The first step has no previous knot, so it holds from its own `t_s`, which
+    `load_plane` requires to be 0; that is the value flown from `t = 0`.
     """
     at = float(steps[index]["t_s"])
     if index == 0:
@@ -348,7 +359,8 @@ def run_scenario(
     either one of the plane's controllers or its `open_loop` input mode and
     nothing else. Returns the sample times plus, per sample, the NED position, airspeed,
     aerodynamic angles, 3-2-1 attitude, the seven actuator outputs, and the
-    seven commands that drove them. `spawn` defaults to the data file's
+    seven commands each channel's actuator was driven with, after that
+    channel's Saturate block. `spawn` defaults to the data file's
     declared spawn and an explicit one overrides it. `stopped_at` and
     `stop_reason` are set only when the run ended early, which is either the
     port's 85 deg alpha / 80 deg beta diagram limit or, with an "integrator: "
@@ -588,21 +600,36 @@ def _vector(body: dict, name: str, size: int) -> np.ndarray:
 def _command(
     mode: str, t: float, measured: dict, ctrl: np.ndarray, steps: list, delay
 ) -> object:
-    """The surface command at one sample, on the same seam the RHS used.
+    """The input each channel's actuator was driven with at one sample.
 
-    The `open_loop` input mode has none: the port's diagram feeds its manual
-    switch a fixed canard, so the command is that constant for every sample.
+    That is the controller's command after the port's own per-channel Saturate
+    block, because that is what `actuators.derivative` integrates: the RHS
+    hands it the raw `SurfaceCommand` and each channel clips it through
+    `actuators._saturated_command` before it reaches its transfer function.
+    Reporting the raw demand instead would put a number in the column the
+    plant was never given — the gain schedule asks for up to 90.5 deg canard
+    on `trim_hold` where the block allows 30.0. So one value is built here,
+    once, and both the CSV column and this docstring describe the same number.
+
+    The `open_loop` input mode has no controller demand: the port's diagram
+    feeds its manual switch a fixed canard, so the command is that constant for
+    every sample, and it is inside every limit, so the saturation leaves it.
 
     `delay` is the 5 ms hold the RHS recorded into, read here on the logging
-    pass rather than on the integration seam: `simulate.simulate` hands its own
-    `_plant_channels` the very same `_held_measurement(delay, t, meas)`, and a
-    transport delay only reads samples at or before `t - 5 ms`, so reading the
-    finished history reproduces what the controller was given. The unheld
-    `measured` stays the source of the `vt_mps` / `alpha` / `beta` columns,
-    which the port also logs from the instantaneous sample.
+    pass rather than on the integration seam: a transport delay only reads
+    samples at or before `t - 5 ms`, so reading the finished history
+    reproduces the measurement the controller was given. The unheld `measured`
+    stays the source of the `vt_mps` / `alpha` / `beta` columns, which the port
+    also logs from the instantaneous sample.
     """
     if mode == _OPEN_LOOP:
-        return simulate._PLANT_COMMAND
-    held = simulate._held_measurement(delay, t, measured)
-    command, _dots = _module(mode).surface(t, held, command_at(steps, t), ctrl)
-    return command
+        raw = simulate._PLANT_COMMAND
+    else:
+        held = simulate._held_measurement(delay, t, measured)
+        raw, _dots = _module(mode).surface(t, held, command_at(steps, t), ctrl)
+    return SurfaceCommand(
+        **{
+            channel.attr: actuators._saturated_command(raw, channel)
+            for channel in actuators._MODEL
+        }
+    )

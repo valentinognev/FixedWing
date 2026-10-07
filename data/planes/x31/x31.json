@@ -8,7 +8,7 @@
     "trim_source": "X31dynamics_03_init, level flight at 50 m/s",
     "notes": [
       "The plant, aero, actuators, maneuver generator and both controllers live in python/x31 as vendored GPLv2 source; they are not FixedWing's to edit.",
-      "Only the trim point, the spawn, the maneuver-generator command, and the scenario table are data, so they live here rather than in Python source.",
+      "Only the trim point, the spawn and the scenario table are data, so they live here rather than in Python source. The scenario table is also the maneuver-generator command: x31_sim.command_at reads it, and the port's own maneuver generator and its stored Signal Builder export are not used.",
       "Controller state counts and the gain-schedule measurement delay are read from the port itself at run time, not restated here."
     ]
   },
@@ -32,14 +32,9 @@
     "q": [0.99909897, 0.0, 0.0424412, 0.0],
     "w": [0.0, 0.0, 0.0]
   },
-  "command": {
-    "description": "Maneuver-generator demand handed to the controller as a V/Chi/Gamma triplet. This is the port's own level-flight trim, so a run that starts here is trimmed.",
-    "V": 50.0,
-    "Chi": 0.0,
-    "Gamma": 0.0
-  },
   "ramp_semantics": {
     "t_s": "A knot: the value commanded AT that knot time is that row's value, and the demand is HELD at that value until the next knot moves it. A step with no ramp_s is a plain hold, so its value steps in at that knot's t_s. This is not upstream's behaviour: x31/maneuver.py's command reads one exported Signal Builder table and np.interp's over its rows, which is LINEAR between knots, and it has no ramp concept at all. A scenario is a step table rather than a stored waveform, and holding to the next knot is what makes two back-to-back ramps continuous.",
+    "first_knot": "A scenario's first step must be at t_s = 0, and the loader refuses any other value: its demand is HELD from t = 0, so a first row at t_s = 2 would fly that row from the start of the run while the file said it began at 2 s. Start the first knot at t_s = 0 and put later knots at the times the run wants them.",
     "ramp_s": "FixedWing's own addition, and it means one thing: begin moving toward this knot's value ramp_s before t_s, and reach it exactly at t_s. The window is [t_s - ramp_s, t_s], clamped so it never opens before the previous knot's time -- the table describes no value there, so the previous value is held until the window opens. ramp_s is never stretched to reach t_s and never ignored: a negative or non-numeric one, and a positive one on the first step (which has no previous knot to move away from), are refused by the loader rather than flown as a hold. The clamp is what makes consecutive ramped steps continuous by construction, since each ramp ends holding the value it reached and the next begins from it.",
     "no_scenario_relies_on_the_clamp": "Every ramp_s below is shorter than the gap back to the previous knot, so every declared ramp_s is the ramp actually flown. The clamp is honoured anyway; a test asserts it and asserts that nothing shipped needs it."
   },
