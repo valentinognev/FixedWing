@@ -1561,6 +1561,11 @@ class DerivedHeaderProseTest(unittest.TestCase):
         r" -> mapped (-?[\d.eE+-]+) -> written (-?[\d.eE+-]+)$",
         re.M,
     )
+    DERIVED_ROW = re.compile(
+        r"^//\s+(\S+\[\d\])\s+(\S+)\s+(\S+)\s+NOT solver output -- .*?"
+        r" -> mapped (-?[\d.eE+-]+) -> written (-?[\d.eE+-]+)$",
+        re.M,
+    )
     #: A row for a slot the run declares zeroed: no solver value behind it, and
     #: nothing written but the declared zero.
     ABSENT_ROW = re.compile(r"^//\s+(\S+\[\d\])\s+(\S+)\s+missing\s+ABSENT\b", re.M)
@@ -1617,6 +1622,23 @@ class DerivedHeaderProseTest(unittest.TestCase):
                         rows, f"{name} prints no per-slot provenance table at all",
                     )
                 for slot, _field, _state, _solver, mapped, shipped in rows:
+                    array, index = slot[:-1].split("[")
+                    actual = payload["coefficients"][array][int(index)]
+                    with self.subTest(file=name, slot=slot, claim="written == payload"):
+                        self.assertTrue(
+                            close(shipped, actual),
+                            f"{name} prints {slot} as written {shipped}, but the"
+                            f" payload ships {actual}",
+                        )
+                    with self.subTest(file=name, slot=slot, claim="written == +/- mapped"):
+                        self.assertTrue(
+                            close(shipped, float(mapped))
+                            or close(shipped, -float(mapped)),
+                            f"{name} prints {slot} as mapped {mapped} but written"
+                            f" {shipped}; sign normalisation is the only step between"
+                            " them",
+                        )
+                for slot, _field, _state, mapped, shipped in self.DERIVED_ROW.findall(text):
                     array, index = slot[:-1].split("[")
                     actual = payload["coefficients"][array][int(index)]
                     with self.subTest(file=name, slot=slot, claim="written == payload"):
