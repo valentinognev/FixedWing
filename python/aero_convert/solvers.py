@@ -3716,8 +3716,8 @@ _REFERENCE_FILES = ("data/planes/linear/morelli.json", "data/planes/f16/morelli.
 #: component".  NOT derived, because the card is written by
 #: ``aid/avl_controls._rewrite_control_cards``, a line of a sibling repository this
 #: one neither owns nor reads at build time; the reason is recorded against the
-#: "seven" entry in ``_NON_DERIVABLE_CLAIMS``.  It is named here rather than typed
-#: into the header so the literal the guard test looks for has one home.
+#: "all 7 numbers" entry in ``_NON_DERIVABLE_CLAIMS``.  It is named here rather than
+#: typed into the header so the literal the guard test looks for has one home.
 AVL_CONTROL_CARD_ENTRIES = 7
 
 
@@ -4105,9 +4105,9 @@ def _planform_scale_lines(run: TornadoRun | CrossCheckRun) -> list[str]:
 # repository, or about a source file this build does not read -- it is listed
 # in ``_NON_DERIVABLE_CLAIMS`` with the reason, so that "not derived" is a
 # recorded decision a reviewer can see rather than an omission that looks
-# derived.  ``test_19_no_hand_written_claim_survives_in_the_header_prose``
-# enforces both halves: it fails on an unlisted literal, and it fails if a
-# listed reason is no longer accurate.
+# derived.  ``test_19b`` then fails when a listed reason stops reaching the
+# output, and the ``DerivedHeaderProseTest`` table checks read the built
+# files' own printed numbers back against the payload they ship.
 # ---------------------------------------------------------------------------
 
 # Claims the headers state that cannot be derived from the run, each with the
@@ -4172,7 +4172,7 @@ _NON_DERIVABLE_CLAIMS: dict[str, str] = {
         "-- the per-radian conversion, the sign normalisation, the control slots -- are "
         "all derived or mechanical"
     ),
-    "seven": (
+    "all 7 numbers": (
         "the number of entries on the sibling's aileron CONTROL card, which is the premise "
         "of avl.jsonc's 'AVL reads the trailing -1 as the duplicate sign instead of as a "
         "hinge component'.  The card is written by "
@@ -4698,8 +4698,8 @@ def _present_slot_lines(
     The flipped paragraph is appended by ``_flipped_gap_lines``, not folded in here.
     AVL declares nothing absent but does flip seven slots, and an earlier version of this
     function dropped that half silently -- caught only by reading the regenerated file,
-    which is why ``test_19`` now asserts the paragraph is present in every file rather
-    than trusting the code path that builds it.
+    which is why ``test_18`` re-derives the negated set from the printed slot table
+    rather than trusting the code path that builds it.
     """
     if run.provenance["missing"]:
         return _gap_lines(run)
@@ -5769,16 +5769,6 @@ def _raw_output_lines(cross_runs: Sequence[CrossCheckRun]) -> list[str]:
         "//    itself part of that solver's record.",
     ]
     return lines
-
-
-# The banner rule ("// " + "=" * 74) is 74 columns wide, but the prose under it has
-# never been held to that: the shipped files carry lines up to 311 columns, because
-# most of the block was typed by hand and hand-typed lines are not wrapped at all.
-# What this width is for is the DERIVED paragraphs only, which are wrapped instead of
-# hand-broken -- so that adding a figure to one of them reflows it rather than
-# silently widening it, and so that the derived blocks sit visually alongside the
-# hand-written ones they replace.  It is not, and never was, a limit on the file.
-HEADER_WIDTH = 74
 
 
 def _wrap_note(note: str, width: int = 70, indent: str = "//      ") -> list[str]:

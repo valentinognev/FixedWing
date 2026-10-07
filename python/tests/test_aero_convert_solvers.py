@@ -1530,307 +1530,121 @@ class DerivedHeaderProseTest(unittest.TestCase):
     """The guard that closes the class: no hand-written claim may reach a header.
 
     ``test_18`` parses the rendered headers back out of a build and checks three
-    claims against the run.  That is necessary and it is not sufficient, for two
-    reasons this test exists to cover.
+    claims against the run.  These build the same five files and check the ones
+    it does not reach: the numbers item 7 prints, the declared-absent
+    enumeration, the registry's own exceptions, and the round-4 duplicate
+    paragraph.
 
-    1. ``test_18`` can only check the claims it already knows about.  It has three.
-      This one has no allow-list of claims -- it walks EVERY string literal in
-      every header-producing function of ``solvers.py`` with ``ast`` and fails on
-      any bare number, spelled-out count or slot name that is not either
-      interpolated from the run or explicitly registered in
-      ``solvers._NON_DERIVABLE_CLAIMS`` with a reason.  So the next hand-written
-      "NINE" or "cz[1] and cz[2]" is a test failure with a file and line, not a
-      finding a reviewer has to notice in a diff.
-    2. ``test_18`` checks the header.  This one checks the GENERATOR, so it also
-      holds the claims that a build does not currently exercise -- a branch a
-      sibling change would take, a solver the worktree cannot run, a
-      single-model ``write_model()`` call.  A claim that is wrong only on a path
-      nobody built this week is still a claim that will rot.
+    Every assertion here runs the generator -- ``build_all()`` into a temporary
+    directory -- and reads the bytes it wrote.  None of them reads
+    ``solvers.py``.  An earlier guard in this class parsed the module's own
+    string literals with ``ast`` and regexed them for numbers and slot names; it
+    proved nothing about any generated file (a behaviour-preserving refactor of a
+    literal broke it, a dead literal satisfied it, and two real defects in
+    changed literals passed it), so the class asserts rendered output instead.
 
-    What it does NOT do, deliberately: it does not judge whether a registered
-    reason is *true*, only that one was written.  The reasons are prose a human
-    reads; pretending a regex could verify "this is a quotation from a file this
-    repository does not own" would be the same over-claiming the whole change is
-    about.  ``test_19b`` below is the narrow part that IS checkable: it fails when
-    a registered literal stops appearing in the built output at all, which is how
-    a registered reason goes quietly stale.
+    What none of them do, deliberately: judge whether a registered reason is
+    *true*.  The reasons are prose a human reads; pretending a check could
+    verify "this is a quotation from a file this repository does not own" would
+    be the same over-claiming the whole change is about.  ``test_19b`` below is
+    the part that IS checkable: it fails when a registered literal stops
+    appearing in the built output at all, which is how a registered reason goes
+    quietly stale.
     """
 
-    #: Functions whose string literals reach a generated file.  Everything the
-    #: ``//`` block is built from, plus the provenance notes the same build
-    #: writes, so a claim that moves from the header into provenance is still
-    #: covered.  ``main``/``build``/``write_*`` are excluded: they hold paths and
-    #: messages, not claims about the aerodynamics.
-    PROSE_FUNCTIONS = frozenset({
-        "header_comment", "cross_check_header", "identity_lines", "identity_negated",
-        "_identity_negated_from", "_identity_clause", "_identity_slot_list", "_prose_list",
-        "_slot_lines", "_gap_lines", "_flipped_gap_lines", "_cx_derivative_gap",
-        "_cx_mapping_gap_lines", "_invariant_band_note", "_cd0_slot_text", "_clb_evidence",
-        "_tornado_sign_convention", "_q_convention_lines", "_cross_solver_disagreements",
-        "_planform_scale_lines", "_mass_lines", "_lattice_extra_panel_lines",
-        "_lattice_extra_panel_cl_percent", "_sign_convention_authority_lines",
-        "_morelli_reference_claims", "_reference_slot_disagreements",
-        "_reference_slot_agreements", "_present_slot_lines", "_aid_per_degree_slopes",
-        "_tornado_contrast_lines", "_tornado_reference_pair", "_cross_check_xcg_lines",
-        "_cl_cz_alpha_split_lines", "_cl_cz_alpha_split_percent", "_extra_panel_in_lattice",
-        "_zeroed_linear_slots", "_flipped_rate_slots", "_rate_derivative_note",
-        "_cross_check_provenance", "_mass_provenance", "_raw_output_lines",
-        "_reference_authority_note",
-    })
-
-    #: A bare number in a prose literal.  Deliberately loose: it will also catch a
-    #: number that IS legitimate, and the fix for that is to derive it or register
-    #: it, both of which are improvements.  The alternative -- a tight regex that
-    #: admits only "obviously fine" literals -- is the loophole this test exists
-    #: to close.
-    NUMBER = re.compile(r"(?<![A-Za-z_.{])(\d+(?:\.\d+)?)(?![}\w])")
-    SLOT = re.compile(r"\b(c[a-z]+\[\d\])")
-    #: A SPELLED count, which is a claim only in an enumerative frame.
-    #:
-    #: The first version of this pattern matched every count word on sight and
-    #: reported 17 findings, of which 12 were ordinary English -- "the WIND-axis
-    #: one above", "the correction is the right one", "the RAW one", "each have one
-    #: sign".  A guard with a 70 % false-positive rate does not get fixed one
-    #: exemption at a time; it gets narrowed until what it reports is what it means,
-    #: and that is what these two branches do.
-    #:
-    #:   * determiner + count -- "all five files", "both three", "the other two
-    #:     slots", "those two files".  A determiner before a count is an enumeration;
-    #:     a bare "one" is a pronoun.
-    #:   * count + a countable noun -- "three files", "two slots", "seven numbers".
-    #:     The noun list is deliberately short and is drawn from what this generator
-    #:     actually counts; widening it is the way to re-open the false positives.
-    SPELLED_COUNT = re.compile(
-        # One shared capture group, not two alternations with one each: with a
-        # determiner BEFORE the count the second branch never filled group(1), and
-        # "one reason" reported a token of None -- a finding whose text said nothing
-        # about what was found.
-        r"\b(?:(?:all|both|each of|only|just|some of|the other|the remaining|these|those)"
-        r"\s+)?"
-        r"(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)"
-        r"\s+(?:all|both|each of|only|just|some of|the other|the remaining|these|those"
-        r"|of them|of the|files?|cessna files?|slots?|arrays?|solvers?|keys?|states?|"
-        r"values?|numbers?|defects?|rate terms?|surfaces?|negations?|pairs?|"
-        r"reference files?|column|reasons?)\b",
-        re.IGNORECASE,
+    #: One row of item 7: slot, field, state, then the solver's own value, the
+    #: value after the mapping, and the value that ships.  Printed at six
+    #: significant figures, hence the tolerance in the checks below rather than
+    #: equality.
+    SLOT_TABLE = re.compile(
+        r"^//\s+(\S+\[\d\])\s+(\S+)\s+(\S+)\s+solver .*? = (-?[\d.eE+-]+)"
+        r" -> mapped (-?[\d.eE+-]+) -> written (-?[\d.eE+-]+)$",
+        re.M,
     )
-    #: Item headings ("// 7. PER-SLOT...") and structural references that are not
-    #: claims about the aerodynamics.  Matched against the WHOLE literal, and only
-    #: when the literal is nothing but one of these -- so "7. PER-SLOT ... all 19"
-    #: is still caught by the 19.
-    HEADING_ONLY = re.compile(r"^//\s*\d+\.\s")
+    #: A row for a slot the run declares zeroed: no solver value behind it, and
+    #: nothing written but the declared zero.
+    ABSENT_ROW = re.compile(r"^//\s+(\S+\[\d\])\s+(\S+)\s+missing\s+ABSENT\b", re.M)
 
-    def prose_literals(self):
-        """Every string literal that can reach a generated file, with its location.
+    def test_19_the_printed_slot_table_agrees_with_the_payload(self) -> None:
+        """Build the five files, then read every number item 7 prints back out of them.
 
-        Docstrings are EXCLUDED, and that is the one thing this walk has to get
-        right.  A docstring explains the code to the next agent and never reaches
-        a generated file, so a ``cz[1]`` inside one is documentation, not a claim.
-        Scanning them produced 500-odd findings on the first run, all of them
-        correct prose -- ``_rate_derivative_note``'s docstring names every slot it
-        is about and every formula it applies -- and a guard that cries wolf on the
-        documentation is a guard that gets deleted.
+        The defect class this change is about is prose that contradicts the run
+        it was generated from.  ``test_18`` checks three claims; this one takes
+        the claim that carries the most numbers -- item 7's per-slot table -- and
+        checks it against the only copy of those numbers a consumer reads, the
+        ``coefficients`` payload in the same file.  So for every slot the header
+        names:
 
-        Everything else is scanned, including docstring-free private helpers,
-        because the moment a helper's string becomes a header line it is in scope.
+        1. the value printed as ``written`` is the value the payload ships;
+        2. the value printed as ``written`` is the ``mapped`` value, possibly
+           negated: sign normalisation is the only step between the two, so any
+           other difference is a header misreporting its own arithmetic;
+        3. the slots printed as ABSENT are exactly ``provenance.missing``, in
+           both directions, so the declared-gap enumeration and the table cannot
+           drift apart.
+
+        The evidence is the built artifact, not the generator's source, so a
+        behaviour-preserving refactor leaves this green and a header edited away
+        from the payload turns it red with the file and slot named.
+        ``geometry.jsonc`` is skipped because it carries no ``coefficients``
+        payload; its item 7 describes the Tornado run, which ``tornado.jsonc``
+        checks in its own right.
         """
-        import ast
+        if not sibling_aid_present():
+            self.skipTest(SIBLING_ABSENT)
+        from aero_convert.solvers import build_all
 
-        from aero_convert import solvers
+        def close(printed: str, actual: float) -> bool:
+            return abs(float(printed) - actual) <= 1e-5 * max(1.0, abs(actual))
 
-        tree = ast.parse(Path(solvers.__file__).read_text())
-        found = []
-        for node in tree.body:
-            if not isinstance(node, ast.FunctionDef) or node.name not in self.PROSE_FUNCTIONS:
-                continue
-            docstrings = set()
-            for statement in node.body:
-                if (isinstance(statement, ast.Expr)
-                        and isinstance(statement.value, ast.Constant)
-                        and isinstance(statement.value.value, str)):
-                    docstrings.add(id(statement.value))
-            for inner in ast.walk(node):
-                if (isinstance(inner, ast.Constant) and isinstance(inner.value, str)
-                        and id(inner) not in docstrings):
-                    found.append((node.name, inner.lineno, inner.value))
-        self.assertTrue(found, "no prose literals found; the walk is broken")
-        return found
-
-    #: The shortest a registered key may be and still count as a PHRASE rather than a
-    #: token.  It is set by the shortest key that has to work as a phrase rather than
-    #: as a token -- "one reason" -- and not chosen for roundness: raising it would
-    #: silently turn that entry into a dead letter and start reporting the very claim
-    #: it exists to excuse, which is the failure mode a guard must never have.
-    _PHRASE_MINIMUM = 10
-
-    def test_19_no_hand_written_claim_survives_in_the_header_prose(self) -> None:
-        """Fails on any bare number, spelled count or slot name in a header literal."""
-        from aero_convert import solvers
-
-        registered = solvers._NON_DERIVABLE_CLAIMS
-        # Slot names, source-line citations and file names are each scanned by
-        # their own pattern, so the NUMBER pattern is run over text with all three
-        # removed.  Otherwise every `cz[1]` reports its index a second time as a
-        # "hand-written number", and `lateral.py:616` reports a line number as
-        # one -- which would bury the real findings under the same token twice.
-        # Three kinds of digit in this prose are NOT claims about the aerodynamics,
-        # and a guard that flags them is a guard that gets switched off:
-        #
-        #   * slot names and source citations -- scanned by their own patterns below.
-        #     Otherwise every `cz[1]` reports its index a second time as a
-        #     "hand-written number", and `lateral.py:616` reports a line number as
-        #     one, which would bury the real findings under the same token twice.
-        #   * UNITS.  "24 ft^2", "ft/s^2", "kg/m^3", "m^2" name a dimension, and the
-        #     2 in the exponent says nothing about this aircraft.  Same for a path
-        #     segment like f16/ or linear/.  Lookarounds, not consumption: eating the
-        #     unit text instead of just its digits joined "ft^2 / 2.2046226" into one
-        #     token and then reported the 2.2046226 unit as the finding.
-        #   * the ARITHMETIC SCAFFOLDING of a formula the header quotes, so a reader
-        #     can check it by hand: the 1000 in "floor(WT * 32.0 / L * 1000)/1000", the
-        #     2 in "p*b/(2V)", "CZ(0)", "CL_a".  The numbers AROUND them -- the weight,
-        #     the speed -- are interpolated and are what the guard is for.
-        #
-        # Everything else is a candidate.  A finding is either a real hand-written
-        # claim to derive, or a number to register with a reason.
-        _UNIT = r"(?:ft|m|kg|lbf|deg|rad|s|slugs)"
-        # Source-line citations name a line of a file this repository does not own, so
-        # they are exempted up front.  SLOT NAMES ARE NOT, and the reason is worth
-        # recording because getting it wrong silently disables a whole check: an
-        # earlier version stripped `\bc[a-z]+\[\d\]` here as well, on the reasoning
-        # that the SLOT pattern below would catch it.  It would not -- the strip runs
-        # first, so by the time SLOT looked, `cy[1]` had already become `x` and the
-        # pattern had nothing left to match.  The slot-name guard was dead code and
-        # passed for a month.  Slot names are now stripped ONLY from the text the
-        # NUMBER pass sees (see SLOT_STRIP), and the SLOT pass sees them intact.
-        SLOT_STRIP = re.compile(r"\bc[a-z]+\[\d\]")
-        STRIP_FIRST = re.compile(
-            # 1. Source-line citations in a file this repository does not own.
-            r"\w+\.py:\d+"
-            # 2. A UNIT PHRASE: the number, the unit that follows it, an optional
-            #    exponent and an optional compound ("24 ft^2", "1.225 kg/m^3"), or the
-            #    unit followed by a number ("ft x 0.3048 m").  The \b after every unit
-            #    is load-bearing twice over: without it the bare `f` alternative matched
-            #    the front of `f16` and left "16" looking like a claim, and a trailing
-            #    capture group ate the word AFTER the unit.
-            rf"|-?\d+(?:\.\d+)?\s*{_UNIT}\b(?:/(?:{_UNIT}\b)?)?(?:\^-?\d+)?"
-            rf"(?:/{_UNIT}\b(?:\^-?\d+)?)?"
-            rf"|{_UNIT}\b(?:\^-?\d+)?(?:/{_UNIT}\b(?:\^-?\d+)?)?\s*x\s*-?\d+(?:\.\d+)?"
-            # ... or a unit standing ALONE, because the number it belongs to is
-            # interpolated and so is not in this literal at all: " ft^2 panel, IS in
-            # the lattice" is the shape every derived figure with a unit takes.
-            rf"|{_UNIT}\b(?:/(?:{_UNIT}\b)?)?(?:\^-?\d+)?(?=[\s,.;]|$)"
-            # 3. Formula scaffolding, so a reader can check the quoted arithmetic by
-            #    hand: the * 1000)/1000 truncation, p*b_ref/(2*AS), CZ(0), K*CL(0)^2,
-            #    k = a0/(2*pi), a coordinate triple [0, 0, 0], SLOT_MAP's own tuple.
-            r"|\(\s*[\d\s,]*\d[\d\s,]*\s*\)"
-            # A bracket literal of NUMBERS -- a coordinate triple, a schema index list.
-            # It has to carry a comma or two digits, because the looser `\[[\d\]]`
-            # this replaces also ate every single-digit SLOT NAME (`cm[1]`, `cx[3]`)
-            # and silently disabled the slot-name guard the same way the strip above
-            # did.  One slot index is one digit, so requiring two is what separates
-            # "[0, 0, 0]" from "cx[1]".
-            r"|\[[\d\s,.-]*(?:[\d\s,.-]*[\d,][\d\s,.-]*[\d\s,.-])\]"
-            r"|\(\s*'-?[a-z]+',\s*\(\([\d\s,]+\)\)\)"
-            r"|\(\d\*\w+\)"
-            r"|\(\d\*pi\)"
-            r"|(?<=\*)\s*-?\d+(?=\s*\))"
-            r"|(?<=/)\s*-?\d+(?=\s*=)"
-            r"|(?<=[\s=(,/])\d+(?=[\s)\],+-])"
-            # 4. Names that contain digits but are names, and cross-references into
-            #    this document and its plan.
-            r"|\bC172\b|\bCessna \d+|\bf16\b|\bF-16\b|\bNP\[\d\]|\bWing \d+"
-            r"|\bfor00\d\.dat\b|\bfor00\d\b|\bSection \d+\b|\b2-D\b|\bDEGREE\b"
-            r"|\bH_DEG\b|\bitem \d+|\bItem \d+|\bTask \d+|\bplan test \d+"
-            # 5. Whole statements about the SCHEMA or the CONVENTION rather than about
-            #    this aircraft's numbers, each matched whole so the digit goes with the
-            #    sentence that explains it.
-            r"|dx = dy = dz = \d+"
-            r"|betha \d+"
-            r"|alpha = \d+ deg"
-            r"|Mach-\d+\.\d+"
-            r"|AR ~ [\d.]+"
-            r"|VT\.cbar/\d+"
-            r"|signed with a -\d+"
-            r"|trailing -\d+"
-            r"|=\s*\+-?\d+ DEGREE"
-            r"|convert else pass`"
-            # 6b. English that is not a count.  "is not one", "Every one is in the
-            #     slot table", "only the one raw number behind each slot" are
-            #     pronouns and intensifiers; "all four Cessna files" and "the three
-            #     compared slots" are claims.  The three shapes that read as counts
-            #     without being any are named whole rather than weakening the pattern,
-            #     because "weakened to the point where it misses four Cessna files"
-            #     is not a guard.
-            r"|\b(?:is not|is|are|was|were|not|Every|every|Only|only|the|a|an)"
-            r"\s+(?:one|two)\b(?=\s+(?:is|are|was|were|above|below|raw|not|in|of|to|and)"
-            r"|,)?"
-            r"|K\*CL\(\d\)\^\d"
-            r"|CD\(\d\) - K\*"
-            r"|\bkg/m\^\d"
-            r"|source speeds for the same Mach [\d.]+"
-            r"|= 0\.0 here\."
-            r"|exactly 0\.0"
-            r"|are 0\.0 and declared"
-            r"|identically 0\.0 on EVERY alpha"
-            r"|leaves at 0\.0 without"
-            r"|They ship 0\.0 because"
-            r"|0\.0 \(missing\)"
-            r"|\(NOT \+\), with dy = dz = \d+"
-        )
-        failures = []
-        for function, lineno, text in self.prose_literals():
-            if self.HEADING_ONLY.match(text.strip()):
-                continue
-            # The three passes do NOT all read the same text, and the reason is that
-            # the strip is lossy in a way that hides findings.  STRIP_FIRST replaces
-            # a unit letter it finds inside a WORD -- `s` in "files" and in "stand"
-            # is the seconds unit -- so "all five files" comes back as "all five
-            # filex" and the spelled-count pattern, which requires a real noun, no
-            # longer matches it.  A mutation test caught exactly that: reintroducing
-            # "all five files" left the guard green.  So the spelled-count and slot
-            # passes read the RAW literal, where neither a unit nor a citation can
-            # hide anything, and only the NUMBER pass -- the one that actually needs
-            # units and citations removed -- reads stripped text, with slot names
-            # removed first so `cy[1]` does not also report its index as a number.
-            cleaned = STRIP_FIRST.sub("x", text)
-            cleaned_no_slots = SLOT_STRIP.sub("x", cleaned)
-            for pattern, kind, haystack in (
-                (self.NUMBER, "number", cleaned_no_slots),
-                (self.SPELLED_COUNT, "spelled count", text),
-                (self.SLOT, "slot name", text),
-            ):
-                for match in pattern.finditer(haystack):
-                    token = match.group(1)
-                    # A registered key is honoured two ways, and the difference
-                    # matters.  A key as short as a bare token is matched EXACTLY:
-                    # "1" is a registered key, and a substring match on it would
-                    # whitelist every literal in the file containing the digit 1.
-                    # A LONGER key is treated as a phrase and matched as a substring
-                    # of the literal, which is what lets a whole sentence -- "cm[1],
-                    # cm[0], cm[2], cmq[0], cn[0], cnp[0], cnr[0] are used as they
-                    # stand" -- be registered as one decision with one reason, instead
-                    # of whitelisting each slot name on its own everywhere it appears.
-                    #
-                    # Phrases are matched against the RAW literal, not the stripped
-                    # haystack: STRIP_FIRST replaces a unit letter it finds inside a
-                    # word -- `s` in "stand" is the seconds unit -- so "are used as they
-                    # stand" comes back as "are used ax they st" and no registered
-                    # sentence would ever match itself.
-                    if token in registered or any(
-                        len(key) >= self._PHRASE_MINIMUM and key in text for key in registered
-                    ):
-                        continue
-                    failures.append(
-                        f"{Path(solvers.__file__).name}:{lineno} in {function}(): a"
-                        f" hand-written {kind} {token!r} reaches a generated file."
-                        f"  Derive it from the run, or register it in"
-                        f" solvers._NON_DERIVABLE_CLAIMS with the reason it cannot be."
-                        f"  Context: ...{haystack[max(0, match.start() - 60):match.end() + 20]}..."
+        with TemporaryDirectory() as tmp:
+            written = build_all(Path(tmp))
+            for path in sorted(written.values()):
+                text = Path(path).read_text()
+                name = Path(path).name
+                payload = json.loads(
+                    "\n".join(
+                        line for line in text.splitlines()
+                        if not line.lstrip().startswith("//")
                     )
-        self.assertEqual(
-            failures, [],
-            "\n".join(failures),
-        )
+                )
+                if "coefficients" not in payload:
+                    continue
+
+                rows = self.SLOT_TABLE.findall(text)
+                with self.subTest(file=name, claim="a per-slot table is printed"):
+                    self.assertTrue(
+                        rows, f"{name} prints no per-slot provenance table at all",
+                    )
+                for slot, _field, _state, _solver, mapped, shipped in rows:
+                    array, index = slot[:-1].split("[")
+                    actual = payload["coefficients"][array][int(index)]
+                    with self.subTest(file=name, slot=slot, claim="written == payload"):
+                        self.assertTrue(
+                            close(shipped, actual),
+                            f"{name} prints {slot} as written {shipped}, but the"
+                            f" payload ships {actual}",
+                        )
+                    with self.subTest(file=name, slot=slot, claim="written == +/- mapped"):
+                        self.assertTrue(
+                            close(shipped, float(mapped))
+                            or close(shipped, -float(mapped)),
+                            f"{name} prints {slot} as mapped {mapped} but written"
+                            f" {shipped}; sign normalisation is the only step between"
+                            " them",
+                        )
+
+                declared = {
+                    entry["slot"] if isinstance(entry, dict) else entry
+                    for entry in payload["provenance"]["missing"]
+                }
+                printed = {match[0] for match in self.ABSENT_ROW.findall(text)}
+                with self.subTest(file=name, claim="absent rows == provenance.missing"):
+                    self.assertEqual(
+                        printed, declared,
+                        f"{name} prints {sorted(printed)} as ABSENT and"
+                        f" provenance.missing says {sorted(declared)}",
+                    )
 
     def test_19b_every_registered_claim_is_still_reachable(self) -> None:
         """A registered reason that no longer reaches the output is itself rot.
