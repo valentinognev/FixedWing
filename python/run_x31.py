@@ -23,9 +23,17 @@ aileron, rudder, throttle — out of its CSV entirely. That is recorded rather
 than papered over: this runner's header is the F-16's eleven columns verbatim
 and then the X-31's fourteen, seven commanded and seven flown, so nothing is
 dropped and nothing is zero-padded. The command and the actuator output are
-separate because the actuator dynamics lag the command, and because the port
-established that a command column can carry algebraic-loop samples that never
-flew. The channel order comes from `host_controllers.CONTROL_CHANNELS`, which
+separate because the actuator dynamics lag the command: the flown column is
+where each channel's transfer function has got to. A commanded column is not
+the controller's raw demand. `x31_sim._command` builds it on the same seam
+the right-hand side uses, the 5 ms held measurement and then
+`actuators._saturated_command`, so it is the input `actuators.derivative`
+integrated and every sample in it is one the plant was driven with. That is a
+deliberate divergence from the port's own log columns: the port's
+`_open_loop_rhs` in `x31/simulate.py` replays a recorded run, reads the
+`x31sim_control` command columns for the aero block and flies the recorded
+actuator output instead, because those command columns carry algebraic-loop
+spikes. The channel order comes from `host_controllers.CONTROL_CHANNELS`, which
 for the X-31 IS the CSV control column order; for the F-16 it is the LQR
 four-vector's order instead, because that CSV has no control columns at all.
 

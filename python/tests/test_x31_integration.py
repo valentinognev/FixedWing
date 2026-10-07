@@ -23,10 +23,8 @@ from host_controllers import (  # noqa: E402
     INPUT_MODES,
     control_channels,
     controllers_for,
-    default_controller,
     input_modes_for,
     planes,
-    resolve_controller,
     resolve_mode,
 )
 import x31_sim  # noqa: E402
@@ -252,14 +250,14 @@ class TestControllerDispatch(unittest.TestCase):
                 self.assertNotIn("open_loop", controllers_for(plane))
         self.assertNotIn("plant", DEFAULT_CONTROLLER.values())
         with self.assertRaises(ValueError):
-            resolve_controller("x31", "plant")
+            resolve_mode("x31", "plant")
         with self.assertRaises(ValueError):
-            resolve_controller("x31", "open_loop")
+            resolve_mode("x31", "open_loop")
 
     def test_the_open_loop_input_mode_is_named_and_separate(self):
         self.assertEqual(input_modes_for("x31"), ("open_loop",))
         self.assertEqual(input_modes_for("f16"), ())
-        self.assertEqual(resolve_mode("x31"), default_controller("x31"))
+        self.assertEqual(resolve_mode("x31"), DEFAULT_CONTROLLER["x31"])
         self.assertEqual(resolve_mode("x31", open_loop=True), "open_loop")
         self.assertEqual(resolve_mode("x31", "ndi"), "ndi")
         with self.assertRaises(ValueError) as caught:
@@ -303,17 +301,17 @@ class TestControllerDispatch(unittest.TestCase):
     def test_each_plane_has_one_unambiguous_default(self):
         for plane, controllers in CONTROLLERS.items():
             with self.subTest(plane=plane):
-                default = default_controller(plane)
+                default = DEFAULT_CONTROLLER[plane]
                 self.assertIn(default, controllers)
-                self.assertEqual(resolve_controller(plane), default)
-                self.assertEqual(resolve_controller(plane, None), default)
-        self.assertEqual(default_controller("x31"), "gain_schedule")
-        self.assertEqual(default_controller("f16"), "lqr")
+                self.assertEqual(resolve_mode(plane), default)
+                self.assertEqual(resolve_mode(plane, None), default)
+        self.assertEqual(resolve_mode("x31"), "gain_schedule")
+        self.assertEqual(resolve_mode("f16"), "lqr")
 
 
     def test_asking_the_x31_for_the_f16s_lqr_is_refused(self):
         with self.assertRaises(ValueError) as caught:
-            resolve_controller("x31", "lqr")
+            resolve_mode("x31", "lqr")
         self.assertIn("gain_schedule", str(caught.exception))
 
 
@@ -321,12 +319,12 @@ class TestControllerDispatch(unittest.TestCase):
         for controller in ("gain_schedule", "ndi", "open_loop", "plant"):
             with self.subTest(controller=controller):
                 with self.assertRaises(ValueError):
-                    resolve_controller("f16", controller)
+                    resolve_mode("f16", controller)
 
 
     def test_an_unknown_plane_is_refused_by_name(self):
         with self.assertRaises(ValueError) as caught:
-            resolve_controller("f17")
+            resolve_mode("f17")
         self.assertIn("unknown plane", str(caught.exception))
         with self.assertRaises(ValueError):
             controllers_for("f17")
@@ -442,7 +440,7 @@ class TestControllerDispatch(unittest.TestCase):
         from f16.llc import F16Llc
 
         self.assertIs(run_f16.F16Llc, F16Llc)
-        self.assertEqual(default_controller("f16"), "lqr")
+        self.assertEqual(resolve_mode("f16"), "lqr")
 
 
     def test_the_f16_csv_leaves_all_four_of_its_channels_unwritten(self):

@@ -90,25 +90,6 @@ def controllers_for(plane: str) -> tuple[str, ...]:
         ) from None
 
 
-def default_controller(plane: str) -> str:
-    """The controller `plane` runs when the caller does not name one."""
-    controllers_for(plane)
-    return DEFAULT_CONTROLLER[plane]
-
-
-def resolve_controller(plane: str, controller: str | None = None) -> str:
-    """Resolve `controller` for `plane`, or the default, raising on a mismatch."""
-    allowed = controllers_for(plane)
-    if controller is None:
-        return DEFAULT_CONTROLLER[plane]
-    if controller not in allowed:
-        raise ValueError(
-            f"plane {plane!r} has no controller {controller!r}; "
-            f"it runs {', '.join(allowed)}"
-        )
-    return controller
-
-
 def control_channels(plane: str) -> tuple[str, ...]:
     """The control channels `plane` exposes, in this table's order.
 
