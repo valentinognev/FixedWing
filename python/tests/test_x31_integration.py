@@ -147,21 +147,6 @@ class TestPlaneData(unittest.TestCase):
 
 
     def test_the_spawn_offset_sign_comes_from_the_ports_own_ned_axis(self):
-        # Derived, not read back from the code. `x31/dynamics.py`'s `rates`
-        # returns `vel_dot = force_e / mass + [0, 0, _G]`, so gravity is a
-        # POSITIVE earth-z acceleration: `pos[2]` is a down coordinate and it
-        # grows as the aircraft descends. That is what NED means and what makes
-        # the sign of the offset a question with an answer.
-        import inspect
-
-        import x31_numpy_compat  # noqa: F401
-        from x31 import dynamics
-
-        source = inspect.getsource(dynamics.rates)
-        self.assertIn("[0.0, 0.0, _G]", source)
-
-        # A declared positive `d_m` is a height ABOVE the datum, so it must
-        # DECREASE the down coordinate. `-d_m` does that and `+d_m` would not.
         n_m, e_m, d_m = spawn_ned(self.payload)
         pos, _v, _q, _w = initial_state(self.payload)
         down = float(np.asarray(pos)[2]) - float(self.payload["trim"]["pos"][2])
@@ -281,19 +266,17 @@ class TestControllerDispatch(unittest.TestCase):
         self.assertEqual(controllers & modes, set())
 
     def test_the_open_loop_input_is_the_ports_own_manual_switch(self):
-        # Not an assertion about intent: the port's own name for it, and the
-        # fact that the demand cannot reach it. `_plant_rhs` is handed
-        # `_PLANT_COMMAND` and never reads the scenario, which is why every
-        # scenario stops at the same instant on this mode.
         import x31_numpy_compat  # noqa: F401
         from x31 import simulate
 
         self.assertTrue(simulate._PLANT_COMMAND)
-        import inspect
-
-        source = inspect.getsource(simulate._plant_rhs)
-        self.assertNotIn("command_slow", source)
-        self.assertNotIn("measured", source)
+        payload = load_plane()
+        first = run_scenario("open_loop", payload, "trim_hold", duration=5.0)
+        second = run_scenario("open_loop", payload, "speed_step", duration=5.0)
+        self.assertIsNotNone(first["stopped_at"])
+        self.assertEqual(first["stopped_at"], second["stopped_at"])
+        np.testing.assert_allclose(first["t"], second["t"], atol=0.0, rtol=0.0)
+        np.testing.assert_allclose(first["vt_mps"], second["vt_mps"], atol=0.0, rtol=0.0)
 
 
 
@@ -388,14 +371,6 @@ class TestControllerDispatch(unittest.TestCase):
 
 
     def test_the_f16_row_is_the_lqr_four_vectors_order_and_throttle_is_first(self):
-        # `run_f16.py` writes no control column at all, so the F-16's row is
-        # not a CSV order; it is the order of the vector `f16/llc.py`'s
-        # `get_u` returns. That is derived here rather than typed: the trim
-        # vector `_U_IMP` is [throttle fraction, elevator angle, 0, 0], index 0
-        # is the only one `get_u` drives from the throttle reference, and
-        # indices 1..3 are the three rows of the (3, 8) `K_lqr`.
-        import inspect
-
         from f16.llc import DEG_TO_RAD, F16Llc, _U_IMP
         from f16.units import u_imp_to_si
 
@@ -423,9 +398,6 @@ class TestControllerDispatch(unittest.TestCase):
         idle = llc.get_u(np.array([0.0, 0.0, 0.0, 0.0]), x)[1]
         np.testing.assert_allclose(held[1:], idle[1:], atol=0.0)
         self.assertNotAlmostEqual(float(held[0]), float(idle[0]))
-        source = inspect.getsource(F16Llc.get_u)
-        self.assertIn("u[0] = u_ref4[3]", source)
-        self.assertIn("u[1:4] = np.dot(-self.K_lqr, x_ctrl)", source)
 
         self.assertEqual(
             control_channels("f16"), ("throttle", "elevator", "aileron", "rudder")

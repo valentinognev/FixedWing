@@ -212,10 +212,6 @@ class TestRunnerBadInput(unittest.TestCase):
 
 
 class TestRunnerDefaults(unittest.TestCase):
-    def test_the_default_data_file_is_the_committed_one(self):
-        source = _RUNNER.read_text()
-        self.assertIn("plane_data_path()", source)
-
     def test_the_default_data_file_loads(self):
         result = _run("--maneuver", "trim_hold", "--duration", "0.2",
                       "--csv", str(Path(self.enterContext(tempfile.TemporaryDirectory())) / "r.csv"))

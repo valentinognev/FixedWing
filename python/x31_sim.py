@@ -226,8 +226,7 @@ def initial_state(payload: dict, spawn: tuple[float, float, float] | None = None
 
     This was once reported as a sign-inverted spawn. It is not: the arithmetic
     above follows from the port's own gravity term, and an earlier review
-    reached the opposite conclusion without that derivation. The tests derive
-    this from `dynamics.rates` rather than from this function's output.
+    reached the opposite conclusion without that derivation.
     """
     trim = payload["trim"]
     pos = np.array(trim["pos"], dtype=float)
