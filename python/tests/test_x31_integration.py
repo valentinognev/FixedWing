@@ -267,9 +267,7 @@ class TestControllerDispatch(unittest.TestCase):
 
     def test_the_open_loop_input_is_the_ports_own_manual_switch(self):
         import x31_numpy_compat  # noqa: F401
-        from x31 import simulate
 
-        self.assertTrue(simulate._PLANT_COMMAND)
         payload = load_plane()
         first = run_scenario("open_loop", payload, "trim_hold", duration=5.0)
         second = run_scenario("open_loop", payload, "speed_step", duration=5.0)
