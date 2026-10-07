@@ -1,0 +1,83 @@
+{
+  "plane": "x31",
+  "provenance": {
+    "port": "Dynamic-And-Control-Model-Of-SuperManeuverable-Aircraft",
+    "commit": "c03cc39",
+    "license": "GPLv2, Copyright (C) 2016 Hsin-Yi Kang",
+    "vendored_at": "python/x31/",
+    "trim_source": "X31dynamics_03_init, level flight at 50 m/s",
+    "notes": [
+      "The plant, aero, actuators, maneuver generator and both controllers live in python/x31 as vendored GPLv2 source; they are not FixedWing's to edit.",
+      "Only the trim point, the spawn and the scenario table are data, so they live here rather than in Python source. The scenario table is also the maneuver-generator command: x31_sim.command_at reads it, and the port's own maneuver generator and its stored Signal Builder export are not used.",
+      "Controller state counts and the gain-schedule measurement delay are read from the port itself at run time, not restated here."
+    ]
+  },
+  "frames": {
+    "earth": "NED, +z down. The port's dynamics.rates returns vel_dot = force_e / mass + [0, 0, G], so gravity is a POSITIVE earth-z acceleration: pos[2] is a down coordinate and it grows as the aircraft descends. This is what makes the CSV d_m column a down coordinate here, as it is for run_f16.py.",
+    "body": "FRD. Body +x is forward, +y right, +z down.",
+    "state_units": "m, m/s, rad, rad/s. The port is SI natively and has no unit conversion layer.",
+    "control_units": "aileron, canard, flap, rudder, thrust_pitch and thrust_yaw are degrees; thrust is kN."
+  },
+  "spawn": {
+    "description": "The default start, applied as pos + [n_m, e_m, -d_m] by x31_sim.initial_state. n_m and e_m are the NED north and east offsets from the trim datum. d_m is NOT a down coordinate: it is the height ABOVE the trim datum, so a positive d_m raises the aircraft by decreasing the NED down coordinate. That is the only self-consistent reading, because the leading minus is fixed by the port's own +[0, 0, G] gravity term. Every run uses this unless it is given an explicit spawn, so the declaration is load-bearing rather than decorative.",
+    "d_m_note": "457.2 m is 1500 ft, the same datum run_f16.py spawns at (f16_setup.json declares d_m = -457.2 there, because the F-16's d_m IS the CSV down coordinate; see f16/units.py ned_m_to_f16_m, which returns -d as the altitude).",
+    "n_m": 2000.0,
+    "e_m": -1500.0,
+    "d_m": 457.2
+  },
+  "trim": {
+    "description": "Level flight at 50 m/s. q is the port's quaternion (w, x, y, z) and carries the 4.8648645161451505 deg trim incidence; w is zero. pos is the datum the spawn offsets are applied to.",
+    "pos": [0.0, 0.0, 0.0],
+    "vel": [50.0, 0.0, 0.0],
+    "q": [0.99909897, 0.0, 0.0424412, 0.0],
+    "w": [0.0, 0.0, 0.0]
+  },
+  "ramp_semantics": {
+    "t_s": "A knot: the value commanded AT that knot time is that row's value, and the demand is HELD at that value until the next knot moves it. A step with no ramp_s is a plain hold, so its value steps in at that knot's t_s. This is not upstream's behaviour: x31/maneuver.py's command reads one exported Signal Builder table and np.interp's over its rows, which is LINEAR between knots, and it has no ramp concept at all. A scenario is a step table rather than a stored waveform, and holding to the next knot is what makes two back-to-back ramps continuous.",
+    "first_knot": "A scenario's first step must be at t_s = 0, and the loader refuses any other value: its demand is HELD from t = 0, so a first row at t_s = 2 would fly that row from the start of the run while the file said it began at 2 s. Start the first knot at t_s = 0 and put later knots at the times the run wants them.",
+    "ramp_s": "FixedWing's own addition, and it means one thing: begin moving toward this knot's value ramp_s before t_s, and reach it exactly at t_s. The window is [t_s - ramp_s, t_s], clamped so it never opens before the previous knot's time -- the table describes no value there, so the previous value is held until the window opens. ramp_s is never stretched to reach t_s and never ignored: a negative or non-numeric one, and a positive one on the first step (which has no previous knot to move away from), are refused by the loader rather than flown as a hold. The clamp is what makes consecutive ramped steps continuous by construction, since each ramp ends holding the value it reached and the next begins from it.",
+    "no_scenario_relies_on_the_clamp": "Every ramp_s below is shorter than the gap back to the previous knot, so every declared ramp_s is the ramp actually flown. The clamp is honoured anyway; a test asserts it and asserts that nothing shipped needs it."
+  },
+  "scenarios": {
+    "trim_hold": {
+      "description": "Hold the trim demand for 10 s. The only step is the trim demand itself, so this is the no-disturbance run. It does not sit still: the plant starts trimmed but the controller integrators start at zero, as the diagram's integrator blocks do, so every run opens with the port's own canard transient before the response settles.",
+      "duration_s": 10.0,
+      "steps": [
+        { "t_s": 0.0, "V": 50.0, "Chi": 0.0, "Gamma": 0.0 }
+      ]
+    },
+    "chi_step": {
+      "description": "Ramp the heading demand 30 deg right and hold it. The ramp runs over [2, 8] s and reaches 30 deg exactly at t_s = 8. Lateral, so it exercises aileron, rudder and thrust-vector yaw. The ramp is load-bearing: the same step taken instantaneously drives alpha past the diagram's 85 deg limit and ends the run.",
+      "duration_s": 20.0,
+      "steps": [
+        { "t_s": 0.0, "V": 50.0, "Chi": 0.0, "Gamma": 0.0 },
+        { "t_s": 8.0, "ramp_s": 6.0, "V": 50.0, "Chi": 30.0, "Gamma": 0.0 }
+      ]
+    },
+    "speed_step": {
+      "description": "Step the airspeed demand from 50 to 80 m/s at t = 2 s and hold it. Longitudinal, so it exercises canard and throttle. No ramp: a 30 m/s demand jump is inside what the port's own transient absorbs.",
+      "duration_s": 20.0,
+      "steps": [
+        { "t_s": 0.0, "V": 50.0, "Chi": 0.0, "Gamma": 0.0 },
+        { "t_s": 2.0, "V": 80.0, "Chi": 0.0, "Gamma": 0.0 }
+      ]
+    },
+    "gamma_pull": {
+      "description": "Ramp the flight-path-angle demand 20 deg up and hold it. The ramp runs over [2, 8] s and reaches 20 deg exactly at t_s = 8. Longitudinal at high alpha, so it reaches the gain schedule's high-alpha rows. The ramp is load-bearing here too: the same step taken instantaneously ends the run at the 85 deg limit.",
+      "duration_s": 20.0,
+      "steps": [
+        { "t_s": 0.0, "V": 50.0, "Chi": 0.0, "Gamma": 0.0 },
+        { "t_s": 8.0, "ramp_s": 6.0, "V": 50.0, "Chi": 0.0, "Gamma": 20.0 }
+      ]
+    },
+    "chi_then_gamma": {
+      "description": "Two ramped steps back to back, which is the case the earlier integration never committed: the heading ramp runs over [2, 8] s to 20 deg and the flight-path-angle ramp opens at t = 8 over [8, 14] s to 15 deg up. The second window opens exactly where the first closes, so the demand is continuous across t = 8 by construction rather than by a clamp. A turn and then a pull, which is what puts the gain schedule's mid- and high-alpha rows in one run.",
+      "duration_s": 30.0,
+      "steps": [
+        { "t_s": 0.0, "V": 50.0, "Chi": 0.0, "Gamma": 0.0 },
+        { "t_s": 8.0, "ramp_s": 6.0, "V": 50.0, "Chi": 20.0, "Gamma": 0.0 },
+        { "t_s": 14.0, "ramp_s": 6.0, "V": 50.0, "Chi": 20.0, "Gamma": 15.0 }
+      ]
+    }
+  }
+}

@@ -6,3 +6,7 @@ pymavlink>=2.4
 mss>=9.0
 matplotlib>=3.7
 # Camera pane uses cv2.namedWindow / imshow (not the headless build).
+# Host-only F-16 and 13-state plant paths need scipy too.
+scipy>=1.10
+# python/x31/: the port's gain schedule and NDI solve their algebraic loops with
+# scipy.optimize least_squares / fsolve. Nothing else on the X-31 side needs it.
