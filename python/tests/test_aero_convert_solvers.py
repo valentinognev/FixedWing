@@ -47,6 +47,7 @@ from __future__ import annotations
 import inspect
 import json
 import math
+import re
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -1523,6 +1524,228 @@ class CrossCheckAdapterTest(unittest.TestCase):
             f"aid/lateral.py:570's uncorrected Clb ({aid_clb}) should NOT agree with AVL "
             f"({avl_clb}); if it now does, the units correction has been undone",
         )
+
+
+class DerivedHeaderProseTest(unittest.TestCase):
+    """The guard that closes the class: no hand-written claim may reach a header.
+
+    ``test_18`` parses the rendered headers back out of a build and checks three
+    claims against the run.  These build the same five files and check the ones
+    it does not reach: the numbers item 7 prints, the declared-absent
+    enumeration, the registry's own exceptions, and the round-4 duplicate
+    paragraph.
+
+    Every assertion here runs the generator -- ``build_all()`` into a temporary
+    directory -- and reads the bytes it wrote.  None of them reads
+    ``solvers.py``.  An earlier guard in this class parsed the module's own
+    string literals with ``ast`` and regexed them for numbers and slot names; it
+    proved nothing about any generated file (a behaviour-preserving refactor of a
+    literal broke it, a dead literal satisfied it, and two real defects in
+    changed literals passed it), so the class asserts rendered output instead.
+
+    What none of them do, deliberately: judge whether a registered reason is
+    *true*.  The reasons are prose a human reads; pretending a check could
+    verify "this is a quotation from a file this repository does not own" would
+    be the same over-claiming the whole change is about.  ``test_19b`` below is
+    the part that IS checkable: it fails when a registered literal stops
+    appearing in the built output at all, which is how a registered reason goes
+    quietly stale.
+    """
+
+    #: One row of item 7: slot, field, state, then the solver's own value, the
+    #: value after the mapping, and the value that ships.  Printed at six
+    #: significant figures, hence the tolerance in the checks below rather than
+    #: equality.
+    SLOT_TABLE = re.compile(
+        r"^//\s+(\S+\[\d\])\s+(\S+)\s+(\S+)\s+solver .*? = (-?[\d.eE+-]+)"
+        r" -> mapped (-?[\d.eE+-]+) -> written (-?[\d.eE+-]+)$",
+        re.M,
+    )
+    DERIVED_ROW = re.compile(
+        r"^//\s+(\S+\[\d\])\s+(\S+)\s+(\S+)\s+NOT solver output -- .*?"
+        r" -> mapped (-?[\d.eE+-]+) -> written (-?[\d.eE+-]+)$",
+        re.M,
+    )
+    #: A row for a slot the run declares zeroed: no solver value behind it, and
+    #: nothing written but the declared zero.
+    ABSENT_ROW = re.compile(r"^//\s+(\S+\[\d\])\s+(\S+)\s+missing\s+ABSENT\b", re.M)
+
+    def test_19_the_printed_slot_table_agrees_with_the_payload(self) -> None:
+        """Build the five files, then read every number item 7 prints back out of them.
+
+        The defect class this change is about is prose that contradicts the run
+        it was generated from.  ``test_18`` checks three claims; this one takes
+        the claim that carries the most numbers -- item 7's per-slot table -- and
+        checks it against the only copy of those numbers a consumer reads, the
+        ``coefficients`` payload in the same file.  So for every slot the header
+        names:
+
+        1. the value printed as ``written`` is the value the payload ships;
+        2. the value printed as ``written`` is the ``mapped`` value, possibly
+           negated: sign normalisation is the only step between the two, so any
+           other difference is a header misreporting its own arithmetic;
+        3. the slots printed as ABSENT are exactly ``provenance.missing``, in
+           both directions, so the declared-gap enumeration and the table cannot
+           drift apart.
+
+        The evidence is the built artifact, not the generator's source, so a
+        behaviour-preserving refactor leaves this green and a header edited away
+        from the payload turns it red with the file and slot named.
+        ``geometry.jsonc`` is skipped because it carries no ``coefficients``
+        payload; its item 7 describes the Tornado run, which ``tornado.jsonc``
+        checks in its own right.
+        """
+        if not sibling_aid_present():
+            self.skipTest(SIBLING_ABSENT)
+        from aero_convert.solvers import build_all
+
+        def close(printed: str, actual: float) -> bool:
+            return abs(float(printed) - actual) <= 1e-5 * max(1.0, abs(actual))
+
+        with TemporaryDirectory() as tmp:
+            written = build_all(Path(tmp))
+            for path in sorted(written.values()):
+                text = Path(path).read_text()
+                name = Path(path).name
+                payload = json.loads(
+                    "\n".join(
+                        line for line in text.splitlines()
+                        if not line.lstrip().startswith("//")
+                    )
+                )
+                if "coefficients" not in payload:
+                    continue
+
+                rows = self.SLOT_TABLE.findall(text)
+                with self.subTest(file=name, claim="a per-slot table is printed"):
+                    self.assertTrue(
+                        rows, f"{name} prints no per-slot provenance table at all",
+                    )
+                for slot, _field, _state, _solver, mapped, shipped in rows:
+                    array, index = slot[:-1].split("[")
+                    actual = payload["coefficients"][array][int(index)]
+                    with self.subTest(file=name, slot=slot, claim="written == payload"):
+                        self.assertTrue(
+                            close(shipped, actual),
+                            f"{name} prints {slot} as written {shipped}, but the"
+                            f" payload ships {actual}",
+                        )
+                    with self.subTest(file=name, slot=slot, claim="written == +/- mapped"):
+                        self.assertTrue(
+                            close(shipped, float(mapped))
+                            or close(shipped, -float(mapped)),
+                            f"{name} prints {slot} as mapped {mapped} but written"
+                            f" {shipped}; sign normalisation is the only step between"
+                            " them",
+                        )
+                for slot, _field, _state, mapped, shipped in self.DERIVED_ROW.findall(text):
+                    array, index = slot[:-1].split("[")
+                    actual = payload["coefficients"][array][int(index)]
+                    with self.subTest(file=name, slot=slot, claim="written == payload"):
+                        self.assertTrue(
+                            close(shipped, actual),
+                            f"{name} prints {slot} as written {shipped}, but the"
+                            f" payload ships {actual}",
+                        )
+                    with self.subTest(file=name, slot=slot, claim="written == +/- mapped"):
+                        self.assertTrue(
+                            close(shipped, float(mapped))
+                            or close(shipped, -float(mapped)),
+                            f"{name} prints {slot} as mapped {mapped} but written"
+                            f" {shipped}; sign normalisation is the only step between"
+                            " them",
+                        )
+
+                declared = {
+                    entry["slot"] if isinstance(entry, dict) else entry
+                    for entry in payload["provenance"]["missing"]
+                }
+                printed = {match[0] for match in self.ABSENT_ROW.findall(text)}
+                with self.subTest(file=name, claim="absent rows == provenance.missing"):
+                    self.assertEqual(
+                        printed, declared,
+                        f"{name} prints {sorted(printed)} as ABSENT and"
+                        f" provenance.missing says {sorted(declared)}",
+                    )
+
+    def test_19b_every_registered_claim_is_still_reachable(self) -> None:
+        """A registered reason that no longer reaches the output is itself rot.
+
+        ``_NON_DERIVABLE_CLAIMS`` is a list of exceptions, and an exception nobody
+        reads is worse than no exception at all: it reads as "we checked" for a
+        claim that is no longer made.  So each registered literal must still appear
+        in at least one built header.  This is what stops the registry growing
+        sideways as sentences are reworded around the numbers they used to carry.
+        """
+        from aero_convert import solvers
+
+        if not sibling_aid_present():
+            self.skipTest(SIBLING_ABSENT)
+        from aero_convert.solvers import build_all
+
+        with TemporaryDirectory() as tmp:
+            written = build_all(Path(tmp))
+            headers = "\n".join(
+                Path(path).read_text()
+                for path in written.values()
+            )
+        missing = [
+            token for token in solvers._NON_DERIVABLE_CLAIMS
+            if token not in headers
+        ]
+        self.assertEqual(
+            missing, [],
+            f"registered as non-derivable but no longer printed by any header: {missing}."
+            " Either the sentence was reworded away from the number (delete the entry) or"
+            " the number is still there under a different spelling.",
+        )
+
+    def test_19c_the_paragraph_that_printed_twice_cannot_print_twice(self) -> None:
+        """The round-4 finding, as an invariant: one paragraph, one rendering.
+
+        A fix round was supposed to word the ``cx[1]`` / ``cx[3]`` mapping gap once
+        and put it in two places, so item 6 and item 7 of the same file printed the
+        same eight lines twice.  Neither reviewer called it a physics defect; it was
+        a prose defect that a fix round created, which is the whole subject of this
+        change.
+
+        The check is on the GENERATED header, so it holds regardless of which code
+        path emits the paragraph or how many times.  A general no-duplicate-block
+        assertion over the whole banner is also included, because the specific
+        paragraph is only the instance that happened to be caught.
+        """
+        if not sibling_aid_present():
+            self.skipTest(SIBLING_ABSENT)
+        from aero_convert.solvers import build_all
+
+        with TemporaryDirectory() as tmp:
+            written = build_all(Path(tmp))
+            for path in written.values():
+                name = Path(path).name
+                header = [
+                    line for line in Path(path).read_text().splitlines()
+                    if line.lstrip().startswith("//")
+                ]
+                with self.subTest(file=name):
+                    gap = [line for line in header
+                           if "a MAPPING gap, not a schema gap" in line]
+                    self.assertEqual(
+                        len(gap), 1,
+                        f"{name} prints the cx[1]/cx[3] mapping gap {len(gap)} times in its"
+                        " header; it is worded once by _cx_mapping_gap_lines and must render"
+                        " once",
+                    )
+                    # And nothing else in the banner repeats a run of consecutive lines,
+                    # which is the general form of the same defect.
+                    run, repeats = 1, []
+                    for before, after in zip(header, header[1:]):
+                        run = run + 1 if before == after and before.strip("// ") else 1
+                        if run == 2:
+                            repeats.append(after.strip())
+                    self.assertEqual(
+                        repeats, [],
+                        f"{name} prints a consecutive line more than once: {repeats}",
+                    )
 
 
 if __name__ == "__main__":

@@ -8,9 +8,9 @@
 //    Sibling commit: b6921558abfce291a029a0809b283c7978da2d3c.  It is recorded
 //    because an upstream commit has broken this converter twice, silently both times -- a rebuild
 //    that moves it should be a one-line diff in this field and nothing else.
-//    Mesh: 10 chordwise x 5 spanwise (the AID batch default).  NP[0],
-//    the AR 33.3, S 3 ft^2 panel, is KEPT in the lattice and carries
-//    9.6% of the aircraft's CL at the trim alpha.
+//    Mesh: 10 chordwise x 5 spanwise (the AID batch default).
+//    NP[0], the AR 33.33, S 3 ft^2 panel, IS in the lattice and carries
+//    9.6 % of the aircraft's CL at the trim alpha.
 //    Flight condition from the source AERO: Mach 0.03, altitude 0.0 ft, betha 0.0 rad,
 //    evaluated at alpha = 4 deg (the middle of AERO.ALSCHD), V = 3.1112 m/s,
 //    rho = 1.225056 kg/m^3.  Tornado's state["AS"] is in FT/S -- it is 10.2073 ft/s, and AID works in feet
@@ -24,15 +24,20 @@
 //    13.2.  Nothing in this file may be compared with a full-scale figure.
 //
 // 3. MASS
-//    mass_kg = 72.574 is derived from the source's own AERO.WT = 5 slugs:
-//    floor(AERO.WT * 32.0 ft/s^2 / 2.2046226 lbf/kg * 1000)/1000 = floor(5 * 32.0 / 2.2046226 * 1000)/1000 = 72.574 kg, truncated from 72.5747799 kg,
-//    i.e. 160 lbf.  A slug is a mass unit, so the source's WT converts instead as
-//    AERO.WT * SLUG_TO_KG = 72.96951 kg; the plan's figure assumes g = 32.0 ft/s^2, which
-//    appears nowhere in the source (its own G_FT_S2 is 32.174), so the plan is 0.54 % low and everything derived from the weight is too.
-//    This is NOT a geometrically similar 1/3 scale C172,
-//    which would weigh about 53.5 kg, so no scaling of a published full-scale number is self-
-//    consistent and none was attempted.  ixx, iyy, izz come from radius-of-gyration rules on THIS
-//    mass and THIS span (see below); ixz = 0 and he = 0.
+//    mass_kg = 72.574 is derived from the source's own AERO.WT = 5
+//    slugs: floor(AERO.WT * 32.0 ft/s^2 / 2.2046226 lbf/kg *
+//    1000)/1000 = floor(5 * 32.0 / 2.2046226 * 1000)/1000 = 72.574
+//    kg, truncated from 72.5747799 kg, i.e. 160 lbf.
+//    A slug is a mass unit, so the source's WT converts instead as
+//    AERO.WT * SLUG_TO_KG = 72.96951 kg; the plan's figure assumes g
+//    = 32.0 ft/s^2, which appears nowhere in the source (its own
+//    G_FT_S2 is 32.174), so the plan is 0.54 % low and everything
+//    derived from the weight is too.
+//    This is NOT a geometrically similar 1/3 scale C172, which would
+//    weigh about 53.5 kg, so no scaling of a published full-scale
+//    number is self-consistent and none was attempted. ixx, iyy, izz
+//    come from radius-of-gyration rules on THIS mass and THIS span
+//    (see below); ixz = 0, he = 0 here.
 //
 // 4. UNIT CONVERSIONS APPLIED, AND THE ONES NOT TRUSTED
 //    length: ft x 0.3048 = 0.3048 m; angle: degrees x 57.29577951308232 (= DEG_TO_RAD) per radian.
@@ -56,23 +61,33 @@
 //    slopes shift with slopes (Cm_a with CZ_a, Cm_Q with CZ_Q, Cm_de with CZ_de
 //    reconstructed exactly from the control row's wind-axis CL and CD) and the Cm0
 //    intercept shifts with the body-z intercept CZ(0), which at alpha = 0 is the same
-//    number as the -CL(0) that gives cz[0] its sign.  CL_a and CZ_a differ by 0.34 % here because
-//    NP[0] is in the lattice.  The yaw slopes shift with the BODY-Y side force (Cn_beta
-//    with CY_b, Cn_p with CY_P, Cn_r with CY_R).  No drag coefficient enters any shift: cx reaches
-//    the pitch line only through dz and the yaw line only through dy, and both arms are zero
-//    for this aircraft.
+//    number as the -CL(0) that gives cz[0] its sign. In MAGNITUDE,
+//    CL_a and CZ_a differ by 0.34 % here because NP[0] is in this
+//    file's lattice; the opposite signs are the `cz = -CL` identity,
+//    not a discrepancy. The yaw slopes shift with the BODY-Y side
+//    force (Cn_beta with CY_b, Cn_p with CY_P, Cn_r with CY_R). No
+//    drag coefficient enters any shift: cx reaches the pitch line
+//    only through dz and the yaw line only through dy, and both arms
+//    are zero for this aircraft.
 //
 // 6. SIGN CONVENTION
 //    cz is the body +z force coefficient with z DOWN, so cz = -CL and cz[1] is NEGATIVE for a
 //    stable aircraft (CL_alpha = -cz[1] > 0), and cm[1] is negative too.  That identity is
-//    load-bearing; it is what makes data/planes/linear/morelli.json's cz[1] = -4.5 CORRECT, not a
-//    defect of that file.
-//    data/planes/linear/morelli.json is the sign-convention authority wherever it disagrees with
-//    data/planes/f16/morelli.json.  It WINS on cm[1] (-0.8 against +0.0466) and on cnp[0] (-0.03
-//    against +0.0268), where a positive value would be statically unstable.  It LOSES on cnda[0]
-//    (+0.01 against -0.0335), where adverse yaw fixes the sign.  A reader must not assume the two
-//    sets share a convention: this file and linear/morelli.json agree on cz[1] and disagree with
-//    the F-16 set on cm[1] and cnp[0].
+//    load-bearing.
+//    data/planes/linear/morelli.json's cz[1] = -4.5 AGREES with `cz =
+//    -CL` and is correct; do not describe it as a defect.
+//    data/planes/linear/morelli.json is the sign-convention authority
+//    wherever it disagrees with data/planes/f16/morelli.json, read
+//    from those two files rather than quoted. Of the four slots
+//    compared here, it:
+//    WINS on two of them: cm[1] (-0.8 against +0.046607), cnp[0]
+//    (-0.03 against +0.0267765).
+//    LOSES on one of them: cnda[0] (0.01 against -0.0334872).
+//    A positive cm[1] and cnp[0] would be statically unstable, and
+//    adverse yaw fixes the cnda[0] sign.
+//    On one slot the two reference sets already agree in sign (cz[1]
+//    = -4.5), neither is at issue; a reader must not assume the sets
+//    share a convention elsewhere.
 //
 //    NO FRAME CONVERSION IS APPLIED IN THIS FILE, and that is the new normal.
 //    aid/axes.py is the sibling's single home for solver signs and
@@ -104,16 +119,18 @@
 //    of which the rate and sideslip columns -- the ones this header used to print on
 //    their own, under words that claimed they were the whole list -- are:
 //      ['cd_q', 'cn_p']
-//    Those are convention differences, not frame errors: the invariant table is the
-//    final authority, and each is a slot whose SIGN the two in-tree reference files
-//    disagree on.  cm0 carries no invariant and is recorded as not-normalised.
+//    Those are convention differences, not frame errors: the
+//    invariant table is the final authority, and each is a slot whose
+//    SIGN the two in-tree reference files disagree on -- see the
+//    comparison read from those files above. cm0 carries no invariant
+//    and is recorded as not-normalised.
 //
 //    A CAVEAT on the 9 genuinely per-phat / per-qhat / per-rhat slots:
 //    cyp[0], cyr[0], czq[0], cmq[0], clp[0], clr[0], cnp[0], cnr[0], cxq[0].
-//    cy[1] and cy[2] are NOT in that list: they are cy_da and cy_dr, the
-//    aileron and rudder side force per radian of CONTROL DEFLECTION, which no
-//    flight-condition speed touches.  Inherited from the flight condition and
-//    NOT corrected here.
+//    cy[1] and cy[2] are NOT in that list: they are cy_da and cy_dr,
+//    the aileron and rudder side force per radian of CONTROL
+//    DEFLECTION, which no flight-condition speed touches. Inherited
+//    from the flight condition and NOT corrected here.
 //    coeff_create quotes them per p-hat = p*b_ref/(2*AS) using the SOURCE speed
 //    state["AS"] = 10.2073 ft/s = 3.1112 m/s (Mach 0.03, altitude 0 ft), while
 //    f16/aero_morelli.py forms phat = p*b_m/(2*V) with V the model's own speed,
@@ -125,7 +142,7 @@
 //    derivatives are therefore 7.43x smaller than the derivative with respect to the
 //    model's own phat, i.e. the model's rate-damping terms are that much weaker than the solver's
 //    numbers imply at the trimmed speed, and CL_Q = 9.591 is not a textbook per-q-hat
-//    value; the pitch-rate slot's own two numbers are printed from tornado.jsonc's provenance.cd_q_convention
+//    value; the pitch-rate slot's shipped and standard-aero numbers are printed from tornado.jsonc's provenance.cd_q_convention
 //    immediately below.  NOT rescaled here: the plan fixes the flight condition from the source AERO,
 //    and rescaling it is a physics decision for a later task.
 //
@@ -133,12 +150,13 @@
 //    tornado.jsonc's provenance.cd_q_convention so it cannot drift from what shipped:
 //      shipped:      czq[0] = coeff_create['CZ_Q'] and cxq[0] = coeff_create['CX_Q'], the BODY-axis pitch-rate coefficients, read unnegated
 //      why:          the schema ADDS both slots to the body-axis cz and cx, so the body-axis coefficient is what they mean.  The sibling returns both in Forward-Right-Down, so no identity and no conversion apply
-//      czq[0] writes -9.615046 (CZ_Q, body axis)
-//      the WIND-axis CL_Q is 9.591131, i.e. -9.591131 in this slot if standard-aero
-//      convention were used -- it is NOT what this file writes.  The two differ by 0.249 per cent,
-//      because CL and CZ part company wherever the axial force is non-zero.
-//      Any sentence in this header quoting a wind-axis CL_Q number means the
-//      WIND-axis one above, not the value in the arrays.
+//      cxq[0] writes -9.615046 (CZ_Q, body axis)
+//      the WIND-axis CL_Q is 9.591131, i.e. -9.591131 in this slot if
+//      standard-aero convention were used -- it is NOT what this file
+//      writes. The two figures differ by 0.249 per cent, because CL
+//      and CZ part company wherever the axial force is non-zero. Any
+//      sentence in this header quoting a wind-axis CL_Q number means
+//      the WIND-axis one above, not the value in the arrays.
 //
 // 7. PER-SLOT PROVENANCE (all 19 arrays; real solver output vs zeroed)
 //   cz[1]     cl_alpha   normalised     solver CL_a = 5.14801 -> mapped -5.14801 -> written -5.14801
@@ -166,14 +184,15 @@
 //   cndr[0]   cn_dr      flipped        solver tornado_controls[rudder].Cn = 0.00319877 -> mapped 0.183276 -> written -0.183276
 //   cz[5]     cl_de      normalised     solver tornado_controls[elevator].CL = 0.00647969 -> mapped -0.371259 -> written -0.371259
 //   cm[2]     cm_de      normalised     solver tornado_controls[elevator].Cm = -0.0298079 -> mapped -1.16154 -> written -1.16154
-//      cx[1] (CD_alpha) and cx[3] (CD_de) are real schema slots: LINEAR_INDEX
-//      lists cx's linear indexes as (0, 1, 3) and f16/aero_morelli.py
-//      evaluates Cx0 = cx[0] + cx[1]*alpha + ... + cx[3]*de, so the flight
-//      model reads both terms. They ship 0.0 because DerivativeSet has no
-//      field for either derivative and aero_convert/morelli.py's SLOT_MAP
-//      maps only ('cx', ((0, 'cd0'),)) -- a MAPPING gap, not a schema gap.
-//      The linear slots this file leaves at 0.0 without a provenance.missing
-//      entry are: cx[1] and cx[3]
+//      cx[1] (CD_alpha) and cx[3] (CD_de) are real schema slots:
+//      LINEAR_INDEX lists cx's linear indexes as (0, 1, 3) and
+//      f16/aero_morelli.py evaluates Cx0 = cx[0] + cx[1]*alpha +
+//      cx[3]*de, so the flight model reads both terms. They ship 0.0
+//      because DerivativeSet has no field for either derivative and
+//      aero_convert/morelli.py's SLOT_MAP maps only ('cx', ((0,
+//      'cd0'),)) -- a MAPPING gap, not a schema gap. The linear slots
+//      this file leaves at 0.0 without a provenance.missing entry
+//      are: cx[1] and cx[3]
 //    tornado.jsonc's provenance.zeroed_slots.CD_alpha carries the same fact in full.
 //
 // 8. HOW TO REGENERATE THIS FILE
@@ -181,9 +200,9 @@
 //    Nothing else writes these files; the sibling analysis and the sibling aid tree
 //    are read-only inputs and all solver scratch goes to a temporary directory.
 //
-// 9. THE OTHER THREE SOLVERS' RAW OUTPUT
+// 9. THE OTHER THREE SOLVERS'S RAW OUTPUT
 //    This file also carries `raw_cross_checks`, keyed by model, because a model file's
-//    provenance.mapping holds only the ONE raw number behind each slot.  Without this block
+//    provenance.mapping holds only one raw number behind each slot.  Without this block
 //    the rest of each solver's output would not be re-derivable from the committed
 //    tree without re-running the solver:
 //      datcom  raw_cross_checks.datcom: 30 keys -- aid_CL0_as_reported, aid_CL_level_flight, aid_CLa_as_reported, aid_Cm0_as_reported, aid_Cma_as_reported, aid_K, aid_drag_CD0, aid_lateral_as_reported, aid_longitudinal_dynamic_CLq, aid_x_cg, datcom_alt, datcom_cd, datcom_cl, datcom_cla_per_degree, datcom_clb_per_degree, datcom_cm, datcom_cma_per_degree, datcom_cn, datcom_cnb_per_degree, datcom_cyb_per_degree, datcom_mach, datcom_table_alpha_deg, handbook_controls_per_degree, lateral_corrected, lateral_dynamic_as_reported, planform, section7, solver_alpha_deg, solver_alpha_index, solver_alpha_schedule_deg
@@ -542,6 +561,7 @@
       "CD_at_alpha0": 0.0006035629331626336,
       "K_wing": 0.08037324626140716,
       "induced_part": 0.0022761445049448263,
+      "induced_part_meaning": "ac.WG.K * CL(0)**2; the order is named here so the header can print the exponent it was computed with instead of asserting the textbook 2",
       "source_WG_CD0": 0.017218979436844056,
       "value": -0.017218979436844056
     },

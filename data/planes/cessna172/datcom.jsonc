@@ -2,12 +2,12 @@
 // data/planes/cessna172/datcom.jsonc for the Cessna 172 source analysis, generated -- do not hand-edit.
 //
 // 1. SOLVER, MESH, FLIGHT CONDITION
-//    Solver: Digital DATCOM.  TWO solvers, because each answers a different
+//    Solver: Digital DATCOM.  TWO SOLVERS, because each answers a different
 //    question: (a) the Fortran binary run by aid.datcom_run.run_datcom on a card
 //    file written into a TemporaryDirectory -- binary at
 //    Matlab/fsroot/code/DATCOM/datcom via aid.paths.datcom_wrapper -- supplies
-//    the longitudinal static set (CLA, CMA, CL and CM rows) and the two
-//    intercepts; (b) aid.handbook_pass.apply_handbook supplies what the Fortran
+//    the longitudinal static set (CLA, CMA, CL and CM rows) and the intercepts
+//    (cl0 and cm0) the flight model cannot do without; (b) aid.handbook_pass.apply_handbook supplies what the Fortran
 //    table does not carry: the parasite drag build-up (aid.drag), the vertical-
 //    tail geometry DATCOM Section 7 needs, and the control derivatives
 //    (aid.handbook_controls).  There is no mesh: DATCOM is the handbook method.
@@ -29,36 +29,44 @@
 //    13.2.  Nothing in this file may be compared with a full-scale figure.
 //
 // 3. MASS
-//    mass_kg = 72.574 is derived from the source's own AERO.WT = 5 slugs:
-//    floor(AERO.WT * 32.0 ft/s^2 / 2.2046226 lbf/kg * 1000)/1000 = 72.574 kg, truncated from
-//    72.5747799 kg, i.e. 160 lbf.  A slug is a mass unit, so the
-//    source's WT converts instead as AERO.WT * SLUG_TO_KG = 72.96951 kg; the plan's figure assumes g = 32.0 ft/s^2, which
-//    appears nowhere in the source (its own G_FT_S2 is 32.174), so the plan is 0.54 % low and
-//    everything derived from the weight is too.
-//    This is NOT a geometrically similar 1/3 scale C172, which would weigh about 53.5 kg, so no
-//    scaling of a published full-scale number is self-consistent and none was attempted.
-//    ixx, iyy, izz come from radius-of-gyration rules on THIS mass and THIS span (see below);
-//    ixz = 0 and he = 0.  All four Cessna files derive mass and inertia identically from the same
-//    geometry, so they are consistent with each other and with tornado.jsonc.
-//    xcg and xcg_ref are BOTH 0.0 here, where tornado.jsonc carries -0.896112 for both, and that
-//    difference is deliberate rather than an oversight: these three solvers report about the CG
-//    itself (verified in item 5), so the CG's offset FROM THE MOMENT REFERENCE is zero, while for
-//    Tornado it is the 2.94 ft station shift.  The schema's own `Cm + Cz*(xcgref - xcg)` term is
-//    identically zero either way, because xcg == xcg_ref on every reachable path.
+//    mass_kg = 72.574 is derived from the source's own AERO.WT = 5
+//    slugs: floor(AERO.WT * 32.0 ft/s^2 / 2.2046226 lbf/kg *
+//    1000)/1000 = floor(5 * 32.0 / 2.2046226 * 1000)/1000 = 72.574
+//    kg, truncated from 72.5747799 kg, i.e. 160 lbf.
+//    A slug is a mass unit, so the source's WT converts instead as
+//    AERO.WT * SLUG_TO_KG = 72.96951 kg; the plan's figure assumes g
+//    = 32.0 ft/s^2, which appears nowhere in the source (its own
+//    G_FT_S2 is 32.174), so the plan is 0.54 % low and everything
+//    derived from the weight is too.
+//    This is NOT a geometrically similar 1/3 scale C172, which would
+//    weigh about 53.5 kg, so no scaling of a published full-scale
+//    number is self-consistent and none was attempted. ixx, iyy, izz
+//    come from radius-of-gyration rules on THIS mass and THIS span
+//    (see below); ixz = 0, he = 0 here.
+//    xcg and xcg_ref are BOTH 0 here, and that is checked rather than
+//    assumed: xcg == xcg_ref, so the schema's own `Cm + Cz*(xcgref -
+//    xcg)` term is identically zero for this file. All 4 Cessna files
+//    derive mass and inertia identically from the same geometry, so
+//    they are consistent with each other and with tornado.jsonc.
+//    tornado.jsonc carries -0.896112 for both -- the 2.94 ft station
+//    shift item 5 describes -- and that difference is deliberate
+//    rather than an oversight: these 3 solvers report about the CG
+//    itself (verified in item 5), so the CG's offset FROM THE MOMENT
+//    REFERENCE is zero, while for Tornado it is the station shift.
 //
 // 4. UNIT CONVERSIONS APPLIED, AND THE ONES NOT TRUSTED
 //    length: ft x 0.3048 = 0.3048 m; angle: degrees x 57.29577951308232 (= DEG_TO_RAD) per radian.
-//    THE FORTRAN'S OWN STABILITY TABLE IS PER DEGREE.  Measured against its own
-//    cl column, `cla` equals the secant dCL/dalpha in per degree to three
-//    decimals (0.10030/deg against a centred secant of
+//    THE FORTRAN'S OWN STABILITY TABLE IS PER DEGREE.  Measured against its own//    cl column, `cla` equals the secant dCL/dalpha in per degree to the digits printed below (0.10030/deg against a centred secant of
 //    0.10038/deg over +/-4 deg).  Every derivative read out of it is multiplied by
 //    57.29577951308232 by this converter.
 //    AID's HELPBOOK SLOPES ARE NOT TRUSTED EITHER, and three separate defects on
 //    this path were corrected rather than inherited:
 //      (1) aid.stability._per_deg, aid.handbook_controls._per_deg and aid.handbook_pass._per_rad are all
-//          `if a > 1: convert else pass`.  This planform's slopes are
-//          0.076-0.084 /deg, so every one of them is a NO-OP and the number
-//          that needs a per-radian value is handed the per-degree one.
+//          `if a > 1: convert else pass`. Every slope AID produces on
+//          this planform is per degree, running from -0.014087 to
+//          0.091159 /deg; all eleven slopes sit below that 1.0, so
+//          every helper is a NO-OP: a number needing a per-radian
+//          value is handed the per-degree one.
 //          Measured: aid's own longitudinal_dynamic CLq = 0.103851 where 57.2958x it is
 //          5.950221, and aid's own lateral_dynamic Clp = -0.013938 against
 //          -0.798610.  The DATCOM Section 7 formulae are therefore
@@ -83,8 +91,7 @@
 //          alpha = 4 deg row, -0.045756, which avl.jsonc ships.
 //      (3) aid/lateral.py:616 returns a HARDCODED 0.1 for both Clda and Cnda and
 //          aid/handbook_controls.py has no aileron CY or Cn column at all.  Those
-//          0.1 values are a placeholder, not a computation, and are NOT used: cy[1]
-//          and cnda[0] are 0.0 and declared in provenance.missing.
+//          0.1 values are a placeholder, not a computation, and are NOT used://          cxq[0], cnda[0] and cy[1] are 0.0 and declared in provenance.missing.
 //    Every array in this file is per radian and every length is SI.  numpy bridge: numpy.trapezoid present; no alias bound
 //    cx[0] -- the parasite drag slot, Cd0 in a drag build-up -- = -0.0172694.
 //    Source: aid.drag.aircraft_cd0, which is 1.25 x the summed section drag.  The Fortran's own CD at alpha = 0 is 0.024 with an induced part of 0.00137929,
@@ -109,16 +116,23 @@
 // 6. SIGN CONVENTION
 //    cz is the body +z force coefficient with z DOWN, so cz = -CL and cz[1] is NEGATIVE for a
 //    stable aircraft (CL_alpha = -cz[1] > 0), and cm[1] is negative too.  That identity is
-//    load-bearing; it is what makes data/planes/linear/morelli.json's cz[1] = -4.5 CORRECT, not a
-//    defect of that file.
-//    data/planes/linear/morelli.json is the sign-convention authority wherever it disagrees with
-//    data/planes/f16/morelli.json.  It WINS on cm[1] (-0.8 against +0.0466) and on cnp[0] (-0.03
-//    against +0.0268), where a positive value would be statically unstable.  It LOSES on cnda[0]
-//    (+0.01 against -0.0335), where adverse yaw fixes the sign.  A reader must not assume the two
-//    sets share a convention: this file and linear/morelli.json agree on cz[1] and disagree with
-//    the F-16 set on cm[1] and cnp[0].
-//    DATCOM, plane/dynamics.py and every in-tree reference file share ONE axis
-//    convention: x forward, y right, z DOWN, positive Cm nose up, positive Cl
+//    load-bearing.
+//    data/planes/linear/morelli.json's cz[1] = -4.5 AGREES with `cz =
+//    -CL` and is correct; do not describe it as a defect.
+//    data/planes/linear/morelli.json is the sign-convention authority
+//    wherever it disagrees with data/planes/f16/morelli.json, read
+//    from those two files rather than quoted. Of the four slots
+//    compared here, it:
+//    WINS on two of them: cm[1] (-0.8 against +0.046607), cnp[0]
+//    (-0.03 against +0.0267765).
+//    LOSES on one of them: cnda[0] (0.01 against -0.0334872).
+//    A positive cm[1] and cnp[0] would be statically unstable, and
+//    adverse yaw fixes the cnda[0] sign.
+//    On one slot the two reference sets already agree in sign (cz[1]
+//    = -4.5), neither is at issue; a reader must not assume the sets
+//    share a convention elsewhere.
+//    DATCOM, plane/dynamics.py and every in-tree reference file agree on ONE
+//    axis convention: x forward, y right, z DOWN, positive Cm nose up, positive Cl
 //    roll right, positive Cn yaw right.  So there is no frame mapping in this
 //    file at all.  Which slots, if any, the `cz = -CL` identity still negates is derived:
 //    3 negations survive, and none is a frame conversion.  Each is a SIGN-CONVENTION identity that the schema
@@ -131,26 +145,27 @@
 //    tornado.jsonc needs a shift and this file does not.
 //    cm0 (Cm0) carries NO invariant -- the two in-tree reference files disagree on it and its
 //    sign is tail rigging, not a derivable convention -- so it is written through untouched and is
-//    recorded as `not-normalised` in provenance.not_normalised.  Three provenance states exist and
-//    all three are recorded: `missing` (field None, slot 0.0), `flipped` (sign normalised against
-//    its invariant row) and `not-normalised` (cm0).
+//    recorded as `not-normalised` in provenance.not_normalised. All 3
+//    provenance states exist and all 3 are recorded here: missing,
+//    flipped and not-normalised.
 //
 //    A CAVEAT on the 9 genuinely per-phat / per-qhat / per-rhat slots:
 //    cyp[0], cyr[0], czq[0], cmq[0], clp[0], clr[0], cnp[0], cnr[0], cxq[0].
-//      NOT rescaled, as in tornado.jsonc. This solver quotes every rate
-//      derivative per p*b/(2V), q*cbar/(2V) or r*b/(2V) at the SOURCE
-//      Mach-0.03 speed V = 3.1112 m/s, while f16/aero_morelli.py forms phat =
-//      p*b_m/(2*V) at the trimmed cruise V = 23.1141 m/s. Restoring the
-//      solver's physical dC/dq would mean multiplying the 9 per-hat slots by
-//      V_trim/V_source = 7.42933, because czq[0]*cbar/(2*V_trim) must equal
-//      CL_q*cbar/(2*V_source); the model's rate-damping terms are that much
-//      weaker than the solver implies. Note the plan writes that factor as
-//      AS_source/V_trim, which is the INVERSE of the direction that restores
-//      dC/dq; nothing is rescaled here either way, so the question is only
-//      ever a note.
-//    cy[1] and cy[2] are NOT in that list: they are cy_da and cy_dr, the aileron
-//    and rudder side force per radian of CONTROL DEFLECTION, which no
-//    flight-condition speed touches.
+//      NOT rescaled, as in tornado.jsonc. This solver quotes every
+//      rate derivative per p*b/(2V), q*cbar/(2V) or r*b/(2V) at the
+//      SOURCE Mach-0.03 speed V = 3.1112 m/s, while
+//      f16/aero_morelli.py forms phat = p*b_m/(2*V) at the trimmed
+//      cruise V = 23.1141 m/s. Restoring the solver's physical dC/dq
+//      would mean multiplying the 9 per-hat slots by V_trim/V_source
+//      = 7.42933, because czq[0]*cbar/(2*V_trim) must equal
+//      CL_q*cbar/(2*V_source); the model's rate-damping terms are
+//      that much weaker than the solver implies. Note the plan writes
+//      that factor as AS_source/V_trim, which is the INVERSE of the
+//      direction that restores dC/dq; nothing is rescaled here either
+//      way, so the question is only ever a note.
+//    cy[1] and cy[2] are NOT in that list: they are cy_da and cy_dr,
+//    the aileron and rudder side force per radian of CONTROL
+//    DEFLECTION, which no flight-condition speed touches.
 //
 //    3 SLOTS ARE GENUINELY ABSENT -- zeroed and declared, with the reason generated from
 //    provenance.missing so this list cannot go stale against the slot table below:
@@ -189,14 +204,15 @@
 //   cndr[0]   cn_dr      normalised     solver aid.handbook_controls[rudder].Cn = -0.00191156 -> mapped -0.109524 -> written -0.109524
 //   cnda[0]   cn_da      missing        ABSENT -- aid.handbook_controls[aileron].Cn (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
 //   cy[1]     cy_da      missing        ABSENT -- aid.handbook_controls[aileron].CY (see provenance.missing) -> mapped n/a -> written 0.0 (missing)
-//      cx[1] (CD_alpha) and cx[3] (CD_de) are real schema slots: LINEAR_INDEX
-//      lists cx's linear indexes as (0, 1, 3) and f16/aero_morelli.py
-//      evaluates Cx0 = cx[0] + cx[1]*alpha + ... + cx[3]*de, so the flight
-//      model reads both terms. They ship 0.0 because DerivativeSet has no
-//      field for either derivative and aero_convert/morelli.py's SLOT_MAP
-//      maps only ('cx', ((0, 'cd0'),)) -- a MAPPING gap, not a schema gap.
-//      The linear slots this file leaves at 0.0 without a provenance.missing
-//      entry are: cx[1] and cx[3]
+//      cx[1] (CD_alpha) and cx[3] (CD_de) are real schema slots:
+//      LINEAR_INDEX lists cx's linear indexes as (0, 1, 3) and
+//      f16/aero_morelli.py evaluates Cx0 = cx[0] + cx[1]*alpha +
+//      cx[3]*de, so the flight model reads both terms. They ship 0.0
+//      because DerivativeSet has no field for either derivative and
+//      aero_convert/morelli.py's SLOT_MAP maps only ('cx', ((0,
+//      'cd0'),)) -- a MAPPING gap, not a schema gap. The linear slots
+//      this file leaves at 0.0 without a provenance.missing entry
+//      are: cx[1] and cx[3]
 //    provenance.zeroed_slots.CD_alpha carries the same fact in full.
 //    THE REST OF THIS SOLVER'S RAW, UNCONVERTED OUTPUT IS IN geometry.jsonc, under raw_cross_checks.datcom
 //    -- the Fortran's own for006 table and AID's pre-correction handbook rows for
