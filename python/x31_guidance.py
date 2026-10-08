@@ -1,4 +1,4 @@
-"""GCAS and sequenced waypoint guidance for the host-only X-31.
+"""GCAS, one ahead-waypoint line, and sequenced waypoint guidance for the host-only X-31.
 
 The vendored controllers take one slow command, ``{"V", "Chi", "Gamma"}``,
 and they own the seven surfaces. These maneuvers only change that command.
@@ -11,9 +11,10 @@ port's.
 GCAS is the F-16 mode machine (standby, roll, pull) on that command. The
 deck is the F-16 deck, 1000 ft. The X-31 trims at 50 m/s and cannot spend a
 5 g pull the way the F-16's Nz loop can, so the upright case starts high
-enough that this gentler pull bottoms above the ground. Waypoint following
-is the AeroBench F-16 list: ordered NED points, a capture radius, then the
-next point. It is not the SITL ahead-waypoint line.
+enough that this gentler pull bottoms above the ground. ``ahead`` is one
+locked line: the SITL ahead waypoint on that line, and one V/Chi/Gamma
+course toward it. Waypoint following is the AeroBench F-16 list: ordered
+NED points, a capture radius, then the next point.
 """
 from __future__ import annotations
 
@@ -22,6 +23,7 @@ import math
 import numpy as np
 
 from f16.units import GCAS_FLOOR_M, M_PER_FT
+from fw_sitl.path_geometry import path_setpoint_on_line
 from x31.actuators import derivative as act_derivative
 from x31.dynamics import AngleLimitError
 from x31.ode45 import Ode45Error, ode45
@@ -49,6 +51,9 @@ _WINGS_DEG = 8.0
 _ROLL_RATE_DPS = 15.0
 _MIN_PULL_S = 2.0
 _CAPTURE_M = 250.0 * M_PER_FT
+# SITL locked-line lookahead: the carrot is this far ahead of the closest
+# point on the line, and it stays on the line.
+_AHEAD_M = 500.0
 
 # AeroBench ``run_waypoint.py`` lists (east ft, north ft, altitude ft).
 _WAYPOINTS_FT = (
@@ -98,6 +103,17 @@ _MISSIONS = {
         "n_m": 0.0,
         "e_m": 0.0,
         "h_m": 3800.0 * M_PER_FT,
+    },
+    "ahead": {
+        "kind": "ahead",
+        "duration_s": 40.0,
+        "phi": 0.0,
+        "theta": _TRIM_ALPHA_RAD,
+        "psi": math.radians(20.0),
+        "n_m": 0.0,
+        "e_m": 0.0,
+        "h_m": 1000.0,
+        "course_deg": 0.0,
     },
 }
 
@@ -229,10 +245,89 @@ class Waypoints:
         return {"V": _V_MPS, "Chi": self.chi_cmd, "Gamma": self.gamma_cmd}
 
 
+class AheadLine:
+    """One locked line. The carrot is the SITL ahead point; the command is its course.
+
+    Origin, course and height lock on the first sample, the same instant the
+    SITL locks them at arm. The carrot is the closest point on that line,
+    moved one lookahead ahead along the line and never off it. Chi is the
+    bearing to that point and Gamma is the flight-path angle up to its
+    height, so on the line the command is one course: trim speed, the locked
+    heading, and level. The point is not captured. There is no next point.
+    Both angles are slewed. A step hits the port's alpha limit, and a lead
+    that never falls to zero leaves the chi integrator holding bank.
+    """
+
+    def __init__(self, course_deg: float | None = None) -> None:
+        self.lookahead_m = _AHEAD_M
+        self._fixed_course_deg = course_deg
+        self.origin: tuple[float, float] | None = None
+        self.course_deg: float | None = None
+        self.height_m: float | None = None
+        self.chi_cmd: float | None = None
+        self.gamma_cmd: float | None = None
+
+    @property
+    def mode(self) -> str:
+        return "ahead"
+
+    def advance(self, t: float, state: dict) -> None:
+        del t, state
+
+    def command(self, state: dict, dt: float) -> dict:
+        if self.origin is None:
+            self.origin = (float(state["pos"][0]), float(state["pos"][1]))
+            # A declared course is the SITL fixed-course lock. Otherwise the
+            # line locks to the heading at the first sample, as yaw-at-arm does.
+            self.course_deg = (
+                float(state["chi"])
+                if self._fixed_course_deg is None
+                else float(self._fixed_course_deg)
+            )
+            self.height_m = float(state["h"])
+        if self.chi_cmd is None or self.gamma_cmd is None:
+            self.chi_cmd = float(state["chi"])
+            self.gamma_cmd = float(state["gamma"])
+        assert self.origin is not None and self.course_deg is not None
+        assert self.height_m is not None
+        n, e, z = path_setpoint_on_line(
+            float(state["pos"][0]),
+            float(state["pos"][1]),
+            -self.height_m,
+            self.origin,
+            math.radians(self.course_deg),
+            self.lookahead_m,
+        )
+        dn = n - float(state["pos"][0])
+        de = e - float(state["pos"][1])
+        horiz = math.hypot(dn, de)
+        if horiz > 1.0:
+            bearing = math.degrees(math.atan2(de, dn))
+            target = math.degrees(math.atan2((-z) - state["h"], horiz))
+        else:
+            bearing = self.course_deg
+            target = 0.0
+        target = max(-5.0, min(8.0, target))
+        assert self.chi_cmd is not None and self.gamma_cmd is not None
+        self.chi_cmd = _slew(self.chi_cmd, bearing, _CHI_SLEW_DPS, dt)
+        rate = (
+            0.0
+            if state["alpha"] > _ALPHA_HOLD_DEG and target > self.gamma_cmd
+            else _GAMMA_SLEW_DPS
+        )
+        self.gamma_cmd = self.gamma_cmd + max(
+            -rate * dt, min(rate * dt, target - self.gamma_cmd)
+        )
+        return {"V": _V_MPS, "Chi": self.chi_cmd, "Gamma": self.gamma_cmd}
+
+
 def _guidance(name: str):
-    kind = _mission(name)["kind"]
+    body = _mission(name)
+    kind = body["kind"]
     if kind == "gcas":
         return Gcas()
+    if kind == "ahead":
+        return AheadLine(course_deg=float(body["course_deg"]))
     return Waypoints()
 
 
@@ -284,8 +379,9 @@ def run_guided(
     """Fly one guided maneuver and return the runner's column dict.
 
     ``mode`` is the controller name. ``modes`` is one guidance label per
-    sample (``standby``, ``roll``, ``pull``, ``waypoint 1``, ``done``),
-    which is what the CSV ``mode`` column carries for these maneuvers.
+    sample (``standby``, ``roll``, ``pull``, ``ahead``, ``waypoint 1``,
+    ``done``), which is what the CSV ``mode`` column carries for these
+    maneuvers.
     """
     _mission(name)
     module = _module(controller)

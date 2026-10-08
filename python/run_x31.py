@@ -38,11 +38,13 @@ for the X-31 IS the CSV control column order; for the F-16 it is the LQR
 four-vector's order instead, because that CSV has no control columns at all.
 
 Guided maneuvers are not rows of that scenario table. `gcas_upright`,
-`gcas_inverted`, `gcas_long` and `waypoint` sequence the same slow command
-from the aircraft state (`x31_guidance`). `--open-loop` cannot fly them: the
-manual-switch input never sees the command. `--anim` draws the path in a
-frame fixed on the whole trajectory (`x31_view`), so the aircraft translates
-instead of sitting still while its attitude changes.
+`gcas_inverted`, `gcas_long`, `ahead` and `waypoint` sequence the same slow
+command from the aircraft state (`x31_guidance`). `ahead` is one locked
+line, the SITL ahead waypoint, and one V/Chi/Gamma course toward it.
+`--open-loop` cannot fly them: the manual-switch input never sees the
+command. `--anim` draws the path in a frame fixed on the whole trajectory
+(`x31_view`), so the aircraft translates instead of sitting still while its
+attitude changes.
 
 Every run of a scenario-table maneuver starts at the spawn
 `data/planes/x31/x31.json` declares, which is `trim.pos + [n_m, e_m, -d_m]`:
@@ -165,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
         "--maneuver",
         default=None,
         help="scenario from the x31 data file, or gcas_upright, "
-        "gcas_inverted, gcas_long, waypoint",
+        "gcas_inverted, gcas_long, ahead, waypoint",
     )
     parser.add_argument("--controller", default=None, help="gain_schedule or ndi")
     parser.add_argument(
