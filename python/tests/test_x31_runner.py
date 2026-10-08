@@ -93,6 +93,15 @@ class TestRunnerCsv(unittest.TestCase):
         self.assertAlmostEqual(times[0], 0.0, places=12)
         self.assertAlmostEqual(times[-1], 1.0, places=9)
 
+    def test_a_guided_maneuver_names_its_mode_and_refuses_open_loop(self):
+        rows = self._run_to_csv("--maneuver", "gcas_upright", "--duration", "1.0", "--step", "0.5")
+        mode = rows[0].index("mode")
+        self.assertEqual({row[mode] for row in rows[1:]}, {"standby"})
+        result = _run(
+            "--maneuver", "gcas_upright", "--open-loop", "--duration", "1.0", expect=2,
+        )
+        self.assertIn("open-loop", result.stderr)
+
     def test_the_mode_column_names_the_controller_that_ran(self):
         for controller in ("gain_schedule", "ndi"):
             with self.subTest(controller=controller):
@@ -221,7 +230,7 @@ class TestRunnerDefaults(unittest.TestCase):
         result = _run("--help")
         for flag in (
             "--data", "--maneuver", "--controller", "--open-loop",
-            "--duration", "--step", "--csv",
+            "--duration", "--step", "--csv", "--anim",
         ):
             self.assertIn(flag, result.stdout)
 
