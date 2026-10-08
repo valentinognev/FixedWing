@@ -37,8 +37,16 @@ spikes. The channel order comes from `host_controllers.CONTROL_CHANNELS`, which
 for the X-31 IS the CSV control column order; for the F-16 it is the LQR
 four-vector's order instead, because that CSV has no control columns at all.
 
-Every run starts at the spawn `data/planes/x31/x31.json` declares, which is
-`trim.pos + [n_m, e_m, -d_m]`: north and east offsets, and a height ABOVE the
+Guided maneuvers are not rows of that scenario table. `gcas_upright`,
+`gcas_inverted`, `gcas_long` and `waypoint` sequence the same slow command
+from the aircraft state (`x31_guidance`). `--open-loop` cannot fly them: the
+manual-switch input never sees the command. `--anim` draws the path in a
+frame fixed on the whole trajectory (`x31_view`), so the aircraft translates
+instead of sitting still while its attitude changes.
+
+Every run of a scenario-table maneuver starts at the spawn
+`data/planes/x31/x31.json` declares, which is `trim.pos + [n_m, e_m, -d_m]`:
+north and east offsets, and a height ABOVE the
 datum that the minus turns into a decrease of the NED down coordinate. The
 declaration is load-bearing, not documentation.
 """
@@ -57,6 +65,7 @@ if str(_PY) not in sys.path:
 import numpy as np
 
 from host_controllers import control_channels, input_modes_for, resolve_mode
+from x31_guidance import guided_names, mission_duration, run_guided
 from x31_sim import (
     PlaneDataError,
     column_name,
@@ -122,7 +131,8 @@ def write_csv(path: Path, out: dict) -> int:
         count = 0
         for index in range(int(out["t"].size)):
             row = [out[name][index] for name in _STATE_COLUMNS]
-            row.append(out["mode"])
+            modes = out.get("modes")
+            row.append(out["mode"] if modes is None else modes[index])
             row.extend(float(out[name][index]) for name in columns[len(_STATE_HEADER) :])
             writer.writerow(row)
             count += 1
@@ -151,7 +161,12 @@ def _report(out: dict) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Host-only X-31 runner (NED-metre CSV)")
     parser.add_argument("--data", default=str(plane_data_path()))
-    parser.add_argument("--maneuver", default=None, help="scenario from the x31 data file")
+    parser.add_argument(
+        "--maneuver",
+        default=None,
+        help="scenario from the x31 data file, or gcas_upright, "
+        "gcas_inverted, gcas_long, waypoint",
+    )
     parser.add_argument("--controller", default=None, help="gain_schedule or ndi")
     parser.add_argument(
         "--open-loop",
@@ -162,6 +177,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--duration", type=float, default=None)
     parser.add_argument("--step", type=float, default=_DEFAULT_STEP)
     parser.add_argument("--csv", default=None)
+    parser.add_argument(
+        "--anim",
+        action="store_true",
+        help="after the CSV, draw the aircraft moving through a fixed frame",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -180,11 +200,11 @@ def main(argv: list[str] | None = None) -> int:
     except PlaneDataError as exc:
         _die(f"bad plane data: {exc}")
 
-    known = scenarios(payload)
+    known = tuple(scenarios(payload)) + guided_names()
     if args.maneuver is None:
-        _die(f"--maneuver is required; the x31 data file has {', '.join(known)}")
+        _die(f"--maneuver is required; known maneuvers are {', '.join(known)}")
     if args.maneuver not in known:
-        _die(f"unknown maneuver {args.maneuver}; the x31 data file has {', '.join(known)}")
+        _die(f"unknown maneuver {args.maneuver}; known maneuvers are {', '.join(known)}")
     if args.duration is not None and (
         not np.isfinite(args.duration) or args.duration <= 0.0
     ):
@@ -192,27 +212,54 @@ def main(argv: list[str] | None = None) -> int:
     if not np.isfinite(args.step) or args.step <= 0.0:
         _die(f"bad step: {args.step!r} is not a positive finite number")
 
-    body = scenario(payload, args.maneuver)
-    try:
-        out = run_scenario(
-            resolved,
-            payload,
-            args.maneuver,
-            duration=args.duration,
-            step=args.step,
+    guided = args.maneuver in guided_names()
+    if guided and args.open_loop:
+        _die(
+            f"{args.maneuver} sequences a controller command; "
+            "--open-loop has no command to sequence"
         )
-    except PlaneDataError as exc:
-        _die(f"bad maneuver {args.maneuver}: {exc}")
+    if guided:
+        try:
+            out = run_guided(
+                resolved,
+                args.maneuver,
+                duration=args.duration,
+                step=args.step,
+            )
+        except ValueError as exc:
+            _die(f"bad maneuver {args.maneuver}: {exc}")
+        duration_s = mission_duration(args.maneuver) if args.duration is None else args.duration
+    else:
+        body = scenario(payload, args.maneuver)
+        duration_s = float(body["duration_s"]) if args.duration is None else args.duration
+        try:
+            out = run_scenario(
+                resolved,
+                payload,
+                args.maneuver,
+                duration=args.duration,
+                step=args.step,
+            )
+        except PlaneDataError as exc:
+            _die(f"bad maneuver {args.maneuver}: {exc}")
 
     target = csv_path(args.csv)
     rows = write_csv(target, out)
     kind = "input mode" if args.open_loop else "controller"
     print(f"{kind} {resolved} on plane {_PLANE}: {args.maneuver} "
-          f"({len(control_channels(_PLANE))} channels), data duration {body['duration_s']:g} s")
+          f"({len(control_channels(_PLANE))} channels), data duration {duration_s:g} s")
     _report(out)
     if out["stopped_at"] is not None and rows == 0:
         _die(f"angle limit stopped {args.maneuver} before its first sample")
     print(target)
+    if args.anim:
+        try:
+            from x31_view import show
+
+            show(out)
+        except Exception as exc:
+            print(f"anim failed: {exc}", file=sys.stderr)
+            return 1
     return 0
 
 
