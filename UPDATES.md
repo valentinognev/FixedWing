@@ -1,7 +1,11 @@
 # Updates
 
+## 0.97.0 - X-31 ahead-waypoint line
+- `ahead` (40 s, start 1000 m) is one locked line on the host X-31. Origin and height lock at the first sample; the course is the declared north line, the SITL fixed-course lock, not a second waypoint list. The carrot is `path_setpoint_on_line` with the SITL 500 m lookahead, so it stays on the line. The slow command is one V/Chi/Gamma course toward that point: 50 m/s, the bearing, and the flight-path angle up to the locked height, slewed at 5°/s and 1°/s. The nose starts 20° off the line. On `gain_schedule` the cross-track peaks near 65 m and is back under a metre at 40 s, with the heading on the course and the run unstopped. The CSV `mode` column stays `ahead`. `waypoint` is unchanged: it is still the AeroBench four-point list.
+- Suite: `cd python && python3 -m unittest tests.test_x31_guidance -v`.
+
 ## 0.96.0 - X-31 guided missions and fixed-frame view
-- `python/x31_guidance.py` sequences the port's slow V/Chi/Gamma command: `gcas_upright` (26 s, start 600 m), `gcas_inverted` (12 s, start 330 m), `gcas_long` (120 s) fly the F-16 standby→roll→pull with a 0.5 s hold, 2° gamma lead and 5°/s chi slew; `waypoint` (40 s) flies the AeroBench four-point NED list with a 250 ft capture radius, then the next. Not the SITL ahead-waypoint line; that stays a separate delivery.
+- `python/x31_guidance.py` sequences the port's slow V/Chi/Gamma command: `gcas_upright` (26 s, start 600 m), `gcas_inverted` (12 s, start 330 m), `gcas_long` (120 s) fly the F-16 standby→roll→pull with a 0.5 s hold, 2° gamma lead and 5°/s chi slew; `waypoint` (40 s) flies the AeroBench four-point NED list with a 250 ft capture radius, then the next. The SITL ahead-waypoint line is `ahead` (0.97.0), not this list.
 - `run_x31.py --maneuver` accepts those four names; `--open-loop` exits 2 on them; the CSV `mode` column carries the guidance label (`standby`/`roll`/`pull`, `waypoint N`/`done`). `run_x31.py --anim` draws `python/x31_view.py`: limits fixed once from the whole path so the airframe translates, unlike the port animation's per-frame body-sized window.
 - `run_guided` keeps the integrator's partial samples on an angle-limit or tolerance stop, as `run_scenario` does; the suite pins `gcas_upright`, `gcas_inverted` and `waypoint` to their full horizon with `stopped_at` unset. Suite: `cd python && python3 -m unittest tests.test_x31_guidance tests.test_x31_view -v`.
 
