@@ -368,6 +368,8 @@ def run_guided(
         return solution.t, solution.y
 
     t = 0.0
+    label = guidance.mode
+    command: dict | None = None
     try:
         while True:
             dt = min(HOLD_S, duration - t)
@@ -385,9 +387,21 @@ def run_guided(
                 record(float(sample_t), np.asarray(sample_y, dtype=float), command, label)
             t += dt
     except AngleLimitError as exc:
+        partial = getattr(exc, "partial", None)
+        if partial is not None and partial.t.size > 0 and command is not None:
+            for sample_t, sample_y in zip(partial.t, partial.y):
+                record(float(sample_t), np.asarray(sample_y, dtype=float), command, label)
+            y = np.asarray(partial.y[-1], dtype=float)
+            t = float(partial.t[-1])
         stopped_at = t
         stop_reason = f"{exc} (limit {exc.limit_deg:g} deg)"
     except Ode45Error as exc:
+        partial = getattr(exc, "partial", None)
+        if partial is not None and partial.t.size > 0 and command is not None:
+            for sample_t, sample_y in zip(partial.t, partial.y):
+                record(float(sample_t), np.asarray(sample_y, dtype=float), command, label)
+            y = np.asarray(partial.y[-1], dtype=float)
+            t = float(partial.t[-1])
         stopped_at = t
         stop_reason = f"integrator: {exc}"
 
