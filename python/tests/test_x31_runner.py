@@ -7,6 +7,7 @@ under test, not an in-process call.
 import csv
 import json
 import math
+import os
 import subprocess
 import sys
 import tempfile
@@ -238,6 +239,31 @@ class TestRunnerDefaults(unittest.TestCase):
         result = _run("--maneuver", "trim_hold", "--anim", "--follow", expect=2)
         self.assertIn("pass one", result.stderr)
         self.assertEqual(result.stdout.strip(), "")
+
+    def test_the_view_script_opens_the_camera_it_was_given(self):
+        script = _PY.parent / "run_x31_view.sh"
+        env = os.environ.copy()
+        env["MPLBACKEND"] = "Agg"
+        directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        for flag, label in (("--anim", "path-wide frame"), ("--follow", "third-person window")):
+            with self.subTest(flag=flag):
+                target = directory / f"{flag.strip('-')}.csv"
+                result = subprocess.run(
+                    ["bash", str(script), flag, "--duration", "0.2", "--csv", str(target)],
+                    capture_output=True,
+                    text=True,
+                    cwd=str(_PY.parent),
+                    env=env,
+                    timeout=60,
+                )
+                self.assertEqual(
+                    result.returncode,
+                    0,
+                    f"stdout={result.stdout!r}, stderr={result.stderr!r}",
+                )
+                self.assertIn(label, result.stdout)
+                self.assertNotIn("pass one", result.stderr)
+                self.assertTrue(target.is_file())
 
 
 if __name__ == "__main__":

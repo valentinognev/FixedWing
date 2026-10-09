@@ -268,10 +268,12 @@ def main(argv: list[str] | None = None) -> int:
             if args.follow:
                 from x31_view import show_follow
 
+                print("view: third-person window", flush=True)
                 show_follow(out)
             else:
                 from x31_view import show
 
+                print("view: path-wide frame", flush=True)
                 show(out)
         except Exception as exc:
             print(f"anim failed: {exc}", file=sys.stderr)

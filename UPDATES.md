@@ -1,5 +1,13 @@
 # Updates
 
+## 0.100.2 - view script cameras are distinct
+- `./run_x31_view.sh --follow` (also the default) opens the third-person window. `./run_x31_view.sh --anim` opens the path-wide frame. The runner prints `view: third-person window` or `view: path-wide frame` before the plot. 0.100.1 had forwarded both runs as `--follow`.
+- Suite: `cd python && python3 -m unittest tests.test_x31_runner.TestRunnerDefaults.test_the_view_script_opens_the_camera_it_was_given -v`.
+
+## 0.100.1 - view script accepts --anim
+- `./run_x31_view.sh --anim` opens the third-person window. The script keeps `--follow` and no longer forwards `--anim`, which was the pair the runner refuses.
+- Suite: `cd python && python3 -m unittest tests.test_x31_runner.TestRunnerDefaults.test_the_view_script_treats_anim_as_its_own_window -v`.
+
 ## 0.100.0 - X-31 third-person view
 - `run_x31.py --follow` keeps a window on the aircraft (elevation 30°, azimuth 45°, short trail). `--anim` stays the path-wide frame. Passing both exits 2.
 - `./run_x31_view.sh` flies `waypoint` and opens that window. `--maneuver`, `--duration`, and `--csv` override the defaults.

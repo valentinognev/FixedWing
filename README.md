@@ -139,7 +139,7 @@ cd python && python3 run_x31.py --maneuver trim_hold --open-loop --csv /tmp/x31.
 cd python && python3 run_x31.py --maneuver gcas_upright --csv /tmp/x31.csv  # F-16 standby→roll→pull on the X-31 (26 s; long 120 s; inverted 12 s); CSV mode column carries standby/roll/pull
 cd python && python3 run_x31.py --maneuver ahead --csv /tmp/x31.csv  # one locked line, SITL ahead waypoint, one V/Chi/Gamma course (40 s)
 cd python && python3 run_x31.py --maneuver waypoint --csv /tmp/x31.csv  # AeroBench four-point list, 250 ft capture (40 s); --anim is the path-wide frame, --follow is the third-person window
-./run_x31_view.sh  # same waypoint, then the third-person window; --maneuver / --duration / --csv optional
+./run_x31_view.sh  # waypoint, then the third-person window (--follow). --anim is the path-wide frame instead
 cd python && python3 -m unittest discover -s tests
 cd python && MPLBACKEND=Agg python3 -m unittest tests.test_plane_cessna172_json -v  # c172 aero acceptance suite; signs + tornado magnitudes + static margin + trim + modes; flow5 cm[1] is the declared 4.9 % band outlier, asserted against provenance.invariant_band_note at 5 %
 FW_SITL_E2E=1 ./python/scripts/run_race_quat_e2e.sh   # opt-in live SITL (50 m smoke course)
