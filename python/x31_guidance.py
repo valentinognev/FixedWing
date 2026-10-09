@@ -5,8 +5,8 @@ and they own the seven surfaces. These maneuvers only change that command.
 A step in ``Gamma``, or a heading step, is already known to hit the port's
 85 deg alpha limit, so the pull is a lead of a few degrees on the measured
 flight path and the heading command is slewed. Both are held for ``HOLD_S``
-and then refreshed. The plant, the actuators and both controllers stay the
-port's.
+and then refreshed. The plant step is `x31_plant` (port rigid body, MOST31
+aero). The actuators and both controllers stay the port's.
 
 GCAS is the F-16 mode machine (standby, roll, pull) on that command. The
 deck is the F-16 deck, 1000 ft. The X-31 trims at 50 m/s and cannot spend a
@@ -28,8 +28,9 @@ from x31.actuators import derivative as act_derivative
 from x31.dynamics import AngleLimitError
 from x31.ode45 import Ode45Error, ode45
 from x31.quaternion import body_321_to_q, q_to_body_321, rotate_body_to_earth
-from x31.simulate import _held_measurement, _pack, _plant_sample, _split
+from x31.simulate import _held_measurement, _pack, _split
 from x31.types import ActuatorState
+import x31_plant
 from x31_sim import column_name, controller_states, surfaces
 
 import x31.actuators as actuators
@@ -347,7 +348,7 @@ def _initial(name: str):
 
 def _sense(y: np.ndarray, n_act: int, n_ctrl: int) -> dict:
     pos, _vel, q, _w, _act, _ctrl = _split(y, n_act, n_ctrl)
-    qn, _surf, _rates, measured = _plant_sample(0.0, pos, _vel, q, _w, _act)
+    qn, _surf, _rates, measured = x31_plant.plant_sample(0.0, pos, _vel, q, _w, _act)
     phi, _theta, _psi = q_to_body_321(qn)
     return {
         "pos": pos,
@@ -417,7 +418,7 @@ def run_guided(
 
     def record(t: float, state: np.ndarray, command: dict, label: str) -> None:
         p, v, qi, wi, act, ctrl = _split(state, n_act, n_ctrl)
-        qn, surf, _rates, measured = _plant_sample(float(t), p, v, qi, wi, act)
+        qn, surf, _rates, measured = x31_plant.plant_sample(float(t), p, v, qi, wi, act)
         if delay is not None:
             held = _held_measurement(delay, float(t), measured)
         else:
@@ -442,7 +443,7 @@ def run_guided(
     def hold(t0: float, dt: float, command: dict):
         def rhs(tt, yy, command=command):
             p, v, qi, wi, act, ctrl = _split(yy, n_act, n_ctrl)
-            qn, _surf, rates, measured = _plant_sample(float(tt), p, v, qi, wi, act)
+            qn, _surf, rates, measured = x31_plant.plant_sample(float(tt), p, v, qi, wi, act)
             if delay is not None:
                 delay.record(float(tt), measured, q_to_body_321(qn))
                 measured = _held_measurement(delay, float(tt), measured)

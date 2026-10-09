@@ -1,5 +1,17 @@
 # Updates
 
+## 0.99.0 - MOST31 generalized aero model
+- `python/most31/` is the schema and evaluator for the generalized coefficient model.
+- Translated files: `data/planes/f16/most31_morelli.json`, `data/planes/f16/most31_stevens.json`, `data/planes/x31/most31.json` (`cd python && python3 -m most31.build`).
+- F-16 `model._coefficients` evaluates MOST31 from `data/planes/f16/most31_{morelli,stevens}.json`; the old evaluators stay the translation source and oracle.
+- X-31 plant step is `x31_plant` (port rigid body, MOST31 aero), used by `x31_sim.py` and `x31_guidance.py`.
+- Vendored `python/x31/` is unchanged.
+
+## 0.98.0 - F-16 GCAS 45° entry
+- `run_f16.py` starts `gcas_upright` and `gcas_long` wings-level with the velocity 45° below the horizon at the setup altitude (1500 ft, 540 ft/s). They cross the 1000 ft deck still diving and pull. `straight_level` stays level.
+- `gcas_inverted` uses that same 45° descent at the AeroBench bank (−0.9π). It releases at 700 m with the deck at 670 m, so the roll starts immediately; from 1500 ft the inverted 1 g standby steepens the dive and the roll hits the ground. In 10 s the mode sequence is standby → roll → pull → standby and the low point stays above the ground.
+- Parity `paper_x0` is unchanged. Suite: `cd python && python3 -m unittest tests.test_f16_gcas_entry -v`.
+
 ## 0.97.0 - X-31 ahead-waypoint line
 - `ahead` (40 s, start 1000 m) is one locked line on the host X-31. Origin and height lock at the first sample; the course is the declared north line, the SITL fixed-course lock, not a second waypoint list. The carrot is `path_setpoint_on_line` with the SITL 500 m lookahead, so it stays on the line. The slow command is one V/Chi/Gamma course toward that point: 50 m/s, the bearing, and the flight-path angle up to the locked height, slewed at 5°/s and 1°/s. The nose starts 20° off the line. On `gain_schedule` the cross-track peaks near 65 m and is back under a metre at 40 s, with the heading on the course and the run unstopped. The CSV `mode` column stays `ahead`. `waypoint` is unchanged: it is still the AeroBench four-point list.
 - Suite: `cd python && python3 -m unittest tests.test_x31_guidance -v`.

@@ -2,8 +2,8 @@
 
 This is FixedWing's integration layer, not port code. `python/x31/` stays
 vendored third-party source, so everything the port already implements is
-called rather than reimplemented: the rigid-body derivative
-(`dynamics.derivative`), the seven actuator transfer functions
+called rather than reimplemented: the plant step is `x31_plant` (port
+rigid body, MOST31 aero), the seven actuator transfer functions
 (`actuators`), the two controllers (`gain_schedule.surface` and
 `ndi.surface`), the measurement vector the controllers are handed
 (`simulate._measured`), and the MATLAB-compatible integrator (`ode45`). The
@@ -30,14 +30,13 @@ Two facts about that reuse are load-bearing and worth stating plainly:
   directly. That is why the runner needs none of the port's 86 MB of gitignored
   MATLAB exports: `x31/reference/signal_groups.npz` is only read on the
   group-name path.
-* The port's closed-loop right-hand side, the 5 ms gain-schedule measurement
-  hold, and the 13-state actuator trim all stay in force. The gains, the
-  Figure 2.2 coefficients, the actuator limits and the angle-limit assertion
-  are the port's, read here and never restated.
+* The 5 ms gain-schedule measurement hold and the 13-state actuator trim stay
+  in force. The gains and the actuator limits are the port's. The plant step
+  is `x31_plant` (port rigid body, MOST31 aero).
 
 Private port helpers are used deliberately, so this module is pinned to the
 vendored commit rather than to the port's public surface:
-`simulate._pack` / `_split` / `_plant_sample` / `_measured` /
+`simulate._pack` / `_split` / `_measured` /
 `_held_measurement` / `_MeasurementDelay` / `_ZERO`,
 `actuators._saturated_command`, `gain_schedule._STATES`, and `ndi._INTEGRATORS`.
 Reimplementing any of them here would be a second copy of measured physics,
@@ -58,6 +57,7 @@ import numpy as np
 from host_controllers import control_channels, resolve_mode
 import x31_numpy_compat  # noqa: F401  restores numpy's removed short trig aliases
 from x31 import actuators, dynamics, gain_schedule, ndi, simulate
+import x31_plant
 from x31.ode45 import Ode45Error, ode45
 from x31.quaternion import q_to_body_321
 from x31.types import ActuatorState, PlantState, SurfaceCommand
@@ -437,21 +437,22 @@ def _rhs(
 ) -> np.ndarray:
     """The port's closed-loop right-hand side, with a time-varying demand.
 
-    This is `simulate._closed_rhs` with one change: the port resolves its
+    This is `simulate._closed_rhs` with two changes. The port resolves its
     `group` argument once per call from a Signal Builder group name, so it holds
     one waveform for the whole run, whereas a FixedWing scenario table is a set
-    of steps and the demand is a function of `t`. Everything else is the port's
-    own sequence, unchanged and in the port's order: split, sample the plant,
+    of steps and the demand is a function of `t`. The plant step is `x31_plant`
+    (port rigid body, MOST31 aero). Everything else is the port's
+    own sequence, in the port's order: split, sample the plant,
     hold the gain-schedule measurements for 5 ms, ask the controller, drive the
-    seven actuators, concatenate. The `open_loop` input mode takes the port's
-    `_plant_rhs` with the diagram's manual-switch constant, which is why the
+    seven actuators, concatenate. The `open_loop` input mode takes
+    `x31_plant.plant_rhs` with the diagram's manual-switch constant, which is why the
     scenario demand cannot reach it: every scenario ends at the same instant on
     that mode.
     """
     if mode == _OPEN_LOOP:
-        return simulate._plant_rhs(t, y, n_act, simulate._PLANT_COMMAND, None)
+        return x31_plant.plant_rhs(t, y, n_act, simulate._PLANT_COMMAND)
     pos, vel, q, w, act, ctrl = simulate._split(y, n_act, n_ctrl)
-    qn, _surf, rates, measured = simulate._plant_sample(float(t), pos, vel, q, w, act)
+    qn, _surf, rates, measured = x31_plant.plant_sample(float(t), pos, vel, q, w, act)
     if delay is not None:
         delay.record(float(t), measured, q_to_body_321(qn))
         measured = simulate._held_measurement(delay, float(t), measured)
@@ -519,12 +520,24 @@ def _columns(
         p, v, q_i, w, act, ctrl = simulate._split(states[index], n_act, n_ctrl)
         q_n = dynamics.normalize(q_i)
         surface = actuators.output(ActuatorState(x=act), simulate._ZERO)
-        rates = dynamics.rates(
-            float(times[index]),
-            PlantState(pos=p, vel=v, q=q_i, w=w),
-            surface,
-            None,
-        )
+        try:
+            rates = x31_plant.rates(
+                float(times[index]),
+                PlantState(pos=p, vel=v, q=q_i, w=w),
+                surface,
+            )
+        except ValueError as exc:
+            # A sample the integrator already accepted can have no airspeed
+            # (the all-zero partial of a tolerance stop). MOST31 refuses that
+            # speed; the port's rates returned NaNs and the log was still written.
+            if str(exc) != "V must be positive":
+                raise
+            rates = PlantState(
+                pos=np.asarray(v, dtype=float).copy(),
+                vel=np.full(3, np.nan),
+                q=np.zeros(4),
+                w=np.full(3, np.nan),
+            )
         measured = simulate._measured(q_n, v, w, surface, rates)
         command = _command(mode, float(times[index]), measured, ctrl, steps, delay)
         pos[index] = p

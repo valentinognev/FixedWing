@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 from math import ceil, cos, floor, pi, sin, sqrt
+from pathlib import Path
 
 import numpy as np
 
-from f16.aero_morelli import morelli_coefficients
-from f16.aero_stevens import stevens_coefficients
+import most31
 from f16.units import (
     ALT_FLOOR_M,
     B_M,
@@ -28,8 +28,9 @@ from f16.units import (
     T0_K,
     T_STRAT_K,
     XA_M,
-    aerobench_poly_rad,
 )
+
+_MOST31_DIR = Path(__file__).resolve().parents[2] / "data" / "planes" / "f16"
 
 
 def subf16_derivative(x13, u4, model: str = "morelli"):
@@ -149,14 +150,11 @@ def _thrust(power, alt, rmach):
 
 
 def _coefficients(model, alpha, beta, de, da, dr, p, q, r, cbar, b, vt, xcg, xcgref):
-    if model == "morelli":
-        return morelli_coefficients(
-            aerobench_poly_rad(alpha), aerobench_poly_rad(beta), de, da, dr,
-            p, q, r, cbar, b, vt, xcg, xcgref)
-    if model == "stevens":
-        return stevens_coefficients(
-            alpha, beta, de, da, dr, p, q, r, cbar, b, vt, xcg, xcgref)
-    raise ValueError(f"model {model!r} is not implemented")
+    if model not in ("morelli", "stevens"):
+        raise ValueError(f"model {model!r} is not implemented")
+    coefficients = most31.load(_MOST31_DIR / f"most31_{model}.json")
+    return most31.evaluate(
+        coefficients, alpha, beta, de, da, dr, 0.0, p, q, r, vt, b, cbar, xcg, xcgref)
 
 
 def _subf16(x, u, model: str = "morelli"):
