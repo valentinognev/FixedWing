@@ -10,6 +10,10 @@ common states, so it is the directional central difference of ``to_common``
 along the native derivative direction (``1e-6`` s). Everything the bench
 measures (euler angles, airspeed, alpha/beta, body rates, position) is therefore
 read the same way whether the state came from the integrator or from here.
+
+Stops follow the bench's plane contract and use the other adapters' reasons:
+altitude at or below the ground, a non-finite state or derivative, and the port's
+angle-limit exception.
 """
 
 from __future__ import annotations
@@ -76,8 +80,8 @@ _TIME = 0.0
 _STEP = 1e-6
 
 
-def _wrap_psi(angle: float) -> float:
-    """Wrap a psi difference into (-pi, pi]."""
+def _wrap(angle: float) -> float:
+    """Wrap a difference of an atan2 angle into (-pi, pi]."""
     wrapped = float(np.mod(angle, 2.0 * np.pi))
     return wrapped - 2.0 * np.pi if wrapped > np.pi else wrapped
 
@@ -133,12 +137,14 @@ class X31Adapter:
         vel = np.asarray(state.vel, dtype=float)
         body_v = rotate_earth_to_body(state.q, vel)
         vt = float(np.linalg.norm(vel))
-        if vt > 0.0:
-            alpha = float(np.arctan2(body_v[2], body_v[0]))
-            beta = float(np.arcsin(np.clip(body_v[1] / vt, -1.0, 1.0)))
-        else:
+        if vt == 0.0:
+            # No direction to read the angles from; anything non-finite (a
+            # non-finite native velocity) still propagates to the stop guards.
             alpha = 0.0
             beta = 0.0
+        else:
+            alpha = float(np.arctan2(body_v[2], body_v[0]))
+            beta = float(np.arcsin(np.clip(body_v[1] / vt, -1.0, 1.0)))
         x = np.zeros(12 + len(self.extras))
         x[VT] = vt
         x[ALPHA] = alpha
@@ -165,19 +171,28 @@ class X31Adapter:
         )
 
     def derivative(self, x: np.ndarray, u: np.ndarray) -> np.ndarray:
-        """Common-state derivative at (x, u); PlantStop on a dead plant."""
+        """Common-state derivative at (x, u); raises PlantStop on a dead plant."""
+        x = np.asarray(x, dtype=float)
+        if x[ALT] <= 0.0:
+            raise PlantStop("ground contact: altitude <= 0")
+        if not np.all(np.isfinite(x)):
+            raise PlantStop("non-finite state")
         state = self.to_native(x)
         try:
-            direction = x31_plant.derivative(
-                _TIME, state, self.surface_command(u)
-            )
+            direction = x31_plant.derivative(_TIME, state, self.surface_command(u))
         except x31_dynamics.AngleLimitError as exc:
             raise PlantStop(str(exc)) from None
         diff = self.to_common(self._along(state, direction, _STEP)) - self.to_common(
             self._along(state, direction, -_STEP)
         )
-        diff[PSI] = _wrap_psi(diff[PSI])
-        return diff / (2.0 * _STEP)
+        # `q_to_body_321` reads roll and yaw out of an atan2, so both of their
+        # differences can jump a branch cut while the rate stays small.
+        diff[PHI] = _wrap(diff[PHI])
+        diff[PSI] = _wrap(diff[PSI])
+        xd = diff / (2.0 * _STEP)
+        if not np.all(np.isfinite(xd)):
+            raise PlantStop("non-finite derivative")
+        return xd
 
     def extras_equilibrium(self, throttle: float) -> np.ndarray:
         """No engine state on this plane."""

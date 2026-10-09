@@ -11,6 +11,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
@@ -20,6 +21,7 @@ if str(_PY) not in sys.path:
 
 import x31_numpy_compat  # noqa: F401,E402  numpy short trig aliases before x31
 import x31_plant  # noqa: E402
+from x31.types import PlantState  # noqa: E402
 
 from flightbench import adapters  # noqa: E402
 from flightbench.common import (  # noqa: E402
@@ -105,19 +107,57 @@ class TestX31Adapter(unittest.TestCase):
         self.assertAlmostEqual(abs(cmd.aileron), 10.0)
         self.assertEqual((cmd.flap, cmd.thrust_pitch, cmd.thrust_yaw), (0.0, 0.0, 0.0))
 
-    def test_psi_difference_is_wrapped(self):
+    def test_phi_and_psi_differences_are_wrapped(self):
+        # phi and psi both come out of an atan2 in `q_to_body_321`, so both
+        # differences can jump 2*pi at the branch cut and must be wrapped.
         a = X31Adapter()
+        u = np.array([0.2, 0.0, 0.0, 0.0])
+        for index in (PHI, PSI):
+            for near in (np.pi - 1e-9, -np.pi + 1e-9):
+                x = STATE.copy()
+                x[P], x[Q], x[R] = 0.5, 0.0, 0.04
+                x[index] = near
+                with self.subTest(angle=STATE_NAMES[index], near=near):
+                    if index == PHI:
+                        want = x[P] + np.tan(x[THETA]) * (
+                            x[Q] * np.sin(x[PHI]) + x[R] * np.cos(x[PHI])
+                        )
+                    else:
+                        want = (
+                            x[Q] * np.sin(x[PHI]) + x[R] * np.cos(x[PHI])
+                        ) / np.cos(x[THETA])
+                    self.assertAlmostEqual(a.derivative(x, u)[index], want, places=3)
+
+    def test_ground_contact_is_a_plant_stop(self):
+        # Same reason the other adapters report, so the bench stops uniformly.
+        for altitude in (0.0, -5.0):
+            x = STATE.copy()
+            x[ALT] = altitude
+            with self.subTest(altitude=altitude):
+                with self.assertRaises(PlantStop) as ctx:
+                    X31Adapter().derivative(x, np.array([0.2, 0.0, 0.0, 0.0]))
+                self.assertEqual(ctx.exception.reason, "ground contact: altitude <= 0")
+
+    def test_non_finite_state_is_a_plant_stop(self):
         x = STATE.copy()
-        x[PHI] = 0.0
-        x[THETA] = 0.0
-        x[PSI] = np.pi - 1e-6
-        x[P] = 0.0
-        x[Q] = 0.0
-        x[R] = 5.0
-        xd = a.derivative(x, np.array([0.2, 0.0, 0.0, 0.0]))
-        self.assertAlmostEqual(
-            xd[PSI], x[Q] * np.sin(x[PHI]) + x[R] * np.cos(x[PHI]), places=3
+        x[VT] = np.nan
+        with self.assertRaises(PlantStop) as ctx:
+            X31Adapter().derivative(x, np.array([0.2, 0.0, 0.0, 0.0]))
+        self.assertEqual(ctx.exception.reason, "non-finite state")
+
+    def test_non_finite_derivative_is_a_plant_stop(self):
+        # No reachable finite state makes this plant's vector field non-finite
+        # (V = 0 raises in MOST31 instead), so the direction is fed in directly.
+        direction = PlantState(
+            pos=np.zeros(3),
+            vel=np.zeros(3),
+            q=np.array([1.0, 0.0, 0.0, 0.0]),
+            w=np.array([np.nan, 0.0, 0.0]),
         )
+        with patch.object(x31_plant, "derivative", return_value=direction):
+            with self.assertRaises(PlantStop) as ctx:
+                X31Adapter().derivative(STATE, np.array([0.2, 0.0, 0.0, 0.0]))
+        self.assertEqual(ctx.exception.reason, "non-finite derivative")
 
     def test_limits_and_metadata(self):
         a = X31Adapter()
