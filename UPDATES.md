@@ -1,5 +1,10 @@
 # Updates
 
+## 0.101.0 - Flightbench wings-level trim
+- `python/flightbench/trim.py` solves `trim_level(adapter, vt_mps, altitude_m)`: unknowns `(alpha, pitch, throttle)` against the residuals `(vt_dot, alpha_dot, q_dot)` of `adapter.derivative`, with `theta = alpha`, `beta/phi/p/q/r = 0`, roll/yaw at zero, extras at `adapter.extras_equilibrium(throttle)`. `scipy.optimize.least_squares` at the default tolerances (`ftol = xtol = gtol = 1e-8`); `TrimError` when any residual component exceeds 1e-8 or a channel leaves its limits, `FlightbenchError` for `vt_mps <= 0` or `altitude_m < 0`. Initial guess alpha 0.05, pitch 0 (mid-stick, all three planes include it), throttle 0.3.
+- Oracles: F-16 `153.0096 m/s @ 457.2 m` matches `f16.trim.trim_wings_level(..., "morelli")` to 5.8e-11 on alpha / 4.0e-12 on elevator / 2.7e-11 on throttle; Cessna matches its aircraft file's `initial`/`controls` to 3.5e-16 on alpha; X-31 at `50 m/s` trims at alpha 17.3192 deg, canard −27.5386 deg, thrust 21.32 kN (probe comment value 17.319 deg). Solved trims off the default conditions are steady too (checked up to 70 m/s / 3000 m); the Cessna's tornado powerplant cannot hold 33 m/s and raises `TrimError`.
+- Suite: `cd python && python3 -m unittest tests.test_flightbench_trim -v` (7 tests).
+
 ## 0.100.2 - view script cameras are distinct
 - `./run_x31_view.sh --follow` (also the default) opens the third-person window. `./run_x31_view.sh --anim` opens the path-wide frame. The runner prints `view: third-person window` or `view: path-wide frame` before the plot. 0.100.1 had forwarded both runs as `--follow`.
 - Suite: `cd python && python3 -m unittest tests.test_x31_runner.TestRunnerDefaults.test_the_view_script_opens_the_camera_it_was_given -v`.
