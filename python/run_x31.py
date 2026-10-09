@@ -44,7 +44,9 @@ line, the SITL ahead waypoint, and one V/Chi/Gamma course toward it.
 `--open-loop` cannot fly them: the manual-switch input never sees the
 command. `--anim` draws the path in a frame fixed on the whole trajectory
 (`x31_view`), so the aircraft translates instead of sitting still while its
-attitude changes.
+attitude changes. `--follow` is the other camera: a third-person window on
+the aircraft, the F-16 `--anim` angle, with a short trail. The two flags
+open different pictures, so passing both is refused.
 
 Every run of a scenario-table maneuver starts at the spawn
 `data/planes/x31/x31.json` declares, which is `trim.pos + [n_m, e_m, -d_m]`:
@@ -184,7 +186,14 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="after the CSV, draw the aircraft moving through a fixed frame",
     )
+    parser.add_argument(
+        "--follow",
+        action="store_true",
+        help="after the CSV, look at the aircraft from a third-person window that follows it",
+    )
     args = parser.parse_args(argv)
+    if args.anim and args.follow:
+        _die("--follow and --anim open different cameras; pass one")
 
     try:
         resolved = resolve_mode(_PLANE, args.controller, open_loop=args.open_loop)
@@ -254,11 +263,16 @@ def main(argv: list[str] | None = None) -> int:
     if out["stopped_at"] is not None and rows == 0:
         _die(f"angle limit stopped {args.maneuver} before its first sample")
     print(target)
-    if args.anim:
+    if args.anim or args.follow:
         try:
-            from x31_view import show
+            if args.follow:
+                from x31_view import show_follow
 
-            show(out)
+                show_follow(out)
+            else:
+                from x31_view import show
+
+                show(out)
         except Exception as exc:
             print(f"anim failed: {exc}", file=sys.stderr)
             return 1

@@ -1,5 +1,10 @@
 # Updates
 
+## 0.100.0 - X-31 third-person view
+- `run_x31.py --follow` keeps a window on the aircraft (elevation 30°, azimuth 45°, short trail). `--anim` stays the path-wide frame. Passing both exits 2.
+- `./run_x31_view.sh` flies `waypoint` and opens that window. `--maneuver`, `--duration`, and `--csv` override the defaults.
+- Suite: `cd python && python3 -m unittest tests.test_x31_view tests.test_x31_runner.TestRunnerDefaults -v`.
+
 ## 0.99.0 - MOST31 generalized aero model
 - `python/most31/` is the schema and evaluator for the generalized coefficient model.
 - Translated files: `data/planes/f16/most31_morelli.json`, `data/planes/f16/most31_stevens.json`, `data/planes/x31/most31.json` (`cd python && python3 -m most31.build`).

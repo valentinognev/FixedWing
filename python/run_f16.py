@@ -24,6 +24,14 @@ from f16.units import GCAS_FLOOR_M, f16_m_to_ned_m, ned_m_to_f16_m
 
 _MANEUVERS = ("straight_level", "gcas_upright", "gcas_inverted", "gcas_long")
 _HEADER = ("t", "n_m", "e_m", "d_m", "vt_mps", "alpha", "beta", "phi", "theta", "psi", "mode")
+_GCAS = ("gcas_upright", "gcas_inverted", "gcas_long")
+# Velocity 45° below the horizon. Inverted uses the AeroBench bank (−0.9π).
+_DIVE_GAMMA = -math.pi / 4.0
+_INVERTED_PHI = -0.9 * math.pi
+# Inverted 1 g standby steepens this dive, so the roll starts within 30 m of
+# release. 700 m is the height at which that roll-then-pull stays above the ground.
+_INVERTED_H_M = 700.0
+_INVERTED_FLOOR_M = 670.0
 
 
 def _die(message: str) -> None:
@@ -94,10 +102,26 @@ def _floor_m(setup: dict) -> float:
     return floor
 
 
+def _pitch_for_climb(alpha: float, phi: float, gamma: float) -> float:
+    """Pitch for climb angle gamma at beta = 0.
+
+    Plant: h_dot/vt = cos(alpha) sin(theta) - sin(alpha) cos(phi) cos(theta).
+    """
+    along = math.cos(alpha)
+    down = math.sin(alpha) * math.cos(phi)
+    radius = math.hypot(along, down)
+    sine = math.sin(gamma)
+    if radius <= abs(sine):
+        _die("bad setup: dive attitude")
+    return math.atan2(down, along) + math.asin(sine / radius)
+
+
 def _initial_state(maneuver: str, aero: str, n_m: float, e_m: float, d_m: float):
     from f16.trim_table import trimmed_initial
 
     pn_m, pe_m, h_m = ned_m_to_f16_m(n_m, e_m, d_m)
+    if maneuver == "gcas_inverted":
+        h_m = _INVERTED_H_M
     if not all(math.isfinite(v) for v in (pn_m, pe_m, h_m)) or h_m <= 0.0:
         _die("bad setup: unphysical spawn")
     try:
@@ -108,7 +132,17 @@ def _initial_state(maneuver: str, aero: str, n_m: float, e_m: float, d_m: float)
     x0[5] = 0.0
     x0[9] = pn_m
     x0[10] = pe_m
+    if maneuver == "gcas_inverted":
+        x0[3] = _INVERTED_PHI
+    if maneuver in _GCAS:
+        x0[4] = _pitch_for_climb(float(x0[1]), float(x0[3]), _DIVE_GAMMA)
     return x0, u0.copy()
+
+
+def _gcas_floor_m(maneuver: str, setup_floor_m: float) -> float:
+    if maneuver == "gcas_inverted":
+        return _INVERTED_FLOOR_M
+    return setup_floor_m
 
 
 def _autopilot(maneuver: str, x0: np.ndarray, llc: F16Llc, floor_m: float):
@@ -212,7 +246,7 @@ def main(argv: list[str] | None = None) -> int:
     maneuver = _maneuver(setup, args.maneuver)
     duration = _duration(setup, args.duration)
     n_m, e_m, d_m = _spawn_m(setup)
-    floor_m = _floor_m(setup)
+    floor_m = _gcas_floor_m(maneuver, _floor_m(setup))
 
     llc = F16Llc()
     x0, u0 = _initial_state(maneuver, args.aero, n_m, e_m, d_m)

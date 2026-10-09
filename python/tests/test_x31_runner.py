@@ -230,9 +230,14 @@ class TestRunnerDefaults(unittest.TestCase):
         result = _run("--help")
         for flag in (
             "--data", "--maneuver", "--controller", "--open-loop",
-            "--duration", "--step", "--csv", "--anim",
+            "--duration", "--step", "--csv", "--anim", "--follow",
         ):
             self.assertIn(flag, result.stdout)
+
+    def test_follow_and_anim_are_refused_together(self):
+        result = _run("--maneuver", "trim_hold", "--anim", "--follow", expect=2)
+        self.assertIn("pass one", result.stderr)
+        self.assertEqual(result.stdout.strip(), "")
 
 
 if __name__ == "__main__":

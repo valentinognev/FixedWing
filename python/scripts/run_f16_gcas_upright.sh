@@ -14,7 +14,7 @@ while [[ $# -gt 0 ]]; do
       cat <<EOF
 Usage: $0 [--csv PATH] [--duration SECONDS] [--setup PATH] [--anim] [--fg] [extra run_f16.py args]
 
-Host-only gcas_upright (default 3.51 s): upright GCAS dive-recovery incl. return to standby. No Docker, PX4, or MAVLink.
+Host-only gcas_upright (default 3.51 s): wings-level 45° descent from the setup altitude, then GCAS pull. No Docker, PX4, or MAVLink.
 
 Options:
   --csv PATH          CSV output (default /tmp/f16_gcas_upright_<stamp>.csv)

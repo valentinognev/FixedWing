@@ -14,7 +14,7 @@ while [[ $# -gt 0 ]]; do
       cat <<EOF
 Usage: $0 [--csv PATH] [--duration SECONDS] [--setup PATH] [--anim] [--fg] [extra run_f16.py args]
 
-Host-only gcas_inverted (default 10.0 s): inverted GCAS recovery. No Docker, PX4, or MAVLink.
+Host-only gcas_inverted (default 10.0 s): 45° descent from 700 m at the AeroBench inverted bank (−162°). The roll starts at release (deck 670 m) and the pull finishes above the ground. No Docker, PX4, or MAVLink.
 
 Options:
   --csv PATH          CSV output (default /tmp/f16_gcas_inverted_<stamp>.csv)

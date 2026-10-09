@@ -17,8 +17,7 @@ while [[ $# -gt 0 ]]; do
       cat <<EOF
 Usage: $0 [--csv PATH] [--duration SECONDS] [--setup PATH] [--anim] [--fg] [extra run_f16.py args]
 
-Host-only gcas_long (default 120.0 s): long-horizon upright GCAS. Runner horizon is 120 s; Python
-reference compare uses 115 s (GCAS_LONG_PYTHON_T_END). No Docker, PX4, or MAVLink.
+Host-only gcas_long (default 120.0 s): same wings-level 45° descent as gcas_upright. Runner horizon is 120 s; Python reference compare uses 115 s (GCAS_LONG_PYTHON_T_END). No Docker, PX4, or MAVLink.
 
 Options:
   --csv PATH          CSV output (default /tmp/f16_gcas_long_<stamp>.csv)
