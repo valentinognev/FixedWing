@@ -109,6 +109,29 @@ function mockFetch(body: unknown, status = 200) {
   return fetchMock
 }
 
+/** A response whose body is not JSON at all (a proxy or gateway text body). */
+function mockRawFetch(text: string, status = 200) {
+  const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => ({
+    ok: status >= 200 && status < 300,
+    status,
+    statusText: 'Internal Server Error',
+    json: async () => JSON.parse(text),
+    text: async () => text,
+  }))
+  vi.stubGlobal('fetch', fetchMock)
+  return fetchMock
+}
+
+/** Resolves with the rejection reason, so its fields can be asserted directly. */
+function rejectionOf(promise: Promise<unknown>): Promise<ApiError> {
+  return promise.then(
+    () => {
+      throw new Error('expected the request to reject')
+    },
+    (error: unknown) => error as ApiError,
+  )
+}
+
 describe('flightbench api client', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -148,6 +171,54 @@ describe('flightbench api client', () => {
       detail: DETAIL,
     })
     await expect(postRun(request)).rejects.toThrow(DETAIL)
+  })
+
+  it('postRun renders a non-string detail (TrimError 422) as a readable string', async () => {
+    mockFetch(
+      {
+        detail: [
+          {
+            loc: ['body', 'vt_mps'],
+            msg: 'value is not a valid number',
+            type: 'type_error.numeric',
+          },
+        ],
+      },
+      422,
+    )
+
+    const error = await rejectionOf(
+      postRun({
+        plane: 'cessna172',
+        law: 'linear',
+        task: 'lead_pitch',
+        trim: { vt_mps: Number.NaN, altitude_m: 500 },
+      }),
+    )
+
+    expect(error).toBeInstanceOf(ApiError)
+    expect(error.status).toBe(422)
+    expect(error.message).toBe(error.detail)
+    expect(error.detail.length).toBeGreaterThan(0)
+    expect(error.detail).toContain('value is not a valid number')
+    expect(error.detail).toContain('vt_mps')
+  })
+
+  it('postRun uses the raw body as the detail of a non-JSON 500', async () => {
+    mockRawFetch('upstream boom', 500)
+
+    const error = await rejectionOf(
+      postRun({
+        plane: 'cessna172',
+        law: 'linear',
+        task: 'lead_pitch',
+      }),
+    )
+
+    expect(error).toBeInstanceOf(ApiError)
+    expect(error.status).toBe(500)
+    expect(error.detail).toBe('upstream boom')
+    expect(error.message).toBe('upstream boom')
   })
 
   it('fetchGains requests /api/gains?plane&law&task', async () => {
