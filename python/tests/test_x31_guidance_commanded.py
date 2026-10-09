@@ -1,10 +1,13 @@
 """`run_commanded`, the commanded runner behind `run_guided`.
 
 The npz beside this file was recorded from `run_guided` BEFORE the
-`run_commanded` extraction, so the first test is the oracle that the extraction
-left the guided missions bit-identical. The rest pin what `run_commanded` adds
-on top of it: the body rates, the per-port-field surface offset, and the
-actuator initial outputs.
+`run_commanded` extraction, so `test_run_guided_output_unchanged` and
+`test_run_guided_matches_every_stored_column` are the oracle that the extraction
+left the guided missions bit-identical: the brief's version spot-checks five
+columns, the second compares every one the recording stored, so a perturbation
+of `aileron_cmd_deg`, `psi`, `stop_reason` or the `modes` list fails. The rest
+pin what `run_commanded` adds on top of it: the body rates, the per-port-field
+surface offset, and the actuator initial outputs.
 """
 from __future__ import annotations
 
@@ -41,6 +44,20 @@ class TestRunCommanded(unittest.TestCase):
         self.assertEqual(set(out), set(ref["keys"]))
         for key in ("t", "vt_mps", "alpha", "theta", "canard_cmd_deg"):
             np.testing.assert_array_equal(out[key], ref[key])
+
+    def test_run_guided_matches_every_stored_column(self) -> None:
+        """Every column of the pre-extraction recording, not a spot check.
+
+        The recording stores all of them, so an edit that perturbs a surface
+        command, `psi`, `stop_reason` or the `modes` list has nowhere to hide.
+        """
+        ref = np.load(DATA / "x31_guided_ndi_2s.npz", allow_pickle=True)
+        out = run_guided("ndi", "gcas_upright", duration=2.0, step=0.5)
+        self.assertEqual(set(out), set(ref["keys"]))
+        for key in ref["keys"]:
+            np.testing.assert_array_equal(
+                np.asarray(out[key]), ref[key], err_msg=str(key)
+            )
 
     def test_constant_command_logs_rates(self) -> None:
         out = run_commanded(

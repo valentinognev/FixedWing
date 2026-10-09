@@ -455,9 +455,12 @@ def run_commanded(
     this module does not generate yet flies the same plant.
 
     `surface_offset(t)` adds degrees (kN for thrust) to the controller's surface
-    command, per port field name, before the actuator derivative and in the
-    logged `*_cmd_*` columns: that is where a channel disturbance enters this
-    loop. `actuator_outputs` opens each named actuator at that output, which is
+    command, per port field name, so it reaches the actuator derivative and the
+    logged `*_cmd_*` column. Both are pre-Saturate: the logged `*_cmd_*` column
+    is the command the loop drove, while the flown `*_deg` column is the port's
+    own per-channel-clipped actuator output, so a channel the law is already
+    saturating carries its offset in the command and does not move.
+    `actuator_outputs` opens each named actuator at that output, which is
     how a run starts away from the port's trim without touching the port.
 
     The output is `run_guided`'s dict plus `p`, `q`, `r` [rad/s]. ``mode`` is
