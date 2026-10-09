@@ -6,7 +6,7 @@ integer indices are never used outside this file. All values are SI and radians.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -108,7 +108,7 @@ class Mode:
 class Trace:
     """One sampled run. series keys are exactly SERIES (each same length)."""
 
-    series: dict[str, np.ndarray] = field(default_factory=dict)
+    series: dict[str, np.ndarray]
     stopped_at: float | None = None
     stop_reason: str | None = None
 
