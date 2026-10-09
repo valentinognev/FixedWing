@@ -15,10 +15,15 @@ enough that this gentler pull bottoms above the ground. ``ahead`` is one
 locked line: the SITL ahead waypoint on that line, and one V/Chi/Gamma
 course toward it. Waypoint following is the AeroBench F-16 list: ordered
 NED points, a capture radius, then the next point.
+
+`run_guided` is one caller of `run_commanded`, the loop itself: it flies any
+demand on that command, takes a surface offset per port field and actuator
+initial outputs, and logs the body rates the guided missions drop.
 """
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 
 import numpy as np
 
@@ -29,7 +34,7 @@ from x31.dynamics import AngleLimitError
 from x31.ode45 import Ode45Error, ode45
 from x31.quaternion import body_321_to_q, q_to_body_321, rotate_body_to_earth
 from x31.simulate import _held_measurement, _pack, _split
-from x31.types import ActuatorState
+from x31.types import ActuatorState, SurfaceCommand
 import x31_plant
 from x31_sim import column_name, controller_states, surfaces
 
@@ -41,6 +46,8 @@ import x31.simulate as simulate
 # Guidance period the pull and the heading slew were flown at. Refreshing the
 # gamma lead much faster holds a constant error and steepens the pull.
 HOLD_S = 0.5
+# Per-sample label a commanded run carries when it is given no `label_fn`.
+_COMMANDED = "commanded"
 _V_MPS = 50.0
 _TRIM_ALPHA_RAD = math.radians(4.8648645161451505)
 _GAMMA_LEAD_DEG = 2.0
@@ -371,33 +378,108 @@ def _module(controller: str):
     )
 
 
-def run_guided(
-    controller: str,
-    name: str,
-    duration: float | None = None,
-    step: float = 1.0 / 30.0,
-) -> dict:
-    """Fly one guided maneuver and return the runner's column dict.
+# The port's seven field names, which `surfaces()` orders for the CSV and no
+# other place spells. A surface offset and an actuator output are both keyed by
+# them.
+_SURFACE_FIELDS = surfaces()
 
-    ``mode`` is the controller name. ``modes`` is one guidance label per
-    sample (``standby``, ``roll``, ``pull``, ``ahead``, ``waypoint 1``,
-    ``done``), which is what the CSV ``mode`` column carries for these
-    maneuvers.
+
+def _offset_surface(surface: SurfaceCommand, offset: dict) -> SurfaceCommand:
+    """The controller's surface command with `offset` added, per port field.
+
+    `offset` maps port field names to degrees (kN for thrust). A name outside
+    the port's seven fields is refused rather than skipped: a silently dropped
+    offset is a disturbance the run asked for and the plant never felt.
     """
-    _mission(name)
+    unknown = sorted(set(offset) - set(_SURFACE_FIELDS))
+    if unknown:
+        raise ValueError(
+            f"unknown surface offset {unknown[0]!r}; the port surfaces are "
+            f"{', '.join(_SURFACE_FIELDS)}"
+        )
+    return SurfaceCommand(
+        **{
+            field: float(getattr(surface, field)) + float(offset.get(field, 0.0))
+            for field in _SURFACE_FIELDS
+        }
+    )
+
+
+def _actuator_state(outputs: dict[str, float]) -> np.ndarray:
+    """The actuator state vector with each named channel's output at its value.
+
+    Every port actuator block is `y = C x + D u` with `D = 0`, read from
+    `actuators._MODEL` — the table `actuators.derivative` walks — so the state
+    that produces a wanted output under no command is `output / C`. Channels
+    not named keep `actuators.initial_state()`, which is the port's own opening
+    state: the trims, including the 30 kN thrust IC.
+    """
+    state = actuators.initial_state().x
+    unknown = sorted(set(outputs) - set(_SURFACE_FIELDS))
+    if unknown:
+        raise ValueError(
+            f"unknown actuator output {unknown[0]!r}; the port surfaces are "
+            f"{', '.join(_SURFACE_FIELDS)}"
+        )
+    for channel in actuators._MODEL:
+        if channel.attr not in outputs:
+            continue
+        gain = np.asarray(channel.C, dtype=float).reshape(-1)
+        if gain.size != 1 or float(gain[0]) == 0.0:
+            raise ValueError(
+                f"actuator {channel.attr!r} has no single state-to-output gain"
+            )
+        state[channel.start : channel.stop] = float(outputs[channel.attr]) / float(gain[0])
+    return state
+
+
+def run_commanded(
+    controller: str,
+    initial: tuple,
+    duration: float,
+    command_fn: Callable[[float, dict, float], dict],
+    *,
+    step: float = 1.0 / 30.0,
+    hold_s: float = HOLD_S,
+    label_fn: Callable[[], str] | None = None,
+    surface_offset: Callable[[float], dict[str, float]] | None = None,
+    actuator_outputs: dict[str, float] | None = None,
+) -> dict:
+    """Fly a demand on the slow V/Chi/Gamma command and return the column dict.
+
+    This is `run_guided`'s loop with the guidance object lifted out: the demand
+    is `command_fn(t, sensed, dt)` on the `_sense` sample, held for `hold_s` and
+    then refreshed, and the start state is `initial` `(pos, vel, q, w)` instead
+    of a mission's own. The port's controller, its seven actuators and the
+    `ode45` step are driven exactly as `run_guided` drives them, so a command
+    this module does not generate yet flies the same plant.
+
+    `surface_offset(t)` adds degrees (kN for thrust) to the controller's surface
+    command, per port field name, before the actuator derivative and in the
+    logged `*_cmd_*` columns: that is where a channel disturbance enters this
+    loop. `actuator_outputs` opens each named actuator at that output, which is
+    how a run starts away from the port's trim without touching the port.
+
+    The output is `run_guided`'s dict plus `p`, `q`, `r` [rad/s]. ``mode`` is
+    the controller name; ``modes`` is one `label_fn()` per sample
+    (`_COMMANDED` when it is None), which is what the CSV ``mode`` column
+    carries.
+    """
     module = _module(controller)
-    if duration is None:
-        duration = mission_duration(name)
     if not np.isfinite(duration) or duration <= 0.0:
-        raise ValueError(f"unphysical duration {duration!r} for {name!r}")
+        raise ValueError(f"unphysical duration {duration!r}")
     if not np.isfinite(step) or step <= 0.0:
         raise ValueError(f"unphysical step {step!r}")
 
-    guidance = _guidance(name)
-    pos, vel, q, w = _initial(name)
+    pos, vel, q, w = initial
     n_act = int(actuators.initial_state().x.size)
     n_ctrl = controller_states(controller)
     y = _pack(pos, vel, q, w, n_ctrl=n_ctrl)
+    if actuator_outputs:
+        pos, vel, q, w, act, ctrl = _split(y, n_act, n_ctrl)
+        y = np.concatenate([
+            pos, vel, q, w, _actuator_state(actuator_outputs), ctrl,
+        ])
     delay = (
         simulate._MeasurementDelay(float(np.linalg.norm(vel)))
         if controller == "gain_schedule"
@@ -406,6 +488,7 @@ def run_guided(
     channels = surfaces()
     times: list[float] = []
     modes: list[str] = []
+    rate_columns: dict[str, list[float]] = {"p": [], "q": [], "r": []}
     columns: dict[str, list[float]] = {
         key: []
         for key in (
@@ -424,6 +507,8 @@ def run_guided(
         else:
             held = measured
         cmd, _dots = module.surface(float(t), held, command, ctrl)
+        if surface_offset is not None:
+            cmd = _offset_surface(cmd, surface_offset(float(t)))
         euler = q_to_body_321(qn)
         times.append(float(t))
         modes.append(label)
@@ -436,6 +521,8 @@ def run_guided(
         columns["phi"].append(float(euler[0]))
         columns["theta"].append(float(euler[1]))
         columns["psi"].append(float(euler[2]))
+        for key, values in rate_columns.items():
+            values.append(float(measured[key]))
         for surface in channels:
             columns[column_name(surface, command=True)].append(float(getattr(cmd, surface)))
             columns[column_name(surface, command=False)].append(float(getattr(surf, surface)))
@@ -448,6 +535,8 @@ def run_guided(
                 delay.record(float(tt), measured, q_to_body_321(qn))
                 measured = _held_measurement(delay, float(tt), measured)
             cmd, dots = module.surface(float(tt), measured, command, ctrl)
+            if surface_offset is not None:
+                cmd = _offset_surface(cmd, surface_offset(float(tt)))
             act_dot = act_derivative(ActuatorState(x=act), cmd)
             return np.concatenate([
                 rates.pos,
@@ -465,19 +554,19 @@ def run_guided(
         return solution.t, solution.y
 
     t = 0.0
-    label = guidance.mode
+    label = _COMMANDED
     command: dict | None = None
     try:
         while True:
-            dt = min(HOLD_S, duration - t)
+            dt = min(hold_s, duration - t)
             sensed = _sense(y, n_act, n_ctrl)
-            guidance.advance(t, sensed)
-            command = guidance.command(sensed, dt)
+            command = command_fn(t, sensed, dt)
+            if label_fn is not None:
+                label = label_fn()
             if not times:
-                record(t, y, command, guidance.mode)
+                record(t, y, command, label)
             if t >= duration - 1e-9:
                 break
-            label = guidance.mode
             logged_t, logged_y = hold(t, dt, command)
             y = np.asarray(logged_y[-1], dtype=float)
             for sample_t, sample_y in zip(logged_t, logged_y):
@@ -511,6 +600,55 @@ def run_guided(
     }
     for name_key, values in columns.items():
         out[name_key] = np.asarray(values, dtype=float)
+    for key, values in rate_columns.items():
+        out[key] = np.asarray(values, dtype=float)
+    return out
+
+
+def run_guided(
+    controller: str,
+    name: str,
+    duration: float | None = None,
+    step: float = 1.0 / 30.0,
+) -> dict:
+    """Fly one guided maneuver and return the runner's column dict.
+
+    ``mode`` is the controller name. ``modes`` is one guidance label per
+    sample (``standby``, ``roll``, ``pull``, ``ahead``, ``waypoint 1``,
+    ``done``), which is what the CSV ``mode`` column carries for these
+    maneuvers.
+
+    This is `run_commanded` with the mission's guidance driving the demand: the
+    guidance object advances on the sensed state and its command is the demand,
+    so every column below is the mission's own and the body rates
+    `run_commanded` logs are dropped here.
+    """
+    _mission(name)
+    if duration is None:
+        duration = mission_duration(name)
+    if not np.isfinite(duration) or duration <= 0.0:
+        raise ValueError(f"unphysical duration {duration!r} for {name!r}")
+    if not np.isfinite(step) or step <= 0.0:
+        raise ValueError(f"unphysical step {step!r}")
+
+    guidance = _guidance(name)
+    pos, vel, q, w = _initial(name)
+
+    def command(t: float, sensed: dict, dt: float) -> dict:
+        guidance.advance(t, sensed)
+        return guidance.command(sensed, dt)
+
+    out = run_commanded(
+        controller,
+        (pos, vel, q, w),
+        duration,
+        command,
+        step=step,
+        hold_s=HOLD_S,
+        label_fn=lambda: guidance.mode,
+    )
+    for key in ("p", "q", "r"):
+        del out[key]
     return out
 
 
