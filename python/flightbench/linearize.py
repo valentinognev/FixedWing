@@ -27,13 +27,14 @@ guesses its input, so the augmented closed-loop matrix of
 - lateral: the complex pair is ``dutch_roll``, the most negative real eigenvalue
   is ``roll``, and the real eigenvalue nearest zero is ``spiral``.
 
-``open_loop_modes`` reports the longitudinal modes first, then the lateral ones,
-of the full linearization -- the spec's "open-loop modes (longitudinal +
-lateral) at trim". The two families are independent classifiers over the same
-matrix, so one fast pair can be reported twice (the F-16's 3.56 rad/s pair is
-its Dutch roll and, by the longitudinal rule, also its short period, while its
-(alpha, q) block is two real poles). Hand ``longitudinal(model)`` or
-``lateral(model)`` to ``modes`` for the per-family view.
+``open_loop_modes`` reports the longitudinal modes of the ``longitudinal``
+subsystem first, then the lateral modes of the ``lateral`` subsystem -- the
+spec's "open-loop modes (longitudinal + lateral) at trim". The subsystems, not
+the full matrix, are what the spec defines, so a fast lateral pair is never
+reported as the short period, and at a trim whose (alpha, q) block is two real
+poles (the F-16 at 153.0096 m/s, 457.2 m) no short period is reported at all:
+only the phugoid. The full model is what ``linearize`` returns and what the
+``linear`` run integrates; it is not a mode-classification input here.
 """
 from __future__ import annotations
 
@@ -195,8 +196,17 @@ def modes(model, family: str) -> list[Mode]:
 
 
 def open_loop_modes(model) -> list[Mode]:
-    """The open-loop modes of a linear model: longitudinal first, then lateral."""
-    return [*modes(model, LONGITUDINAL), *modes(model, LATERAL)]
+    """The open-loop modes of a linear model: the longitudinal block's first.
+
+    Classification runs on the spec's subsystems, so a lateral oscillation is
+    never reported as the short period and a real-split short period simply
+    does not appear (the spec: "a missing mode ... is reported as absent,
+    never invented").
+    """
+    return [
+        *modes(longitudinal(model), LONGITUDINAL),
+        *modes(lateral(model), LATERAL),
+    ]
 
 
 def _layout(adapter) -> tuple[str, ...]:

@@ -540,32 +540,45 @@ class TestLateralModes(unittest.TestCase):
 
 
 class TestOpenLoopModes(unittest.TestCase):
-    """The two named brief acceptances, on the real planes at their trim."""
+    """The named brief acceptances, on the real planes at their trims.
+
+    ``open_loop_modes`` classifies the spec's subsystems, so the rows below are
+    about the planes whose model actually carries the mode asked for; the two
+    rows the physics does not support are skipped with their measured numbers
+    instead of being loosened (project rule: never loosen, report UNMET).
+    """
 
     def test_order_is_longitudinal_then_lateral(self):
         _, _, model = bench_fixture("cessna172")
         names = [mode.name for mode in open_loop_modes(model)]
-        self.assertLess(names.index("phugoid"), names.index("dutch_roll"))
+        self.assertEqual(names[:2], ["short_period", "phugoid"])
+        self.assertEqual(names[2:], ["dutch_roll", "roll", "spiral"])
 
-    def test_f16_morelli_has_both_longitudinal_modes(self):
+    def test_f16_morelli_longitudinal_modes(self):
+        """The phugoid is there; the short period is not (see the skip below)."""
         _, _, model = bench_fixture("f16")
+        found = mode_map(open_loop_modes(model))
+        self.assertIn("phugoid", found)
+        self.assertNotIn("short_period", found)
+        self.skipTest(
+            "UNMET: f16 short period at 153.0096 m/s / 457.2 m is two real poles "
+            "(-1.9330, -1.0000) with an unstable pole +0.1033 (Morelli Cm_alpha = "
+            "+0.0487/rad); only longitudinal complex pair is the phugoid (wn 0.197, "
+            "zeta 0.758); the 3.56 rad/s complex pair is the lateral Dutch roll and "
+            "must not be labeled short_period (spec: real-split short period reported "
+            "absent, never invented)"
+        )
+
+    def test_cessna_has_both_longitudinal_modes(self):
+        """The same row on the plane whose (alpha, q) block is underdamped."""
+        _, _, model = bench_fixture("cessna172")
         found = mode_map(open_loop_modes(model))
         self.assertIn("short_period", found)
         self.assertIn("phugoid", found)
         self.assertGreater(found["short_period"].wn, found["phugoid"].wn)
         self.assertGreater(found["short_period"].zeta, 0.0)
         self.assertLess(found["short_period"].zeta, 1.0)
-        # A phugoid is the slow mode of the airplane: well under 1 rad/s.
-        self.assertLess(found["phugoid"].wn, 1.0)
-        self.assertGreater(found["phugoid"].zeta, 0.0)
-
-    def test_f16_longitudinal_block_has_no_complex_short_period(self):
-        """The (alpha, q) block of this trim is two real poles, so the
-        longitudinal block reports the phugoid and no short period."""
-        _, _, model = bench_fixture("f16")
-        found = mode_map(modes(longitudinal(model), "longitudinal"))
-        self.assertNotIn("short_period", found)
-        self.assertIn("phugoid", found)
+        self.assertLess(found["phugoid"].wn, 0.6)
 
     def test_cessna_has_all_three_lateral_modes(self):
         _, _, model = bench_fixture("cessna172")
@@ -574,7 +587,7 @@ class TestOpenLoopModes(unittest.TestCase):
         self.assertIn("roll", found)
         self.assertIn("spiral", found)
         self.assertLess(found["roll"].real, 0.0)
-        self.assertLess(found["phugoid"].wn, 0.6)
+        self.assertLess(found["dutch_roll"].wn, 4.0)
 
     def test_x31_reports_its_modes_too(self):
         _, _, model = bench_fixture("x31")
@@ -586,28 +599,40 @@ class TestOpenLoopModes(unittest.TestCase):
 
 
 class TestFamilyDecoupling(unittest.TestCase):
-    """Cross block of the full linearization at a wings-level trim."""
+    """Cross block of the full linearization at a wings-level trim.
 
-    # The cross block is trim asymmetry plus the plant model's own couplings. The
-    # Cessna and the X-31 are symmetric models, so their block is zero to the
-    # last bit and the brief's 1e-6 * max|A| bound holds there. The F-16's
-    # Stevens rate equations carry one genuine entry, d(qdot)/d(r) = -C7 * HE =
-    # -2.868e-3 (the (Iyy - Izz)/Iyy inertia coupling, present at every trim and
-    # inside the spec's full model), so its bound is 1e-4 * max|A|.
-    TOL = {"cessna172": 1e-6, "x31": 1e-6, "f16": 1e-4}
+    The row is the brief's, strict: ``max|A[long, lat]| < 1e-6 * max|A|`` for
+    every plane. The Cessna and the X-31 have no inertia coupling, so their
+    block is zero to the last bit. The F-16's Stevens rate equations carry one
+    genuine entry, ``d(qdot)/d(r) = -C7*HE = -2.8672e-3``, which is physics and
+    not trim asymmetry, so that row is missed by a wide margin and is reported
+    UNMET (with its measured numbers) rather than loosened.
+    """
 
-    def test_the_cross_block_is_at_its_bound_for_every_plane(self):
+    def test_the_cross_block_is_below_one_millionth_of_max_a(self):
         for plane in PLANES:
             with self.subTest(plane=plane):
+                # Measured once at this trim: cross = 2.8672e-03, max|A| =
+                # 153.0096, so the row misses by 18.7x. It is the Stevens inertia
+                # coupling, not trim asymmetry, so it cannot be fixed here.
+                if plane == "f16":
+                    self.skipTest(
+                        "UNMET: f16 longitudinal/lateral decoupling: "
+                        "max|A[long,lat]| = 2.8672e-03 (|A[q,r]|, Stevens I_xz "
+                        "inertia coupling -C7*HE) vs 1e-6*max|A| = 1.5301e-04 "
+                        "(ratio 1.87e-5, 18.7x over); physics, independent of trim "
+                        "asymmetry"
+                    )
                 _, _, model = bench_fixture(plane)
                 rows = [model.states.index(name)
                         for name in longitudinal(model).states]
                 columns = [model.states.index(name)
                            for name in lateral(model).states]
                 cross = model.A[np.ix_(rows, columns)]
-                scale = float(np.max(np.abs(model.A)))
+                # The row as the brief states it, unwaved: these two models carry
+                # no inertia coupling, so the block is zero to the last bit.
                 self.assertLess(float(np.max(np.abs(cross))),
-                                 self.TOL[plane] * scale)
+                                1e-6 * float(np.max(np.abs(model.A))))
 
 
 class TestLinearVersusNonlinear(unittest.TestCase):
