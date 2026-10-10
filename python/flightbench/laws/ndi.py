@@ -17,14 +17,21 @@ are never edited, which is what keeps `tests.test_x31_vendored_port` green after
 a modified-gain run.
 
 **Commands.** `{V, Chi, Gamma}` in the port's units, refreshed every
-``HOLD_S``. Two of them are not the spec's naive shape and the physics of the
-port is why: a heading *step* of 30 deg commands 53 deg of bank and an 80 deg/s
-roll through the port's chi loop, which flies alpha past the port's 85 deg limit
-and ends the run -- the port's own `chi_step` scenario records exactly that, and
-says its 6 s ramp is what makes it flyable. So `yaw_orientation` slews the same
-demand at the port's own 5 deg/s and reaches +30 deg. The two turn tasks' ramp
-(`g tan 20 deg / V0` = 4.1 deg/s) is already under that rate and is flown as the
-spec writes it. ``g`` is the bench's own (``f16.units.G_MPS2``), the one
+``HOLD_S``, exactly as the spec's command table writes them. One row of that
+table does not fly, and the physics of the port is why: `yaw_orientation`'s
+heading *step* of 30 deg commands 53 deg of bank and an 80 deg/s roll through
+the port's chi loop, which flies alpha past the port's 85 deg limit and ends
+the run at ``t = 7.58 s`` with ``psi(T) = -70.6 deg``. The port's own
+`data/planes/x31/x31.json` records the same limit in its `chi_step` scenario
+("The ramp is load-bearing: the same step taken instantaneously drives alpha
+past the diagram's 85 deg limit and ends the run") and slews that same demand
+over 6 s to make it flyable. The law commands the step the spec writes anyway
+-- the command table is the task definition, and a threshold is never loosened
+to make a row pass -- so `yaw_orientation`'s completion and direction rows are
+reported UNMET, with their measured numbers, by
+`tests/test_flightbench_law_ndi.py`. The two turn tasks' ramp
+(``g tan 20 deg / V0`` = 4.1 deg/s) is already under that rate and is flown as
+the spec writes it. ``g`` is the bench's own (``f16.units.G_MPS2``), the one
 ``flightbench.measure`` charts the load factor in, not the port's own 9.81.
 
 **Series.** The bench state comes from the logged columns (`d_m` is a down
@@ -88,10 +95,9 @@ HOLD_S = 0.1
 STEP_S = SAMPLE_DT
 # Every task's demand and disturbance opens this far into the run.
 ONSET_S = 1.0
-# `yaw_orientation`'s heading step, and the rate it is slewed at: the port's own
-# guidance slew, which turns 30 deg in 6 s.
+# `yaw_orientation`'s heading step, in channel degrees. The step is flown as
+# the spec's table writes it and departs the run: see this module's docstring.
 YAW_STEP_DEG = 30.0
-CHI_SLEW_DPS = 5.0
 # `turn_coordination` / `sideslip_turn`: the bank of the coordinated turn.
 TURN_BANK_DEG = 20.0
 # `acceleration`: the nz pulse of the lesson, as the gamma ramp's integrand.
@@ -359,7 +365,7 @@ def _speed(task: str, trim: TrimPoint) -> Callable[[float], float]:
 
 
 def _heading(task: str, trim: TrimPoint) -> Callable[[float], float]:
-    """The Chi demand: trimmed heading, a turn ramp, or the slewed step."""
+    """The Chi demand: trimmed heading, a turn ramp, or the yaw step."""
     chi0 = math.degrees(float(trim.x[PSI]))
     vt0 = float(trim.vt_mps)
     if task in ("turn_coordination", "sideslip_turn"):
@@ -372,14 +378,9 @@ def _heading(task: str, trim: TrimPoint) -> Callable[[float], float]:
 
         return ramp
     if task == "yaw_orientation":
-        # Slewed, not stepped: see this module's docstring. The demand is the
-        # spec's +30 deg, reached at the port's own guidance rate.
-        def slew(t: float) -> float:
-            if t < ONSET_S:
-                return chi0
-            return chi0 + min(YAW_STEP_DEG, CHI_SLEW_DPS * (t - ONSET_S))
-
-        return slew
+        # The spec's step, no slew and no ramp: see this module's docstring for
+        # the departure it causes and why the row is reported UNMET.
+        return lambda t: chi0 + YAW_STEP_DEG if t >= ONSET_S else chi0
     return lambda t: chi0
 
 
