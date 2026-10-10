@@ -118,6 +118,12 @@ def closed_loop_matrix(model: LinearModel, trim: TrimPoint,
     Columns are the plant deviations (``model.states`` order) then the controller
     states; the references are the controller's own at ``t = 0``. Central
     differences of exactly linear maps, so the Jacobian is exact to roundoff.
+
+    The returned matrix is the AUGMENTED Jacobian: the plant states first, the
+    controller states last, shape ``(n_x + n_c, n_x + n_c)``. A consumer that
+    classifies aircraft modes reads the plant-state block ``M[:n_x, :n_x]``; a
+    controller integrator pole near zero is not the aircraft's spiral mode and
+    must not be counted as one.
     """
     a_mat = np.asarray(model.A, dtype=float)
     b_mat = np.asarray(model.B, dtype=float)

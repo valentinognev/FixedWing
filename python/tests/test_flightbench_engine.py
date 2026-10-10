@@ -104,6 +104,20 @@ class AlphaPi:
         return np.array([0.0, 0.0, 0.0, 0.5 * float(xc[0])])
 
 
+class ThetaPiPitch:
+    """One controller state: `pitch = -2*theta - 3*q - 4*xc`, `xc_dot = theta`."""
+
+    n_states = 1
+    needs_nz = False
+
+    def derivative(self, t, xc, y):
+        return np.array([y["theta"]])
+
+    def output(self, t, xc, y):
+        return np.array([0.0, -2.0 * y["theta"] - 3.0 * y["q"]
+                         - 4.0 * float(xc[0]), 0.0, 0.0])
+
+
 class RollingStub:
     """A plant whose theta rolls at exactly 1 rad/s, then dies at 1 rad.
 
@@ -323,6 +337,29 @@ class TestEngine(unittest.TestCase):
             np.sort_complex(eig[np.abs(eig) > 1e-9]), [-2.0, -1.0],
             rtol=0.0, atol=1e-8,
         )
+
+    def test_augmented_matrix_carries_the_controller_state(self):
+        """A controller with a state: the augmented matrix and its plant block."""
+        model = theta_q_model(self.adapter)
+        n_x = len(model.states)
+        aug = closed_loop_matrix(model, self.trim, ThetaPiPitch())
+        self.assertEqual(aug.shape, (n_x + 1, n_x + 1))
+        # The plant block closes the loop through the measurement only: it is
+        # the same matrix the state-free loop of that feedback gives, because
+        # the controller state rides in the last COLUMN, not in this block.
+        np.testing.assert_allclose(
+            aug[:n_x, :n_x],
+            closed_loop_matrix(model, self.trim, PitchFeedback()),
+            rtol=0.0, atol=1e-12,
+        )
+        # theta_dot = q, q_dot = -2*theta - 3*q - 4*xc, xc_dot = theta on
+        # (theta, q, xc): the controller state is really inside the matrix.
+        rows = [model.states.index("theta"), model.states.index("q"), n_x]
+        expected = np.array([[0.0, 1.0, 0.0],
+                             [-2.0, -3.0, -4.0],
+                             [1.0, 0.0, 0.0]])
+        np.testing.assert_allclose(aug[np.ix_(rows, rows)], expected,
+                                   rtol=0.0, atol=1e-12)
 
     def test_nonfinite_state_stops_the_linear_run(self):
         states = linear_states(self.adapter)
