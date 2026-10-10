@@ -11,6 +11,9 @@ venv/
 .env
 .env.*
 
+# Node (web/)
+node_modules/
+
 # OS / editor
 .DS_Store
 Thumbs.db
