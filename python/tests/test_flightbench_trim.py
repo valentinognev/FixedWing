@@ -82,6 +82,13 @@ class TestTrimLevel(unittest.TestCase):
                 # north is deliberately not checked -- its derivative is the
                 # trim's own ground speed along a north heading, never zero.
                 self.assertAlmostEqual(float(xd[EAST]), 0.0, delta=_STEADY_ATOL)
+                # The plane extras -- a power state on the F-16 and the Cessna,
+                # none on the X-31 -- sit at the equilibrium the trim computes
+                # for the solved throttle, so their derivative must vanish for
+                # the same reason the named states do. The X-31's range is empty,
+                # which makes this loop a no-op there.
+                for index in range(12, xd.size):
+                    self.assertAlmostEqual(float(xd[index]), 0.0, delta=_STEADY_ATOL)
 
     def test_trim_solves_the_constraints_and_nothing_else(self):
         for adapter, vt_mps, altitude_m in (
@@ -106,6 +113,19 @@ class TestTrimLevel(unittest.TestCase):
     def test_impossible_speed_raises_trim_error(self):
         with self.assertRaises(TrimError):
             trim_level(Cessna172Adapter(), 5.0, 100.0)
+
+    def test_unreachable_speed_fails_on_residual_not_on_limits(self):
+        # The other failure, distinct from the limits one: a condition the plane
+        # is inside the box for but whose balance it cannot zero. The tornado
+        # powerplant cannot hold 40 m/s level at 100 m, so a residual stays
+        # large and the residual acceptance -- not the channel check -- is what
+        # rejects the trim. The message names the branch, which keeps the two
+        # TrimError triggers distinguishable under mutation.
+        with self.assertRaises(TrimError) as caught:
+            trim_level(Cessna172Adapter(), 40.0, 100.0)
+        message = str(caught.exception)
+        self.assertIn("residual component", message)
+        self.assertNotIn("a channel is outside its limits", message)
 
     def test_unflyable_condition_is_a_trim_error_not_a_plant_stop(self):
         # A legal condition the plant cannot be flown in at all -- a trim on the
