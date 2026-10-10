@@ -120,10 +120,13 @@ def closed_loop_matrix(model: LinearModel, trim: TrimPoint,
     differences of exactly linear maps, so the Jacobian is exact to roundoff.
 
     The returned matrix is the AUGMENTED Jacobian: the plant states first, the
-    controller states last, shape ``(n_x + n_c, n_x + n_c)``. A consumer that
-    classifies aircraft modes reads the plant-state block ``M[:n_x, :n_x]``; a
-    controller integrator pole near zero is not the aircraft's spiral mode and
-    must not be counted as one.
+    controller states last, shape ``(n_x + n_c, n_x + n_c)``. Its eigenvalues
+    are the closed-loop poles; the plan's task tests read them as this full set
+    (e.g. the washout pole appears with ``kr = 0``). A consumer that classifies
+    aircraft modes may pass either this matrix or its plant-state block
+    ``M[:n_x, :n_x]`` (the loop with the controller frozen at zero steady
+    state); only complex pairs are aircraft modes — PI/washout poles are real
+    and must not be read as the aircraft's spiral mode.
     """
     a_mat = np.asarray(model.A, dtype=float)
     b_mat = np.asarray(model.B, dtype=float)
