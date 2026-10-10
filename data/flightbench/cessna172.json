@@ -1,0 +1,88 @@
+{
+  "aero": "tornado",
+  "generated_by": "python -m flightbench.tune --plane cessna172; short_period_phugoid, dutch_roll, turn_coordination, sideslip_turn and yaw_orientation then set to meet the acceptance column",
+  "linear": {
+    "acceleration": {
+      "ki_nz": 0.6384068735765042,
+      "ki_v": 1.9745359898124705e-09,
+      "kp_nz": 0.1365154477501364,
+      "kp_v": 0.09194408297533854,
+      "kq": -0.08986338516811496
+    },
+    "airspeed": {
+      "ki_theta": 2.7571261165648147,
+      "ki_v": 0.06651122644816825,
+      "kp_theta": 1.0110951080169674,
+      "kp_v": 0.44842063747516675,
+      "kq": 1.106794399863805
+    },
+    "dutch_roll": {
+      "kr": 0.5,
+      "tau_w": 1.0
+    },
+    "lead_pitch": {
+      "ki_theta": 2.1381825777595393,
+      "kp_theta": 165.4850474207858,
+      "kq": 7.2403545949236126,
+      "lead_pole": 0.646282891890661,
+      "lead_zero": 0.647975306341433
+    },
+    "pitch_disturbance": {
+      "ki_theta": 2046.04203234766,
+      "kp_theta": 1445.543303156028,
+      "kq": 7.166430080422823
+    },
+    "short_period_phugoid": {
+      "kq": 0.3
+    },
+    "sideslip_turn": {
+      "k_beta": 2.0,
+      "k_betadot": 1.0,
+      "ki_beta": 0.2,
+      "ki_phi": 0.1,
+      "kp_p": 0.5,
+      "kp_phi": 2.0,
+      "kr": 0.5,
+      "tau_w": 1.0
+    },
+    "steady_descent": {
+      "ki_gamma": 1.6013780508570985,
+      "ki_theta": 0.38603267295729715,
+      "ki_v": 0.013550780686391595,
+      "kp_gamma": 0.7450438335563003,
+      "kp_theta": 0.3731991840062021,
+      "kp_v": 0.14002490111109833,
+      "kq": -0.1566255129486196
+    },
+    "trim_cruise": {
+      "ki_theta": 291.02343112868573,
+      "ki_v": 5.536068926024743,
+      "kp_theta": 1098.165778814259,
+      "kp_v": 38.3841112206716,
+      "kq": 37.4871779098698
+    },
+    "turn_coordination": {
+      "k_ari": 0.0,
+      "k_beta": 1.5,
+      "ki_phi": 0.1,
+      "kp_p": 0.5,
+      "kp_phi": 2.0,
+      "kr": 0.5,
+      "tau_w": 1.0
+    },
+    "yaw_orientation": {
+      "k_beta": 2.0,
+      "k_betadot": 0.5,
+      "ki_phi": 0.1,
+      "kp_p": 0.5,
+      "kp_phi": 2.0,
+      "kp_psi": 0.5,
+      "kr_track": 1.0
+    }
+  },
+  "plane": "cessna172",
+  "trim": {
+    "altitude_m": 100.0,
+    "vt_mps": 23.114578472541158
+  }
+}

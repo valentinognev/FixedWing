@@ -119,10 +119,13 @@ def gain_specs(plane: str, law: str, task: str) -> list[dict]:
     defaults (the tuner-written document where there is one, the registry seeds
     otherwise), because those are the gains a ``linear`` run edits; the two port
     laws carry their defaults in code and are listed from their own tables.
+    An unknown task is refused before either table is returned, naming the
+    legal set, the same way a run refuses it.
     """
     _check_law(plane, law)
     gain_table = _LAWS[law].gain_table
     if gain_table is not None:
+        get_task(task)
         specs: tuple[GainSpec, ...] = _entry_point(law, gain_table)()
         return [_as_spec(spec, spec.seed) for spec in specs]
     values = default_gains(plane, task)

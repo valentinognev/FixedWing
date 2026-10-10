@@ -1,5 +1,49 @@
 # Updates
 
+## 0.101.0 - Flightbench control-calibration bench
+- `python/flightbench/` is the host-only bench: adapters for `f16`, `x31`, and `cessna172`; trim; linearization; eleven Dickinson tasks; laws `linear` (every plane), `lqr` (F-16), and `ndi` (X-31); tuner; FastAPI `flightbench.api:app` on 127.0.0.1:8765. Plants are called, not copied. `python/x31/` is unchanged.
+- `data/flightbench/{f16,cessna172,x31}.json` holds each plane's default gains. Thresholds were not edited.
+- `tests.test_flightbench_law_linear.TestLinearLaw` points `DEFAULTS_DIR` at an empty temp directory, so omitted gains stay on the registry seeds and do not read `data/flightbench/cessna172.json`. Assertions and the 0.01° margin are unchanged.
+- `web/flightbench/` is the Vite + React page (plane, law, aero, trim, task, gains, Plotly charts, modes). `npm run build` writes `dist/`; the API mounts that directory at `/` when it exists.
+- `./run_flightbench.sh` builds `web/flightbench/dist` if it is absent (`npm ci && npm run build`), then serves the app and prints `flightbench: http://127.0.0.1:8765`. `--dev` runs uvicorn `--reload` and `npm run dev`, and Ctrl-C kills both. `--port N` overrides 8765. An unknown flag exits 2.
+- F-16 (`tests.test_flightbench_accept_f16`, Morelli): the spec acceptance column is met on 10 tasks; `short_period_phugoid` has no closed-loop short period; LQR completes all 11; nonlinear completion holds on all 11. UNMET:
+- UNMET: pitch_disturbance spectral abscissa 0 vs < 0
+- UNMET: short_period_phugoid no closed-loop short period vs zeta >= 0.5; spectral abscissa 0.00209838 vs < 0
+- UNMET: lead_pitch spectral abscissa 0 vs < 0
+- UNMET: trim_cruise spectral abscissa 0 vs < 0
+- UNMET: airspeed spectral abscissa 0 vs < 0
+- UNMET: acceleration spectral abscissa 0.00291626 vs < 0
+- UNMET: steady_descent spectral abscissa 6.47601e-18 vs < 0
+- UNMET: dutch_roll spectral abscissa 0.10333 vs < 0
+- UNMET: turn_coordination spectral abscissa 0.10333 vs < 0
+- UNMET: sideslip_turn spectral abscissa 0.10333 vs < 0
+- UNMET: yaw_orientation spectral abscissa 0.10333 vs < 0
+- Cessna 172 (`tests.test_flightbench_accept_cessna`): `yaw_orientation` meets the row (unstopped run to T, abscissa < 0, acceptance empty). The other ten skip on the structural heading abscissa. UNMET:
+- UNMET: pitch_disturbance 0 vs < 0
+- UNMET: short_period_phugoid 0 vs < 0
+- UNMET: lead_pitch 0 vs < 0
+- UNMET: trim_cruise 0 vs < 0
+- UNMET: airspeed 0 vs < 0
+- UNMET: acceleration 0 vs < 0
+- UNMET: steady_descent 1.85082e-16 vs < 0
+- UNMET: dutch_roll 0 vs < 0
+- UNMET: turn_coordination 0 vs < 0
+- UNMET: sideslip_turn 0 vs < 0
+- X-31 (`tests.test_flightbench_accept_x31`): ten NDI tasks reach T; NDI `yaw_orientation` does not. Six linear tasks meet the acceptance column and skip only the abscissa (`pitch_disturbance`, `lead_pitch`, `trim_cruise`, `airspeed`, `acceleration`, `steady_descent`). UNMET:
+- UNMET: yaw_orientation stopped at t=7.58 s vs T=30 s, psi=-70.57 deg vs +30 deg, alpha=82.94 deg (85 degree angle limit (limit 85 deg))
+- UNMET: pitch_disturbance spectral abscissa 0 vs < 0
+- UNMET: short_period_phugoid the closed loop has no short period to damp, past the 0.5 damping acceptance | spectral abscissa 0.021892255 vs < 0
+- UNMET: lead_pitch spectral abscissa 0 vs < 0
+- UNMET: trim_cruise spectral abscissa 0 vs < 0
+- UNMET: airspeed spectral abscissa 0 vs < 0
+- UNMET: acceleration spectral abscissa 0.059801049 vs < 0
+- UNMET: steady_descent spectral abscissa 5.6180758e-17 vs < 0
+- UNMET: dutch_roll closed-loop Dutch-roll zeta = 0.258 below 0.300 | spectral abscissa 1.0949073 vs < 0
+- UNMET: turn_coordination nonlinear run stopped_at=6.42 t_end=6.42 vs T=20.0 (85 degree angle limit) | phi(T) = 119.027 deg, want 20.000 deg within 1.000 deg | max|beta| = 52.872 deg exceeds 2.000 deg | spectral abscissa 1.0949073 vs < 0
+- UNMET: sideslip_turn nonlinear run stopped_at=7.46 t_end=7.46 vs T=20.0 (85 degree angle limit) | phi(T) = 110.328 deg, want 20.000 deg within 1.000 deg | max|beta| = 58.556 deg exceeds 1.000 deg | spectral abscissa 1.0949073 vs < 0
+- UNMET: yaw_orientation nonlinear run stopped_at=4.58 t_end=4.58 vs T=30.0 (85 degree angle limit) | psi(T) = 98.312 deg, want 30.000 deg within 1.500 deg | max|beta| = 13.346 deg exceeds 2.000 deg | spectral abscissa 1.0949073 vs < 0
+- Suite: `cd python && python3 -m unittest discover -s tests -p 'test_flightbench*.py' -v`. E2E: `cd python && python3 -m unittest tests.test_flightbench_e2e -v`. Web: `cd web/flightbench && npx vitest run && npm run build`. Launcher: `bash -n run_flightbench.sh`; `./run_flightbench.sh --bogus` exits 2.
+
 ## 0.100.2 - view script cameras are distinct
 - `./run_x31_view.sh --follow` (also the default) opens the third-person window. `./run_x31_view.sh --anim` opens the path-wide frame. The runner prints `view: third-person window` or `view: path-wide frame` before the plot. 0.100.1 had forwarded both runs as `--follow`.
 - Suite: `cd python && python3 -m unittest tests.test_x31_runner.TestRunnerDefaults.test_the_view_script_opens_the_camera_it_was_given -v`.

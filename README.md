@@ -36,6 +36,10 @@ Package layout:
 | `python/flightSetup.json` | Balloon-race config (JSONC); also default SID plant. |
 | `python/scripts/` | Sim launchers, race orchestrator, kill, fetch helpers. |
 | `python/tests/` | Unit tests (host: `cd python && python3 -m unittest discover -s tests`). |
+| `data/flightbench/` | Linear-law default gains per plane (`f16.json`, `cessna172.json`, `x31.json`). The tuner writes them; a missing file or task row uses the registry seeds. |
+| `python/flightbench/` | Host-only control-calibration bench. Adapters for `f16`, `x31`, `cessna172`; trim, linearization, eleven Dickinson tasks; laws `linear` (every plane), `lqr` (F-16), `ndi` (X-31); tuner; FastAPI `flightbench.api:app`. Plants are called, not copied. |
+| `web/flightbench/` | Vite + React page for that API (plane, law, aero, trim, task, gains, Plotly charts). `npm run build` writes `dist/`, mounted at `/` when that directory exists. |
+| `run_flightbench.sh` | Builds `web/flightbench/dist` if absent (`npm ci && npm run build`), then serves the API and UI. `--dev` is uvicorn `--reload` plus `npm run dev` (both killed on Ctrl-C). `--port N` overrides 8765. An unknown flag exits 2. |
 
 ## Runtime (balloon race)
 
@@ -145,6 +149,7 @@ cd python && MPLBACKEND=Agg python3 -m unittest tests.test_plane_cessna172_json 
 FW_SITL_E2E=1 ./python/scripts/run_race_quat_e2e.sh   # opt-in live SITL (50 m smoke course)
 FW_SITL_E2E=1 ./python/scripts/run_race_quat_production_e2e.sh  # production 10 m course, typical-spawn first circuit
 FW_SITL_E2E=1 ./python/scripts/run_race_euler_e2e.sh  # GZ race_euler, production 10 m course
+./run_flightbench.sh                 # flightbench at http://127.0.0.1:8765; --dev reloads; --port N
 ```
 
 Plant for SID comes from `flightSetup.json`; override with `--gz`/`--yasim`/`--viz`/`--jsbsim`/`--model`. `--waveform sine` is **instead of** chirp (60 s tone per axis from `procedure.json`). Artifacts in `/tmp/fw_calib_<stamp>/` (`_history` / `_step` always, `_fft` unless the log is too short). Interactive matplotlib unless `--no-plot`. Envelope abort recaptures and retries that axis (3 attempts) then skips.

@@ -86,7 +86,13 @@ def _by_name(modes) -> dict:
 
 
 class TestLinearLaw(unittest.TestCase):
-    """One run of the `linear` law on the Cessna, and everything it answers."""
+    """One run of the `linear` law on the Cessna, and everything it answers.
+
+    The closed-loop numbers and the 0.0699 deg gap pin the registry seeds.
+    ``data/flightbench/cessna172.json`` is the acceptance document, so this
+    class points ``DEFAULTS_DIR`` at an empty directory and ``default_gains``
+    falls back to the seeds.
+    """
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -94,9 +100,26 @@ class TestLinearLaw(unittest.TestCase):
         # shape / agreement / reference / metrics / gain-table tests below, and
         # one `dutch_roll` run for the lateral rows. The runs are deterministic
         # (fixed-step RK4 from a fixed trim), so sharing them is free of order
-        # effects.
-        cls.result = run("cessna172", "linear", "lead_pitch")
-        cls.dutch = run_linear("cessna172", "dutch_roll")
+        # effects. The empty defaults directory stays up for the class: later
+        # methods fly `short_period_phugoid` with no gain dict, and that call
+        # has to see the seeds too.
+        cls._defaults_dir = tempfile.TemporaryDirectory()
+        cls._defaults_patch = mock.patch.object(
+            defaults_module, "DEFAULTS_DIR", Path(cls._defaults_dir.name)
+        )
+        cls._defaults_patch.start()
+        try:
+            cls.result = run("cessna172", "linear", "lead_pitch")
+            cls.dutch = run_linear("cessna172", "dutch_roll")
+        except BaseException:
+            cls._defaults_patch.stop()
+            cls._defaults_dir.cleanup()
+            raise
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._defaults_patch.stop()
+        cls._defaults_dir.cleanup()
 
     def test_a_run_answers_both_traces_on_one_grid(self) -> None:
         """`runs` is exactly {linear, nonlinear}: the same controller, two plants."""

@@ -10,3 +10,7 @@ matplotlib>=3.7
 scipy>=1.10
 # python/x31/: the port's gain schedule and NDI solve their algebraic loops with
 # scipy.optimize least_squares / fsolve. Nothing else on the X-31 side needs it.
+# flightbench
+fastapi>=0.110
+uvicorn>=0.29
+httpx>=0.27
