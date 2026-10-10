@@ -20,48 +20,66 @@ so it is told which plane to fly and which of that plane's aero models to fly it
 with; ``lqr`` and ``ndi`` are port laws bound to the plane that owns them, so
 neither is told a plane -- the LQR still takes an aero model (the F-16 has two)
 and the X-31's does not, because the port has one plant. Every call is by
-keyword, for the same reason.
+keyword, for the same reason. Each law is one row of ``_LAWS`` -- module, entry
+point, gain table, request fields -- so a law cannot be half registered, and a
+law that carries no gain table of its own (``linear``) says so rather than being
+read off another table's membership.
 """
 
 from __future__ import annotations
 
 import importlib
+from dataclasses import dataclass
 
 from flightbench.adapters import laws_for
 from flightbench.common import FlightbenchError, RunResult
 from flightbench.tasks.base import GainSpec, get_task
 from flightbench.tasks.defaults import default_gains
 
-# law -> the module holding its entry point and its gain table. The modules are
-# imported on use, so listing a plane's laws (or refusing one) never drags in a
-# port: an X-31 request does not load the F-16's LQR, and a broken port cannot
-# break the registry.
-_LAW_MODULES: dict[str, str] = {
-    "linear": "flightbench.laws.linear",
-    "lqr": "flightbench.laws.lqr",
-    "ndi": "flightbench.laws.ndi",
-}
 
-# The name each law's run entry point and gain table carry on its module.
-_RUNNERS: dict[str, str] = {
-    "linear": "run_linear",
-    "lqr": "run_lqr",
-    "ndi": "run_ndi",
-}
-_GAIN_TABLES: dict[str, str] = {
-    "lqr": "lqr_gain_specs",
-    "ndi": "ndi_gain_specs",
-}
+@dataclass(frozen=True)
+class _Law:
+    """One law the dispatch can reach: where it lives and how it is called.
 
-# The request fields each law's entry point takes, in its own parameter names.
+    One row per law rather than a table per attribute, so a law cannot be half
+    registered. ``gain_table`` is the name of the law's own gain table, and
+    ``None`` for `linear`, whose editable gains are the task's own from the plane's
+    defaults; ``request_fields`` are the fields the entry point takes, in its own
+    parameter names.
+    """
+
+    module: str
+    runner: str
+    gain_table: str | None
+    request_fields: tuple[str, ...]
+
+
 # ``linear`` is a plane law, so it is the one that is told which plane (and which
 # of its aero models) it flies; ``lqr`` flies the F-16's own plant but can still
 # be told which of its two aero models to use it with; ``ndi`` flies the X-31 port
-# with the one plant that port has, and has no aero argument to offer.
-_REQUEST_FIELDS: dict[str, tuple[str, ...]] = {
-    "linear": ("plane", "task", "gains", "aero", "trim"),
-    "lqr": ("task", "gains", "aero", "trim"),
-    "ndi": ("task", "gains", "trim"),
+# with the one plant that port has, and has no aero argument to offer. The modules
+# are imported on use, so listing a plane's laws (or refusing one) never drags in
+# a port: an X-31 request does not load the F-16's LQR, and a broken port cannot
+# break the registry.
+_LAWS: dict[str, _Law] = {
+    "linear": _Law(
+        module="flightbench.laws.linear",
+        runner="run_linear",
+        gain_table=None,
+        request_fields=("plane", "task", "gains", "aero", "trim"),
+    ),
+    "lqr": _Law(
+        module="flightbench.laws.lqr",
+        runner="run_lqr",
+        gain_table="lqr_gain_specs",
+        request_fields=("task", "gains", "aero", "trim"),
+    ),
+    "ndi": _Law(
+        module="flightbench.laws.ndi",
+        runner="run_ndi",
+        gain_table="ndi_gain_specs",
+        request_fields=("task", "gains", "trim"),
+    ),
 }
 
 
@@ -85,12 +103,12 @@ def run(
     one model there, so the request could not have named another.
     """
     _check_law(plane, law)
+    law_entry = _LAWS[law]
     request = {
         "plane": plane, "task": task, "gains": gains, "aero": aero, "trim": trim,
     }
-    wanted = _REQUEST_FIELDS[law]
-    return _entry_point(law, _RUNNERS[law])(
-        **{field: request[field] for field in wanted}
+    return _entry_point(law, law_entry.runner)(
+        **{field: request[field] for field in law_entry.request_fields}
     )
 
 
@@ -103,8 +121,9 @@ def gain_specs(plane: str, law: str, task: str) -> list[dict]:
     laws carry their defaults in code and are listed from their own tables.
     """
     _check_law(plane, law)
-    if law in _GAIN_TABLES:
-        specs: tuple[GainSpec, ...] = _entry_point(law, _GAIN_TABLES[law])()
+    gain_table = _LAWS[law].gain_table
+    if gain_table is not None:
+        specs: tuple[GainSpec, ...] = _entry_point(law, gain_table)()
         return [_as_spec(spec, spec.seed) for spec in specs]
     values = default_gains(plane, task)
     return [
@@ -134,7 +153,7 @@ def _check_law(plane: str, law: str) -> None:
 
 def _entry_point(law: str, name: str):
     """A law module's ``name``, looked up now so the module stays replaceable."""
-    module_name = _LAW_MODULES[law]
+    module_name = _LAWS[law].module
     entry = getattr(importlib.import_module(module_name), name, None)
     if entry is None:
         raise FlightbenchError(

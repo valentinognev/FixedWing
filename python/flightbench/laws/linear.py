@@ -27,18 +27,31 @@ describes it:
 
 **Metrics.** `open_loop_modes` are the modes of the two subsystems at trim
 (`linearize.open_loop_modes`); `closed_loop_modes` are the modes of the task's
-loop on the linear model. The latter comes from `engine.closed_loop_matrix`,
-which returns the AUGMENTED plant-plus-controller Jacobian (rulings R8/R10): its
-eigenvalues are the closed-loop poles, the controller's own included, and
-`linearize.modes` classifies that whole matrix with the task family's rules. Two
-consequences are worth stating because they are visible in the tables: only the
-complex pairs are aircraft modes, so the PI and washout poles -- always real --
-never masquerade as the spiral mode; and a family classifier run on the full
-matrix sees the *other* family's pair too, which on these airframes is a
-lateral-frequency complex pair (dutch_roll) that a longitudinal task's row may
-therefore report as its second pair. The rules are the spec's and are applied
-unchanged; the alternative -- cutting the augmented matrix down to the task's own
-subsystem -- would drop the controller poles the controller ruling asks for.
+loop on the linear model. That table comes from `engine.closed_loop_matrix`,
+which returns the AUGMENTED plant-plus-controller Jacobian (rulings R8/R10):
+plant states first, controller states last. It is the *augmented* matrix that is
+built and returned there, untouched; only the block handed to the classifier
+narrows, to the task family's own plant states (`linearize.longitudinal` /
+`linearize.lateral` decide which, and they name the plane's engine extras with
+the longitudinal block because the throttle drives them) plus every controller
+state, so a PI or washout pole stays visible to the classifier as R8/R10 ask.
+
+**Why the classifier's block is the family's own.** The spec's acceptance column
+NAMES the mode it grades -- "closed-loop short-period zeta >= 0.5" for
+`short_period_phugoid`, "closed-loop Dutch-roll zeta >= 0.3" for `dutch_roll` --
+so the classifier has to be looking at that family's own modes. Classifying the
+other family in is not a stricter test, it is a different test, and it is the
+wrong one: on the Cessna the open-loop Dutch roll (wn 3.8657, zeta 0.2530) is a
+complex pair a longitudinal classifier would happily call the short period, and
+the short period (wn 8.2150, zeta 0.8128) is a complex pair a lateral classifier
+would call the Dutch roll. Both rows would then be graded on a mode from the
+other axis, where no pitch-gain edit can move them. A mode that is genuinely
+absent is reported absent, never invented: with only `pitch = -kq*q` closed the
+Cessna's short period splits into real poles, so `short_period_phugoid` answers
+with the phugoid alone (wn 0.2514, zeta 0.3650) and no short period at all. Its
+acceptance row then reads "the closed loop has no short period to damp" -- an
+honest UNMET with numbers behind it -- where before it read a lateral mode's
+damping and no gain edit could have moved it.
 
 **Reference.** `(signal, time, values)`: the task's commanded signal, absolute
 (not a deviation), sampled on the nonlinear run's own grid so the dashed command
@@ -67,8 +80,21 @@ from flightbench.common import (
     Trace,
     TrimPoint,
 )
-from flightbench.engine import closed_loop_matrix, simulate_linear, simulate_nonlinear
-from flightbench.linearize import linearize, modes, open_loop_modes
+from flightbench.engine import (
+    Controller,
+    closed_loop_matrix,
+    simulate_linear,
+    simulate_nonlinear,
+)
+from flightbench.linearize import (
+    LATERAL,
+    LONGITUDINAL,
+    lateral,
+    linearize,
+    longitudinal,
+    modes,
+    open_loop_modes,
+)
 from flightbench.tasks import build_task
 from flightbench.tasks.base import TaskContext, TaskInfo, get_task
 from flightbench.tasks.defaults import default_gains
@@ -189,33 +215,58 @@ def _reference(info: TaskInfo, reference, trace: Trace):
     return (info.reference_signal, time, values)
 
 
-def _metrics(info: TaskInfo, model: LinearModel, trim: TrimPoint, controller,
-             second: TrimPoint | None) -> dict:
+def _metrics(info: TaskInfo, model: LinearModel, trim: TrimPoint,
+             controller: Controller, second: TrimPoint | None) -> dict:
     """What a run answers besides its traces: the two mode tables, the trim points."""
     closed = closed_loop_matrix(model, trim, controller)
     metrics = {
         "open_loop_modes": open_loop_modes(model),
-        "closed_loop_modes": modes(_augmented(model, closed), info.family),
+        "closed_loop_modes": modes(_classified(model, closed, info.family), info.family),
     }
     if second is not None:
         metrics["trims"] = [trim, second]
     return metrics
 
 
-def _augmented(model: LinearModel, matrix: np.ndarray) -> LinearModel:
-    """The augmented closed-loop Jacobian as the model the mode classifier reads.
+def _classified(model: LinearModel, matrix: np.ndarray, family: str) -> LinearModel:
+    """The task family's own closed-loop block: the model the classifier reads.
 
-    `engine.closed_loop_matrix` returns the plant states first and the controller
-    states last (rulings R8/R10), and `linearize.modes` classifies ``model.A``
-    alone: the states are named here for a reader -- the plant's linear states,
-    then one entry per controller state -- and the augmented system has no direct
-    input, so ``B`` has no columns. The classification is on the FULL matrix, so
-    the controller's own poles are in the answer; see the module docstring for
-    what that means for a family classifier run on it.
+    `engine.closed_loop_matrix` hands back the augmented Jacobian with the plant
+    states first and the controller states last (rulings R8/R10), so the rows and
+    columns of the family's own plant states are picked out by name -- through
+    `linearize`'s own subsystems, which is also what decides that the plane's
+    engine extras belong to the longitudinal block -- and every controller index
+    is kept, so a PI or washout pole is still in the answer. The states are named
+    here for a reader: the plant states, then one entry per controller state. The
+    closed loop has no direct input, so the block carries no columns of ``B``.
+
+    What is classified is therefore ``matrix[np.ix_(idx, idx)]`` and nothing
+    else; the augmented matrix `closed_loop_matrix` returned is not changed.
     """
-    size = int(matrix.shape[0])
-    states = (*model.states, *(f"controller_{index}" for index in range(size - len(model.states))))
-    return LinearModel(A=matrix, B=np.zeros((size, 0)), states=states, inputs=())
+    plant = _plant_block(model, family)
+    n_x = len(model.states)
+    n_c = matrix.shape[0] - n_x
+    idx = [model.states.index(name) for name in plant.states]
+    idx += list(range(n_x, matrix.shape[0]))
+    states = (*plant.states, *(f"controller_{offset}" for offset in range(n_c)))
+    return LinearModel(A=matrix[np.ix_(idx, idx)], B=np.zeros((len(idx), 0)),
+                       states=states, inputs=())
+
+
+def _plant_block(model: LinearModel, family: str) -> LinearModel:
+    """The plant states one family's modes live in: the spec's two subsystems.
+
+    The same two families `linearize.modes` classifies under, refused the same
+    way, so a task row naming a family nobody implements is a bad request here
+    rather than an empty mode table.
+    """
+    if family == LONGITUDINAL:
+        return longitudinal(model)
+    if family == LATERAL:
+        return lateral(model)
+    raise FlightbenchError(
+        f"unknown mode family {family!r}; legal families: {LONGITUDINAL!r}, {LATERAL!r}"
+    )
 
 
 __all__ = ["LAW", "run_linear"]
