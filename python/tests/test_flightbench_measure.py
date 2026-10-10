@@ -20,6 +20,7 @@ from flightbench.common import (
     ALT,
     BETA,
     CHANNELS,
+    FlightbenchError,
     PHI,
     SERIES,
     STATE_NAMES,
@@ -260,6 +261,101 @@ class TestLinearMeasurement(MeasurementsTestCase):
             linear_measurement(dx, self.model, self.trim)["beta_dot_est"],
             expected, delta=TOL,
         )
+
+
+class TestSubsystemLinearMeasurement(MeasurementsTestCase):
+    """A subset linear model: the missing states do not move."""
+
+    LAT_STATES = ("beta", "phi", "psi", "p", "r")
+    LONG_STATES = ("vt", "alpha", "theta", "q", "altitude")
+
+    def setUp(self):
+        super().setUp()
+        # A hand trim point: a wings-level 55 m/s climb.
+        x = np.zeros(len(STATE_NAMES) + 1)
+        x[VT] = self.vt0 = 55.0
+        x[ALPHA] = self.alpha0 = 0.05
+        x[THETA] = self.theta0 = 0.1
+        x[ALT] = 1000.0
+        self.trim = TrimPoint(
+            x=x, u=np.zeros(len(CHANNELS)), vt_mps=55.0, altitude_m=1000.0,
+        )
+
+    def zero_block(self, states) -> LinearModel:
+        """``A = 0`` over ``states`` only: a subsystem of the full model."""
+        n = len(states)
+        return LinearModel(
+            A=np.zeros((n, n)), B=np.zeros((n, len(CHANNELS))),
+            states=tuple(states), inputs=CHANNELS,
+        )
+
+    def block_with(self, states, row, column, value) -> LinearModel:
+        A = np.zeros((len(states), len(states)))
+        A[states.index(row), states.index(column)] = value
+        return LinearModel(A=A, B=np.zeros((len(states), len(CHANNELS))),
+                           states=tuple(states), inputs=CHANNELS)
+
+    def dx_of(self, states, **named):
+        vector = np.zeros(len(states))
+        for name, value in named.items():
+            vector[list(states).index(name)] = value
+        return vector
+
+    def test_lateral_block_measures_only_what_it_has(self):
+        states = self.LAT_STATES
+        dx = self.dx_of(states, beta=0.03, phi=0.2, psi=-0.4, p=0.1, r=-0.02)
+        measured = linear_measurement(dx, self.zero_block(states), self.trim)
+        expected = {name: 0.0 for name in MEASUREMENTS}
+        expected.update(beta=0.03, phi=0.2, psi=-0.4, p=0.1, r=-0.02)
+        expected["beta_dot_est"] = (
+            0.1 * np.sin(self.alpha0) - (-0.02) * np.cos(self.alpha0)
+            + (G / self.vt0) * np.cos(self.theta0) * np.sin(0.2)
+        )
+        self.assertMeasurements(measured, expected)
+
+    def test_lateral_block_reports_no_gamma_and_no_nz(self):
+        model = self.zero_block(self.LAT_STATES)
+        dx = self.dx_of(self.LAT_STATES, beta=0.03, phi=0.2, psi=-0.4,
+                        p=0.1, r=-0.02)
+        measured = linear_measurement(dx, model, self.trim)
+        self.assertEqual(measured["gamma"], 0.0)
+        self.assertEqual(measured["nz"], 0.0)
+
+    def test_longitudinal_block_gamma_nz_and_zero_beta_dot(self):
+        states = self.LONG_STATES
+        model = self.block_with(states, "alpha", "vt", 2.0)
+        dx = self.dx_of(states, vt=0.5, alpha=0.02, theta=0.35, q=0.1,
+                        altitude=50.0)
+        measured = linear_measurement(dx, model, self.trim)
+        expected = {name: 0.0 for name in MEASUREMENTS}
+        expected.update(vt=0.5, alpha=0.02, theta=0.35, q=0.1, altitude=50.0)
+        expected["gamma"] = 0.35 - 0.02
+        expected["nz"] = (self.vt0 / G) * (0.1 - 1.0)
+        expected["beta_dot_est"] = 0.0
+        self.assertMeasurements(measured, expected)
+
+    def test_longitudinal_block_with_zero_a_reports_q_over_vt0(self):
+        states = self.LONG_STATES
+        dx = self.dx_of(states, q=0.1)
+        measured = linear_measurement(dx, self.zero_block(states), self.trim)
+        self.assertEqual(measured["gamma"], 0.0)
+        self.assertAlmostEqual(measured["nz"], (self.vt0 / G) * 0.1, delta=TOL)
+        self.assertEqual(measured["beta_dot_est"], 0.0)
+
+    def test_a_mismatched_deviation_length_is_refused(self):
+        for states in (self.LAT_STATES, self.LONG_STATES):
+            model = self.zero_block(states)
+            with self.assertRaises(FlightbenchError):
+                linear_measurement(
+                    np.zeros(len(model.states) + 1), model, self.trim,
+                )
+
+    def test_a_deviation_vector_matching_the_full_layout_is_refused(self):
+        """A full-layout vector is not a subsystem vector: no silent truncation."""
+        states = self.LAT_STATES
+        model = self.zero_block(states)
+        with self.assertRaises(FlightbenchError):
+            linear_measurement(np.zeros(self.n), model, self.trim)
 
 
 class TestSeriesRow(MeasurementsTestCase):

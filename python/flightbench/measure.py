@@ -26,6 +26,7 @@ from flightbench.common import (
     ALT,
     BETA,
     CHANNELS,
+    FlightbenchError,
     PHI,
     PSI,
     P,
@@ -130,15 +131,36 @@ def linear_measurement(
 
     Same definitions as :func:`nonlinear_measurement`, with ``alpha_dot_free``
     taken from the model: ``(A·dx)[alpha]``.
+
+    ``model.states`` may be a subset of ``LINEAR_STATES`` -- a subsystem of the
+    full model. A state the model does not carry does not move in it, so every
+    measurement that reads it sees a zero deviation: ``gamma`` is 0.0 without
+    both ``theta`` and ``alpha``, ``nz`` loses the ``alpha_dot_free`` term
+    without ``alpha`` and the body-rate term without ``q``, and
+    ``beta_dot_est`` still uses the trim angles with the ``p``/``r``/``phi`` the
+    model happens to carry (the lateral block: lateral-only).
     """
-    dx = np.asarray(dx, dtype=float)
-    values = dict(zip(model.states, dx.tolist()))
+    dx = np.asarray(dx, dtype=float).ravel()
+    states = tuple(model.states)
+    if dx.size != len(states):
+        raise FlightbenchError(
+            f"a linear state of this model has {len(states)} entries, got {dx.size}"
+        )
+    values = dict(zip(states, dx.tolist()))
     alpha0, theta0, vt0 = _trim_angles(trim)
-    alpha = model.states.index("alpha")
-    measured = {name: float(values[name]) for name in _STATE_DEVIATIONS}
-    measured["gamma"] = float(values["theta"] - values["alpha"])
-    alpha_dot = np.asarray(model.A, dtype=float) @ dx
-    measured["nz"] = _nz(measured["q"], float(alpha_dot[alpha]), vt0)
+    measured = {
+        name: float(values.get(name, 0.0)) for name in _STATE_DEVIATIONS
+    }
+    has_alpha = "alpha" in values
+    measured["gamma"] = (
+        float(values["theta"] - values["alpha"])
+        if ("theta" in values and has_alpha) else 0.0
+    )
+    alpha_dot = (
+        float((np.asarray(model.A, dtype=float) @ dx)[states.index("alpha")])
+        if has_alpha else 0.0
+    )
+    measured["nz"] = _nz(measured["q"], alpha_dot, vt0)
     measured["beta_dot_est"] = _beta_dot_est(
         measured["p"], measured["r"], measured["phi"], alpha0, theta0, vt0
     )

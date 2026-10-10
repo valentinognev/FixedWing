@@ -17,14 +17,19 @@ existing integrator). This module adds what the port has no concept of:
 
 The low-level controller keeps the paper equilibrium untouched: the feedback
 deviations are relative to ``F16Llc.xequil`` and ``throttle_delta`` is a delta on
-``F16Llc.uequil[0]``, as the spec's LQR table states. Every run starts from the
-bench's own ``trim_level`` point, and a run the port ends -- an RK45 rejection or
-a ground contact -- keeps the rows up to the stop and reports it in the trace.
+``F16Llc.uequil[0]``, as the spec's LQR table states. The spec's throttle column
+reads uniformly, and every row's "trim" is the *bench* trim throttle
+(``trim.u[THROTTLE] - uequil[0]``) -- the same trim point the run starts from,
+and the same one the ``linear`` law starts from -- so a run opens at the throttle
+it was trimmed at instead of the paper equilibrium's. Every run starts from the
+bench's own ``trim_level`` point, and a run the port ends -- an RK45 rejection, a
+ground contact, or a sample the plant refuses to measure -- keeps the rows up to
+the stop and reports it in the trace.
 """
 from __future__ import annotations
 
 import math
-from typing import Callable
+from collections.abc import Callable
 
 import numpy as np
 from f16.autopilot import F16Autopilot
@@ -234,6 +239,13 @@ def _command(task_id: str, gains: dict[str, float], trim: TrimPoint,
     the run's own trim point, so a run trimmed elsewhere flies the same
     commands. The profiles are the registry's own (``tasks.base``), so a command
     turns on and off exactly where the task's row says it does.
+
+    The throttle column is read uniformly: its "trim" is the bench trim throttle
+    expressed as a delta on the paper equilibrium's, ``trim.u[THROTTLE] -
+    uequil[0]`` (the second trim's on ``trim_cruise``), and the ``k_vt`` term is
+    added only where the spec's row names one. A row without a speed loop
+    therefore opens at the throttle the run was trimmed at, not at the paper
+    equilibrium's, and holds its airspeed instead of drifting off nominal.
     """
     theta0 = float(trim.x[THETA])
     gamma0 = flight_path_angle(trim.x)
@@ -247,6 +259,7 @@ def _command(task_id: str, gains: dict[str, float], trim: TrimPoint,
     theta2 = None if trim2 is None else float(trim2.x[THETA])
     vt2 = None if trim2 is None else float(trim2.vt_mps)
     throttle2 = None if trim2 is None else float(trim2.u[THROTTLE]) - _THROTTLE_EQUILIBRIUM
+    throttle0 = float(trim.u[THROTTLE]) - _THROTTLE_EQUILIBRIUM
 
     def gamma_error(x: np.ndarray) -> float:
         """Flight-path error: how far ``gamma`` sits from its trim value."""
@@ -262,7 +275,8 @@ def _command(task_id: str, gains: dict[str, float], trim: TrimPoint,
     def bank_command(t: float, x: np.ndarray) -> tuple:
         """The bank tasks: hold gamma, track the bank reference, hold speed."""
         phi_ref = step(t, _ONSET_S, deg_to_rad(_PHI_STEP_DEG))
-        return (turn_nz(x), k_phi * (phi_ref - float(x[PHI])), 0.0, k_vt * vt_error(x))
+        return (turn_nz(x), k_phi * (phi_ref - float(x[PHI])), 0.0,
+                throttle0 + k_vt * vt_error(x))
 
     def orientation_command(t: float, x: np.ndarray) -> tuple:
         """Yaw orientation: the bank reference follows the heading error."""
@@ -271,31 +285,33 @@ def _command(task_id: str, gains: dict[str, float], trim: TrimPoint,
             (vt0 / G) * k_psi * (psi_ref - float(x[PSI])),
             -deg_to_rad(_PHI_LIMIT_DEG), deg_to_rad(_PHI_LIMIT_DEG),
         ))
-        return (turn_nz(x), k_phi * (phi_ref - float(x[PHI])), 0.0, k_vt * vt_error(x))
+        return (turn_nz(x), k_phi * (phi_ref - float(x[PHI])), 0.0,
+                throttle0 + k_vt * vt_error(x))
 
     table = {
         "pitch_disturbance": lambda t, x: (
-            k_theta * (theta0 - float(x[THETA])), 0.0, 0.0, 0.0),
-        "short_period_phugoid": lambda t, x: (0.0, 0.0, 0.0, 0.0),
+            k_theta * (theta0 - float(x[THETA])), 0.0, 0.0, throttle0),
+        "short_period_phugoid": lambda t, x: (0.0, 0.0, 0.0, throttle0),
         "lead_pitch": lambda t, x: (
             k_theta * (theta0 + step(t, _ONSET_S, deg_to_rad(_THETA_STEP_DEG))
                        - float(x[THETA])),
-            0.0, 0.0, k_vt * vt_error(x)),
+            0.0, 0.0, throttle0 + k_vt * vt_error(x)),
         "trim_cruise": lambda t, x: (
             k_theta * (theta2 - float(x[THETA])),
             0.0, 0.0, throttle2 + k_vt * (vt2 - float(x[VT]))),
         "acceleration": lambda t, x: (
             pulse(t, _ONSET_S, _NZ_PULSE_END_S, _NZ_PULSE_G), 0.0, 0.0,
-            k_vt * vt_error(x)),
+            throttle0 + k_vt * vt_error(x)),
         "airspeed": lambda t, x: (
             k_theta * (theta0 - float(x[THETA])), 0.0, 0.0,
-            k_vt * (vt0 + step(t, _ONSET_S, _VT_STEP_FRACTION * vt0)
-                    - float(x[VT]))),
+            throttle0 + k_vt * (vt0 + step(t, _ONSET_S, _VT_STEP_FRACTION * vt0)
+                                - float(x[VT]))),
         "steady_descent": lambda t, x: (
             k_gamma * (step(t, _ONSET_S, deg_to_rad(_GAMMA_STEP_DEG))
                        - gamma_error(x)),
-            0.0, 0.0, k_vt * vt_error(x)),
-        "dutch_roll": lambda t, x: (k_gamma * (0.0 - gamma_error(x)), 0.0, 0.0, 0.0),
+            0.0, 0.0, throttle0 + k_vt * vt_error(x)),
+        "dutch_roll": lambda t, x: (
+            k_gamma * (0.0 - gamma_error(x)), 0.0, 0.0, throttle0),
         "turn_coordination": bank_command,
         "sideslip_turn": bank_command,
         "yaw_orientation": orientation_command,
@@ -394,15 +410,21 @@ def _trace(out: dict, adapter: F16Adapter, trim: TrimPoint,
     through ``measure.nonlinear_measurement``, the channels through the LLC that
     flew it -- so the LQR trace carries the bench's ``SERIES``. A state the plant
     refuses to fly (the ground contact itself) cannot be measured and ends the
-    series there; the stop itself is the port's verdict, read off its output.
+    series there; the stop itself is the port's verdict, read off its output, or
+    the measurement's own reason when the port's verdict is that nothing stopped.
     """
     times: list[float] = []
     rows: list[dict] = []
+    plant_stop: str | None = None
     for t, x in zip(out["times"], out["states"]):
         try:
             measured = nonlinear_measurement(np.asarray(x[:13], dtype=float), adapter,
                                              trim, True)
-        except PlantStop:
+        except PlantStop as stop:
+            # The plant's verdict on this sample. ``run_sim`` may not have
+            # reported a stop -- a finite state above ground whose derivative is
+            # dead -- and a series that simply ends there must say so.
+            plant_stop = stop.reason
             break
         u_ref = autopilot.get_u_ref(t, x)
         _, u = autopilot.llc.get_u(u_ref, x)
@@ -415,7 +437,7 @@ def _trace(out: dict, adapter: F16Adapter, trim: TrimPoint,
     elif float(out["min_h_m"]) <= 0.0:
         reason = "ground contact: altitude <= 0"
     else:
-        reason = None
+        reason = plant_stop
     return Trace(
         series=series,
         stopped_at=times[-1] if reason is not None and times else None,

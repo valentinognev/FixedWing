@@ -21,7 +21,15 @@ from f16.llc import CtrlLimits, F16Llc
 from f16.units import K_GAMMA_PER_RAD, K_VT_PER_MPS, deg_to_rad
 
 from flightbench.adapters.f16 import F16Adapter, SIGNS
-from flightbench.common import ALT, SERIES, SAMPLE_DT, FlightbenchError
+from flightbench.common import (
+    ALT,
+    SERIES,
+    SAMPLE_DT,
+    THROTTLE,
+    VT,
+    FlightbenchError,
+    PlantStop,
+)
 from flightbench.laws import lqr
 from flightbench.laws.lqr import (
     DisturbedLlc,
@@ -197,6 +205,20 @@ class TestLqrRuns(unittest.TestCase):
         edited = run_lqr("lead_pitch", gains=gains).runs["nonlinear"].series["theta"]
         self.assertGreater(float(np.max(np.abs(baseline - edited))), 1e-4)
 
+    def test_editing_k_phi_changes_the_bank_trace(self):
+        """An outer gain is a live edit, not just a table entry."""
+        baseline = run_lqr("turn_coordination").runs["nonlinear"].series["phi"]
+        gains = {"k_phi": default_gains()["k_phi"] * 0.5}
+        edited = run_lqr("turn_coordination", gains=gains).runs["nonlinear"].series["phi"]
+        self.assertGreater(float(np.max(np.abs(baseline - edited))), 1e-4)
+
+    def test_editing_k_vt_changes_the_throttle_trace(self):
+        """The speed gain drives the throttle column of every row that names it."""
+        baseline = run_lqr("steady_descent").runs["nonlinear"].series["throttle"]
+        gains = {"k_vt": default_gains()["k_vt"] * 0.5}
+        edited = run_lqr("steady_descent", gains=gains).runs["nonlinear"].series["throttle"]
+        self.assertGreater(float(np.max(np.abs(baseline - edited))), 1e-4)
+
     def test_pitch_disturbance_steps_the_pitch_channel(self):
         trace = run_lqr("pitch_disturbance").runs["nonlinear"]
         series = trace.series
@@ -208,11 +230,26 @@ class TestLqrRuns(unittest.TestCase):
         self.assertGreater(step, math.radians(0.5))
         self.assertLess(step, math.radians(1.0))
 
-    def test_the_trim_throttle_is_the_paper_equilibrium(self):
-        """The spec: ``throttle_delta`` is relative to ``F16Llc.uequil[0]``."""
+    def test_the_trim_throttle_is_the_bench_trim_deviation(self):
+        """The spec's "trim" baseline: the bench trim throttle, not 0.
+
+        ``throttle_delta`` is a delta on ``F16Llc.uequil[0]``, and every row's
+        "trim" baseline is the bench trim point's own throttle expressed as that
+        delta -- the same trim point the run starts from (and the same one the
+        ``linear`` law starts from), read off ``trim.u`` exactly as
+        ``trim_cruise`` reads ``trim2.u``. A row with no ``k_vt`` term therefore
+        holds the throttle it was trimmed at instead of the paper equilibrium's.
+        """
+        trim = bench_trim()
+        expected = float(trim.u[THROTTLE]) - float(F16Llc().uequil[0])
         trace = run_lqr("pitch_disturbance").runs["nonlinear"]
-        np.testing.assert_allclose(trace.series["throttle"],
-                                   float(F16Llc().uequil[0]), rtol=0.0, atol=1e-12)
+        np.testing.assert_allclose(trace.series["throttle"] - float(F16Llc().uequil[0]),
+                                   expected, rtol=0.0, atol=1e-12)
+        # Without the speed loop the trim deviation is held exactly: the row's
+        # whole throttle column is this baseline.
+        np.testing.assert_allclose(trace.series["throttle"] - float(F16Llc().uequil[0]),
+                                   np.full_like(trace.series["throttle"], expected),
+                                   rtol=0.0, atol=1e-12)
 
     def test_stevens_aero_completes_pitch_disturbance(self):
         result = run_lqr("pitch_disturbance", aero="stevens")
@@ -279,6 +316,29 @@ class TestLqrRuns(unittest.TestCase):
         self.assertEqual(trace.stop_reason, "non-finite state")
         self.assertEqual(trace.stopped_at, 0.04)
         self.assertEqual(float(trace.series["time"][-1]), 0.04)
+
+    def test_a_plant_stop_the_port_never_reported_is_reported(self):
+        """A dead derivative on a finite state above ground ends the series.
+
+        ``run_sim`` reports neither a rejection nor a ground contact, so without
+        the measurement's own reason the truncated series would pass for a
+        complete run: the stop must carry the reason the plant gave.
+        """
+        result = _sim_result([457.2, 457.0, 456.8, 456.6])
+        real = lqr.nonlinear_measurement
+
+        def measurement(x, adapter, trim, needs_nz):
+            if float(x[ALT]) < 456.9:
+                raise PlantStop("non-finite derivative")
+            return real(x, adapter, trim, needs_nz)
+
+        with mock.patch.object(lqr, "run_sim", return_value=result), \
+                mock.patch.object(lqr, "nonlinear_measurement", measurement):
+            outcome = run_lqr("pitch_disturbance")
+        trace = outcome.runs["nonlinear"]
+        self.assertEqual(trace.stop_reason, "non-finite derivative")
+        self.assertEqual(trace.stopped_at, 0.02)
+        self.assertEqual(float(trace.series["time"][-1]), 0.02)
 
 
 if __name__ == "__main__":

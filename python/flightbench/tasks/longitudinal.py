@@ -118,9 +118,10 @@ class _Loop:
     alone, no integral: ``kq = 0`` is the bare airframe). ``signal`` decides
     ``needs_nz`` -- only the load-factor loop reads the load factor.
 
-    ``feedforward`` is the trim-to-cruise channel offset ``u2 - u1``: a constant
-    added to the loop's output from ``feedforward_at`` on, holding the trim
-    deflection the loop has to build up for itself otherwise.
+    ``feedforward`` is the trim-to-cruise channel offset ``u2 - u1`` (``None`` when
+    the row closes no feed-forward): a constant added to the loop's output from
+    ``feedforward_at`` on, holding the trim deflection the loop has to build up for
+    itself otherwise. A delta of exactly zero is added, not skipped.
     """
 
     kp: float
@@ -131,7 +132,7 @@ class _Loop:
     rate: float = 0.0
     rate_signal: str = "q"
     integral: bool = True
-    feedforward: float = 0.0
+    feedforward: float | None = None
     feedforward_at: float = _ONSET
     pi: PI | None = field(init=False)
 
@@ -181,7 +182,7 @@ class _Loop:
         else:
             value = float(self.pi.output(x_int, error))
         value -= self.rate * float(y[self.rate_signal])
-        if self.feedforward:
+        if self.feedforward is not None:
             value += self.feedforward * step(t, self.feedforward_at, 1.0)
         return value
 
@@ -316,20 +317,28 @@ def _trim_cruise(gains: dict[str, float], ctx: TaskContext) -> TaskSetup:
         )
     trim, trim2 = ctx.trim, ctx.trim2
     du = np.asarray(trim2.u, dtype=float) - np.asarray(trim.u, dtype=float)
+    theta_command = _theta(trim2) - _theta(trim)
+    v_command = float(trim2.vt_mps - trim.vt_mps)
+
+    def theta_ref(t: float) -> float:
+        """The theta_ref deviation: theta2 - theta1 from 1 s on."""
+        return theta_command * step(t, _ONSET, 1.0)
+
+    def v_ref(t: float) -> float:
+        """The V_ref deviation: V2 - V1 from 1 s on."""
+        return v_command * step(t, _ONSET, 1.0)
+
     pitch = _Loop(
-        float(gains["kp_theta"]), float(gains["ki_theta"]), "theta",
-        lambda t: _theta(trim2) - _theta(trim), lead=_lead_of(gains),
-        rate=float(gains["kq"]), feedforward=float(du[PITCH]),
+        float(gains["kp_theta"]), float(gains["ki_theta"]), "theta", theta_ref,
+        lead=_lead_of(gains), rate=float(gains["kq"]), feedforward=float(du[PITCH]),
     )
     speed = _Loop(
-        float(gains["kp_v"]), float(gains["ki_v"]), "vt",
-        lambda t: float(trim2.vt_mps - trim.vt_mps),
+        float(gains["kp_v"]), float(gains["ki_v"]), "vt", v_ref,
         feedforward=float(du[THROTTLE]),
     )
     return TaskSetup(
         controller=_LongitudinalController(pitch, speed=speed),
-        reference=lambda t: trim.vt_mps
-        + (trim2.vt_mps - trim.vt_mps) * step(t, _ONSET, 1.0),
+        reference=lambda t: trim.vt_mps + v_command * step(t, _ONSET, 1.0),
     )
 
 

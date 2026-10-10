@@ -315,16 +315,40 @@ class LoopFormulaTest(LongitudinalFixture):
             flat.output(1.0, np.zeros(flat.n_states), y), expected, rtol=0, atol=1e-15
         )
 
-    def test_trim_cruise_commands_the_second_trim_angles(self):
-        controller = self.controller("trim_cruise", ctx=self.ctx2, ki_theta=0.0, kq=0.0,
-                                     kp_v=0.0, ki_v=0.0)
+    def test_trim_cruise_commands_the_second_trim_angles_at_one_second(self):
+        """theta_ref, V_ref and the delta-u feed-forward all step at 1 s."""
+        controller = self.controller("trim_cruise", ctx=self.ctx2)
+        theta_command = float(self.trim2.x[THETA]) - float(self.trim.x[THETA])
+        v_command = self.trim2.vt_mps - self.trim.vt_mps
+        du = np.asarray(self.trim2.u, dtype=float) - np.asarray(self.trim.u, dtype=float)
         y = self.measurement(theta=0.0, vt=0.0, q=0.0)
-        u = controller.output(1.0, np.zeros(controller.n_states), y)
-        expected = (
-            2.0 * (float(self.trim2.x[THETA]) - float(self.trim.x[THETA]))
-            + float(self.trim2.u[PITCH]) - float(self.trim.u[PITCH])
+        state = np.zeros(controller.n_states)
+
+        # Before the onset the commands and the feed-forward are all zero.
+        np.testing.assert_allclose(
+            controller.output(0.99, state, y), np.zeros(4), rtol=0, atol=0.0
         )
-        self.assertAlmostEqual(u[PITCH], expected, places=12)
+
+        # At the onset: pitch = kp_theta*(theta2-theta1) + du_pitch and
+        # throttle = kp_v*(V2-V1) + du_throttle, each deviation in full (the
+        # integral states are zero, so only the proportional term shows).
+        at_onset = controller.output(1.0, state, y)
+        self.assertAlmostEqual(
+            at_onset[PITCH],
+            base.SEEDS["kp_theta"] * theta_command + float(du[PITCH]), places=12,
+        )
+        self.assertAlmostEqual(
+            at_onset[THROTTLE],
+            base.SEEDS["kp_v"] * v_command + float(du[THROTTLE]), places=12,
+        )
+        np.testing.assert_allclose(
+            at_onset[[ROLL, YAW]], np.zeros(2), rtol=0, atol=0.0
+        )
+        # The reference trace agrees with the integrated command at the onset.
+        self.assertAlmostEqual(
+            self.setup("trim_cruise", ctx=self.ctx2).reference(1.0),
+            self.trim2.vt_mps, places=12,
+        )
 
     def test_trim_cruise_without_a_second_trim_raises(self):
         gains = {spec.name: spec.seed for spec in base.TASKS["trim_cruise"].gains}
@@ -350,26 +374,27 @@ class BareAirframeTest(LongitudinalFixture):
         gains = {spec.name: spec.seed
                  for spec in base.TASKS["short_period_phugoid"].gains}
         gains["kq"] = 0.0
-        cls.setup = build_task("short_period_phugoid", gains, cls.ctx)
-        cls.controller = cls.setup.controller
+        # Named apart from the fixture's own setup()/controller() helpers.
+        cls.sp_setup = build_task("short_period_phugoid", gains, cls.ctx)
+        cls.sp_controller = cls.sp_setup.controller
 
     def test_no_controller_state(self):
-        self.assertEqual(self.controller.n_states, 0)
+        self.assertEqual(self.sp_controller.n_states, 0)
 
     def test_the_augmented_jacobian_is_the_plant(self):
-        jacobian = closed_loop_matrix(self.model, self.trim, self.controller)
+        jacobian = closed_loop_matrix(self.model, self.trim, self.sp_controller)
         self.assertEqual(jacobian.shape, np.shape(self.model.A))
         np.testing.assert_allclose(jacobian, self.model.A, rtol=0, atol=1e-9)
 
     def test_the_closed_loop_eigenvalues_are_the_open_loop_ones(self):
-        jacobian = closed_loop_matrix(self.model, self.trim, self.controller)
+        jacobian = closed_loop_matrix(self.model, self.trim, self.sp_controller)
         closed = np.sort_complex(np.linalg.eigvals(jacobian))
         open_loop = np.sort_complex(np.linalg.eigvals(np.asarray(self.model.A)))
         self.assertEqual(len(closed), len(open_loop))
         np.testing.assert_allclose(closed, open_loop, rtol=0, atol=1e-6)
 
     def test_the_longitudinal_poles_are_unmoved(self):
-        jacobian = closed_loop_matrix(self.model, self.trim, self.controller)
+        jacobian = closed_loop_matrix(self.model, self.trim, self.sp_controller)
         closed = np.linalg.eigvals(jacobian)
         for value in np.linalg.eigvals(np.asarray(longitudinal(self.model).A)):
             with self.subTest(value=value):
@@ -435,9 +460,7 @@ class AcceptanceTest(LongitudinalFixture):
         for task, series in perfect.items():
             with self.subTest(task=task):
                 ctx = self.ctx2 if task == "trim_cruise" else self.ctx
-                modes = [Mode("short_period", 5.0, 0.9, -2.0, 4.6)] \
-                    if task == "short_period_phugoid" else []
-                self.assertEqual(ACCEPT[task](self.trace(**series), ctx, modes), [])
+                self.assertEqual(ACCEPT[task](self.trace(**series), ctx, []), [])
 
     def test_lead_pitch_row_reports_the_tracking_error_in_degrees(self):
         theta0 = float(self.trim.x[THETA])
