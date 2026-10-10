@@ -33,18 +33,53 @@ The score of one candidate gain set is the spec's
   can produce, and the 0.05 margin leaves a loop that is stable but nearly
   neutral paying the same as a stable one.
 
-  One structural note, because it changes how the printed sigma_max reads: the
-  augmented matrix is always singular. Nothing feeds the ``psi`` state in any
-  loop the bench builds, so the heading integrator contributes an eigenvalue of
-  exactly zero to every closed loop and ``sigma_max >= 0`` always. A perfectly
-  stable loop therefore still pays the full ``100 * 0.05 = 5`` margin; the term
-  is a one-sided cost that only grows once the loop actually destabilizes.
+  One structural note, because it changes how the printed sigma_max reads. The
+  augmented matrix carries every state of the loop, including the ones no loop
+  commands: a state nothing reads leaves a structurally zero COLUMN, and a zero
+  column puts a vector in the matrix's null space, so one eigenvalue is exactly
+  0.0. That pins sigma_max AT zero instead of below it. Which states those are is
+  a per-task fact, not a bench-wide law, and it was measured on all 33 plane/task
+  pairs at the registry seeds:
+
+  - Cessna 172: ``yaw_orientation`` is the only row whose loop reads ``psi``
+    (``r_cmd = kp_psi * (psi_ref - psi)``), so the other ten have an exactly-zero
+    ``psi`` column and read sigma_max = 0.0 for eight of them, +5.0268e-05 for
+    ``acceleration`` (a right-half-plane pole of its own) and +2.2027e-16 for
+    ``steady_descent`` (a second, roundoff-sized zero). ``yaw_orientation`` reads
+    -3.7307e-04: the only strictly negative abscissa of the 33, and the only one
+    that can satisfy an "abscissa < 0" row, since a zero column is a zero
+    eigenvalue whatever the gains are.
+  - X-31: no loop reads ``altitude`` on that plane -- that column is exactly zero
+    for all eleven rows, where every Cessna row reads it a little (7.9e-05 in ten
+    of them, 1.3e-04 for ``acceleration``) -- and the ``psi`` column there is
+    roundoff-sized (5.3e-12), not structurally zero, so it adds a near-zero
+    eigenvalue rather than an exact one.
+
+  So the term is a one-sided cost that only grows once the loop actually
+  destabilizes: a loop sitting on the structural zero pays exactly
+  ``100 * 0.05 = 5``, and the Cessna ``yaw_orientation`` loop pays 4.9627.
+
+  The augmented matrix is still the right thing to read, and the structural zero
+  is not a reason to read the plant block instead: the controller states are where
+  destabilizing feedback shows up and the plant block cannot see it. Measured at
+  the seeds, ``x31/trim_cruise`` reads +1.1259e-01 here against +2.05e-17 on
+  ``M[:n_x, :n_x]``, and ``x31/acceleration`` +3.4719e-01 against +7.2890e-01.
+  Reading the plant block would let the search score an unstable loop as stable.
+
+  One consequence for whoever reads these defaults (tasks 22-24): their acceptance
+  row is "the linear closed-loop matrix has spectral abscissa < 0", and for every
+  pair above whose abscissa IS the structural zero that row cannot be met at any
+  gain set -- 0.0 is not < 0, and the number is a property of the loop's
+  structure, not of the gains. The plant block does not rescue it: those rows read
+  exactly 0.0 there too, because the uncommanded state is in the aircraft's own A.
+  The spec's rule for that case is "reported, never loosened", so the tuner
+  reports it rather than routing around it.
 
 A linear run that leaves the finite domain -- the engine stops, or a trace holds
 a non-finite value -- scores ``1e9``: a diverged candidate is the worst one, and
-the search must never be handed a NaN to compare. A gain set that cannot be built
-at all (an unknown name, a non-finite value) is a bad request and raises
-``FlightbenchError``, exactly as anywhere else in the bench.
+the search must never be handed a non-finite score to compare. A gain set that
+cannot be built at all (an unknown name, a non-finite value) is a bad request and
+raises ``FlightbenchError``, exactly as anywhere else in the bench.
 
 ``LOG_GAINS`` (``tau_w``, ``lead_zero``, ``lead_pole``) are times and break
 frequencies: they are searched in log space so the search cannot cross zero --
@@ -74,12 +109,20 @@ from flightbench.common import (
     THETA,
     FlightbenchError,
     LinearModel,
+    Trace,
     TrimPoint,
 )
 from flightbench.engine import closed_loop_matrix, simulate_linear
 from flightbench.linearize import linearize
 from flightbench.tasks import build_task
-from flightbench.tasks.base import LOG_GAINS, TaskContext, get_task, task_ids
+from flightbench.tasks.base import (
+    LOG_GAINS,
+    TaskContext,
+    TaskInfo,
+    TaskSetup,
+    get_task,
+    task_ids,
+)
 from flightbench.tasks.defaults import (
     LAW,
     default_gains,
@@ -218,7 +261,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     merges the result into the existing file, so the tasks it did not touch keep
     their rows. Every tuned task prints one line --
     ``<task>  <J at the start> -> <J tuned>  <sigma_max>`` -- and the file's
-    ``generated_by`` names the command that produced it.
+    ``generated_by`` names the command that produced it. The printed sigma_max is
+    the augmented abscissa INCLUDING the structural zero of the states that task's
+    loop never reads, so a printed ``0`` means "no pole in the closed right half
+    plane, and a state nothing commands" rather than "sitting on the boundary"; the
+    module docstring carries the per-task numbers.
 
     Returns 0 on success and 2 for a usage error (an unknown plane, task or aero
     model, a bad flag, a non-positive ``--maxiter``), which is argparse's own
@@ -286,7 +333,7 @@ def _existing_table(plane: str) -> dict[str, dict[str, float]]:
     return {task: dict(row) for task, row in law.items() if isinstance(row, dict)}
 
 
-def _diverged(trace) -> bool:
+def _diverged(trace: Trace) -> bool:
     """Whether a linear run left the finite domain.
 
     On the linear model the only stop the engine can raise is a non-finite state
@@ -314,7 +361,8 @@ def _sigma_max(model: LinearModel, trim: TrimPoint, controller) -> float:
         return math.inf
 
 
-def _itae(ctx: PlaneContext, info, setup, trace) -> float:
+def _itae(ctx: PlaneContext, info: TaskInfo, setup: TaskSetup,
+          trace: Trace) -> float:
     """``trapz(t * |reference(t) - measured(t)|, t)`` on the run's own time grid."""
     signal = _tracked_signal(info)
     time = np.asarray(trace.series["time"], dtype=float)
@@ -328,7 +376,7 @@ def _itae(ctx: PlaneContext, info, setup, trace) -> float:
     return float(trapezoid(time * np.abs(error), time))
 
 
-def _tracked_signal(info) -> str:
+def _tracked_signal(info: TaskInfo) -> str:
     """The series the task's ITAE is measured on, and that it is a series."""
     signal = info.reference_signal
     if signal is None:

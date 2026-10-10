@@ -17,10 +17,13 @@ number, because both of its terms are conventions worth pinning:
 - the stability term is ``100 * max(0, sigma_max + 0.05)`` on the spectral
   abscissa of the **augmented** closed-loop Jacobian (rulings R8/R10).
 
-On this bench the augmented and the plant-only abscissa coincide -- every closed
-loop carries the heading integrator's exactly-zero eigenvalue -- so the augmented
-matrix is pinned by substituting ``closed_loop_matrix`` rather than by a
-difference between the two matrices, which no real gain set can produce.
+Where the augmented and the plant-block abscissa are BOTH exactly 0.0 -- the
+Cessna lateral tasks at the seeds -- no gain set can separate them, so the
+augmented matrix is pinned by substituting ``closed_loop_matrix`` rather than by
+a difference between the two matrices. That is a fixture choice, not an
+identity: on the x31 they differ sharply (``trim_cruise`` reads +1.13e-01 on the
+augmented matrix against +2.0e-17 on the plant block), which is the reason the
+objective reads the augmented one.
 """
 
 from __future__ import annotations
@@ -42,7 +45,13 @@ from flightbench.adapters import get_adapter, plane_ids
 from flightbench.common import BETA, THETA, SERIES, Trace, FlightbenchError
 from flightbench.engine import closed_loop_matrix, simulate_linear
 from flightbench.tasks import build_task, defaults
-from flightbench.tasks.base import LOG_GAINS, TaskContext, get_task, task_ids
+from flightbench.tasks.base import (
+    LOG_GAINS,
+    SEEDS,
+    TaskContext,
+    get_task,
+    task_ids,
+)
 
 # The state each free task's error is measured against: the spec tracks the
 # pitch-angle and sideslip DEVIATIONS when the task has no command of its own.
@@ -77,10 +86,21 @@ def hand_itae(ctx, task_id: str, gains: dict, signal: str,
     return float(trapezoid(time * np.abs(error), time))
 
 
+def augmented_matrix(ctx, task_id: str, gains: dict) -> np.ndarray:
+    """The augmented closed-loop Jacobian the objective reads ``sigma_max`` off."""
+    setup = build_task(task_id, gains, TaskContext(ctx.adapter, ctx.trim, ctx.trim2))
+    return np.asarray(closed_loop_matrix(ctx.model, ctx.trim, setup.controller),
+                      dtype=float)
+
+
+def column_norm(matrix: np.ndarray, names: tuple, name: str) -> float:
+    """``max |M[:, state]|`` for one state: 0.0 means nothing read it."""
+    return float(np.max(np.abs(matrix[:, names.index(name)])))
+
+
 def hand_sigma_max(ctx, task_id: str, gains: dict) -> float:
     """The spectral abscissa of the augmented closed-loop Jacobian."""
-    _, setup, _ = linear_trace(ctx, task_id, gains)
-    matrix = closed_loop_matrix(ctx.model, ctx.trim, setup.controller)
+    matrix = augmented_matrix(ctx, task_id, gains)
     return float(np.max(np.linalg.eigvals(matrix).real))
 
 
@@ -180,11 +200,13 @@ class ObjectiveTest(_TunerTestCase):
                          hand_itae(ctx, "dutch_roll", gains, "beta", True) + 100.0 * 1.05)
 
     def test_a_stable_loop_pays_the_full_five_point_margin(self):
-        """sigma_max is exactly 0 for every loop: the heading integrator's pole.
+        """This loop's sigma_max is exactly 0: a state nothing in it reads.
 
-        The augmented Jacobian is singular (nothing feeds the ``psi`` column), so
-        a perfectly stable loop still pays the spec's ``100 * 0.05`` margin. The
-        penalty is therefore a one-sided cost that only grows when the loop
+        The augmented Jacobian has a structurally zero COLUMN for ``psi`` -- no
+        ``dutch_roll`` command reads the heading -- and a zero column puts a
+        vector in the matrix's null space, so one eigenvalue is exactly 0.0. A
+        perfectly stable loop therefore still pays the spec's ``100 * 0.05``
+        margin. The penalty is a one-sided cost that only grows when the loop
         destabilizes; pinned here so a future change to the matrix cannot turn
         the margin into a hidden constant.
         """
@@ -242,6 +264,77 @@ class ObjectiveTest(_TunerTestCase):
                 self.assertLess(value, 1e9)
 
 
+class AbscissaTest(_TunerTestCase):
+    """What ``sigma_max`` is read off, and the structural zero inside it."""
+
+    def test_only_the_heading_closing_task_escapes_the_structural_zero(self):
+        """The exactly-zero pole is PER TASK, so "sigma_max >= 0" is not universal.
+
+        Where no loop reads a state, the augmented Jacobian has a structurally
+        zero COLUMN for it -- nothing in ten of the eleven tasks commands the
+        heading -- and a zero column puts a vector in the matrix's null space,
+        so one eigenvalue is exactly 0.0 and ``sigma_max`` cannot go below it at
+        any gain. ``yaw_orientation`` is the one row whose loop reads ``psi``
+        (``r_cmd = kp_psi * (psi_ref - psi)``), and on the Cessna it reads
+        strictly negative. Pinned per task so the structural note cannot quietly
+        become the universal claim it used to be.
+        """
+        sigmas = {
+            task: tune.evaluate(self.context(task=task), task,
+                                defaults.default_gains("cessna172", task)).sigma_max
+            for task in task_ids()
+        }
+        self.assertLess(sigmas["yaw_orientation"], 0.0)
+        for task, sigma in sigmas.items():
+            if task != "yaw_orientation":
+                self.assertGreaterEqual(sigma, 0.0, task)
+
+    def test_the_augmented_matrix_seeds_an_instability_the_plant_block_hides(self):
+        """Reading sigma_max off the plant block would score this loop stable.
+
+        ``x31/trim_cruise`` reads +1.13e-01 on the augmented matrix and +2.0e-17
+        on ``M[:n_x, :n_x]``: the destabilizing feedback the controller states
+        contribute is invisible in the plant block, so the objective has to read
+        the augmented one.
+        """
+        ctx = self.context(plane="x31", task="trim_cruise")
+        gains = defaults.default_gains("x31", "trim_cruise")
+        matrix = augmented_matrix(ctx, "trim_cruise", gains)
+        n_x = ctx.model.A.shape[0]
+        augmented = float(np.max(np.linalg.eigvals(matrix).real))
+        plant = float(np.max(np.linalg.eigvals(matrix[:n_x, :n_x]).real))
+        self.assertGreater(augmented, 0.1)
+        self.assertLess(plant, 1e-9)
+        self.assertGreater(augmented - plant, 0.1)
+
+    def test_the_zero_columns_are_per_plane_and_per_task(self):
+        """A structural zero is a state NO LOOP READS, and that is not uniform.
+
+        Cessna: the ``psi`` column is exactly zero for the ten rows that do not
+        close the heading loop, and ``altitude`` is read there (7.9e-05), so the
+        Cessna has exactly one structural zero. x31: nothing reads ``altitude``
+        at all, so that column is exactly zero for all eleven rows -- a second
+        structural zero the Cessna does not have -- and the roundoff-sized ``psi``
+        column (5.3e-12, not exactly zero) adds only a near-zero eigenvalue.
+        """
+        for task in task_ids():
+            closes_heading = task == "yaw_orientation"
+            for plane, altitude_is_zero in (("cessna172", False), ("x31", True)):
+                with self.subTest(plane=plane, task=task):
+                    ctx = self.context(plane=plane, task=task)
+                    matrix = augmented_matrix(ctx, task,
+                                              defaults.default_gains(plane, task))
+                    psi = column_norm(matrix, ctx.model.states, "psi")
+                    altitude = column_norm(matrix, ctx.model.states, "altitude")
+                    if closes_heading:
+                        self.assertGreater(psi, 1.0)
+                    elif plane == "cessna172":
+                        self.assertEqual(psi, 0.0)
+                    else:
+                        self.assertLess(psi, 1e-9)
+                    self.assertEqual(altitude == 0.0, altitude_is_zero)
+
+
 class PlaneContextTest(_TunerTestCase):
     """The tuner's own pipeline: adapter, trim point(s) and linearization."""
 
@@ -297,12 +390,19 @@ class TuneTaskTest(_TunerTestCase):
     """``tune_task``: the starting point, the search space and the result."""
 
     def test_the_dutch_roll_search_returns_exactly_its_two_gains(self):
-        """The brief's row: no worse than the seeds, and a legal washout."""
+        """The brief's row: the search MOVED off the seeds, and did not get worse.
+
+        ``assertNotEqual`` is the load-bearing line: every other assertion here is
+        satisfied by a tuner that returned ``default_gains`` unchanged, so
+        without it the row would pass for a tuner that never searched. SciPy's
+        initial simplex perturbation is deterministic, so the movement is stable.
+        """
         task = "dutch_roll"
         ctx = self.context()
+        seed = defaults.default_gains("cessna172", task)
         tuned = tune.tune_task("cessna172", task, maxiter=40)
         self.assertEqual(set(tuned), {"kr", "tau_w"})
-        seed = defaults.default_gains("cessna172", task)
+        self.assertNotEqual(tuned, seed)
         self.assertLessEqual(tune.objective(ctx, task, tuned),
                              tune.objective(ctx, task, seed))
         self.assertGreater(tuned["tau_w"], 0.0)
@@ -426,6 +526,30 @@ class MainTest(_TunerTestCase):
                          "python -m flightbench.tune --plane cessna172")
         self.assertIn("dutch_roll", out)
 
+    def test_the_printed_start_is_the_objective_at_the_defaults(self):
+        """The left column is J at the defaults the search started from.
+
+        ``main`` is run for real here, so this is the only place the printed
+        ``J_seed`` is tied to the objective itself: a row that printed the tuned
+        value in both columns would satisfy every other test in this module. The
+        columns carry ``%.6g``, so each printed field is compared with the same
+        format applied to the objective recomputed here.
+        """
+        seed = defaults.default_gains("cessna172", "dutch_roll")
+        code, out, _ = self.run_main(
+            ["--plane", "cessna172", "--task", "dutch_roll", "--maxiter", "5"])
+        self.assertEqual(code, 0)
+        line = next(line for line in out.splitlines() if "->" in line)
+        before, after = line.split("->")
+        ctx = self.context()
+        document = json.loads(defaults.defaults_path("cessna172").read_text())
+        printed = (before.split()[-1], after.split()[0])
+        tuned_row = document["linear"]["dutch_roll"]
+        for field, gains in zip(printed, (seed, tuned_row)):
+            with self.subTest(gains=gains):
+                self.assertEqual(float(field),
+                                 float(f"{tune.objective(ctx, 'dutch_roll', gains):.6g}"))
+
     def test_the_rows_it_did_not_tune_survive_the_merge(self):
         adapter = get_adapter("cessna172")
         defaults.write_defaults(
@@ -444,7 +568,7 @@ class MainTest(_TunerTestCase):
         recorder = _RecordingOptimizer()
         score = tune.Score(itae=0.25, sigma_max=-1.5, value=0.25)
         with mock.patch.object(tune, "minimize", recorder), \
-                mock.patch.object(tune, "evaluate", return_value=score) as scored:
+                mock.patch.object(tune, "evaluate", return_value=score):
             code, out, _ = self.run_main(["--plane", "cessna172", "--maxiter", "1"])
         self.assertEqual(code, 0)
         lines = [line for line in out.splitlines() if "->" in line]
@@ -456,9 +580,17 @@ class MainTest(_TunerTestCase):
             self.assertAlmostEqual(float(seed_value), 0.25)
             self.assertAlmostEqual(float(tuned_value), 0.25)
             self.assertAlmostEqual(float(sigma), -1.5)
-        # Three evaluations per task: the search scores its own starting point,
-        # then the CLI scores the start and the result for the printed row.
-        self.assertEqual(scored.call_count, 3 * len(task_ids()))
+        # The contract, not an internal call count (any caching breaks the
+        # latter): every task's search started at that task's defaults, and the
+        # row written is what the search returned. The recorder answers with
+        # ``x0`` unchanged, so the two are the same dictionary here.
+        written = json.loads(defaults.defaults_path("cessna172").read_text())["linear"]
+        for task, call in zip(task_ids(), recorder.calls):
+            names = tuple(gain.name for gain in get_task(task).gains)
+            started = tune._decode(call["x0"], names)
+            self.assertEqual(started,
+                             {name: SEEDS[name] for name in names})
+            self.assertEqual(written[task], started)
         self.assertEqual(len(recorder.calls), len(task_ids()))
 
     def test_the_task_flag_tunes_only_that_task(self):
