@@ -1,5 +1,13 @@
 # Updates
 
+## 0.103.0 - Flightbench linear analysis
+- A linear-law run returns the controller diagram, the open-loop matrices and minimal Laplace form, and a root locus and Nyquist plot per gain. LQR and NDI omit `linear_analysis`.
+
+## 0.102.0 - Control UI start and kill
+- `./start.sh` (repo root) builds `web/flightbench/dist` if it is absent, then serves the control UI in the background at `http://127.0.0.1:4321`. A previous instance on that port is stopped first. `./start.sh --stop` only stops it.
+- `./kill.sh` stops that UI before the tmux session and the sim containers.
+- `./run_flightbench.sh` is unchanged (foreground, default port 8765).
+
 ## 0.101.0 - Flightbench control-calibration bench
 - `python/flightbench/` is the host-only bench: adapters for `f16`, `x31`, and `cessna172`; trim; linearization; eleven Dickinson tasks; laws `linear` (every plane), `lqr` (F-16), and `ndi` (X-31); tuner; FastAPI `flightbench.api:app` on 127.0.0.1:8765. Plants are called, not copied. `python/x31/` is unchanged.
 - `data/flightbench/{f16,cessna172,x31}.json` holds each plane's default gains. Thresholds were not edited.

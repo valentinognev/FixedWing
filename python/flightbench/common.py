@@ -125,3 +125,4 @@ class RunResult:
     runs: dict[str, Trace]
     reference: tuple[str, np.ndarray, np.ndarray] | None
     metrics: dict
+    linear_analysis: dict | None = None

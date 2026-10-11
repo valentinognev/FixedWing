@@ -73,7 +73,12 @@ from collections.abc import Mapping
 import numpy as np
 
 from flightbench.adapters import get_adapter
+from flightbench.analysis.cards import open_loop_cards
+from flightbench.analysis.diagram import controller_diagram
+from flightbench.analysis.loops import coefficient_charts
 from flightbench.common import (
+    PITCH,
+    THROTTLE,
     FlightbenchError,
     LinearModel,
     RunResult,
@@ -122,7 +127,8 @@ def run_linear(
     The answer is the one the spec's API shape describes: both traces on the same
     grid, the commanded reference on the nonlinear grid, the open- and
     closed-loop mode tables and -- for a task with a second trim point -- both
-    trim points.
+    trim points. ``linear_analysis`` carries the open-loop cards, the controller
+    diagram, and one locus/Nyquist chart per gain.
     """
     info = get_task(task)
     adapter = get_adapter(plane, aero)
@@ -133,7 +139,8 @@ def run_linear(
         second = trim_level(adapter, info.second_trim_factor * point.vt_mps,
                             point.altitude_m)
     model = linearize(adapter, point)
-    setup = build_task(info.id, values, TaskContext(adapter, point, second))
+    ctx = TaskContext(adapter, point, second)
+    setup = build_task(info.id, values, ctx)
     linear = simulate_linear(model, adapter, point, setup.controller,
                              info.duration_s, setup.disturbance)
     nonlinear = simulate_nonlinear(adapter, point, setup.controller,
@@ -147,7 +154,28 @@ def run_linear(
         runs={LAW: linear, "nonlinear": nonlinear},
         reference=_reference(info, setup.reference, nonlinear),
         metrics=_metrics(info, model, point, setup.controller, second),
+        linear_analysis=_linear_analysis(info.id, model, point, second, values, ctx),
     )
+
+
+def _linear_analysis(task: str, model: LinearModel, point: TrimPoint,
+                     second: TrimPoint | None, gains: dict[str, float],
+                     ctx: TaskContext) -> dict:
+    """Open-loop cards, controller diagram, and coefficient charts for one linear run.
+
+    Trim-cruise feedforward is the second trim's control minus the first, on
+    the pitch and throttle channels. Every diagram gets the trim speed.
+    """
+    diagram_args: dict[str, float] = {"vt0": point.vt_mps}
+    if task == "trim_cruise":
+        step = np.asarray(second.u, dtype=float) - np.asarray(point.u, dtype=float)
+        diagram_args["pitch_ff"] = float(step[PITCH])
+        diagram_args["throttle_ff"] = float(step[THROTTLE])
+    return {
+        "open_loop": open_loop_cards(task, model, point, gains),
+        "diagram": controller_diagram(task, gains, **diagram_args),
+        "coefficients": coefficient_charts(task, model, point, gains, ctx),
+    }
 
 
 def _gains(plane: str, info: TaskInfo, gains: dict | None) -> dict[str, float]:

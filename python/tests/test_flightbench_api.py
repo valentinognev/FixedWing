@@ -325,6 +325,23 @@ class TestFlightbenchApi(unittest.TestCase):
         self.assertEqual(len(body["metrics"]["trims"]), 2)
         self.assertEqual(set(body["metrics"]["trims"][0]["controls"]), set(CHANNELS))
 
+    def test_linear_response_passes_linear_analysis_through(self) -> None:
+        result = _result()
+        result.linear_analysis = {"open_loop": [], "diagram": [], "coefficients": []}
+        with mock.patch("flightbench.api.run", return_value=result):
+            body = self.client.post("/api/runs", json=_RUN).json()
+        self.assertEqual(set(body["linear_analysis"]), {"open_loop", "diagram", "coefficients"})
+
+    def test_lqr_response_omits_linear_analysis(self) -> None:
+        result = _result()
+        result.law = "lqr"
+        result.linear_analysis = None
+        with mock.patch("flightbench.api.run", return_value=result):
+            body = self.client.post(
+                "/api/runs", json={**_RUN, "plane": "f16", "law": "lqr"}
+            ).json()
+        self.assertNotIn("linear_analysis", body)
+
     def test_real_cessna_dutch_roll_returns_both_runs(self) -> None:
         # Dispatch patched, or the linear trace omitted for the linear law.
         response = self.client.post("/api/runs", json=_RUN)
@@ -339,6 +356,11 @@ class TestFlightbenchApi(unittest.TestCase):
             lengths = {len(series[key]) for key in SERIES}
             self.assertEqual(len(lengths), 1)
             self.assertGreater(lengths.pop(), 1)
+        self.assertEqual([c["name"] for c in body["linear_analysis"]["coefficients"]], ["kr", "tau_w"])
+        card = body["linear_analysis"]["open_loop"][0]
+        self.assertEqual(card["input"], "yaw")
+        self.assertEqual(card["output"], "r")
+        self.assertTrue(body["linear_analysis"]["diagram"])
 
 
 class TestMain(unittest.TestCase):

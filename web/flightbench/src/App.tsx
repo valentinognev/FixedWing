@@ -1,9 +1,12 @@
 import { useEffect, useReducer, useState } from 'react'
 import { ApiError, fetchGains, fetchPlanes, fetchTasks, postRun } from './api'
 import { AeroPicker } from './components/AeroPicker'
+import { CoefficientCharts } from './components/CoefficientCharts'
+import { ControllerDiagram } from './components/ControllerDiagram'
 import { GainForm, isValid } from './components/GainForm'
 import { LawPicker } from './components/LawPicker'
 import { ModesTable } from './components/ModesTable'
+import { OpenLoopCard } from './components/OpenLoopCard'
 import { PlanePicker } from './components/PlanePicker'
 import { RunBanner } from './components/RunBanner'
 import { RunPlots } from './components/RunPlots'
@@ -66,6 +69,7 @@ export default function App() {
   const [tasks, setTasks] = useState<TaskInfo[]>([])
   const [gains, setGains] = useState<GainState>(NO_GAINS)
   const [response, setResponse] = useState<RunResponse | null>(null)
+  const [postedGains, setPostedGains] = useState<Record<string, number>>({})
   const [error, setError] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
   const [selection, dispatch] = useReducer(selectionReducer, EMPTY)
@@ -131,6 +135,7 @@ export default function App() {
   async function run() {
     setRunning(true)
     setError(null)
+    const sent = { ...values }
     try {
       setResponse(
         await postRun({
@@ -139,9 +144,10 @@ export default function App() {
           task: selection.task,
           aero: selection.aero,
           trim: { ...selection.trim },
-          gains: values,
+          gains: sent,
         }),
       )
+      setPostedGains(sent)
     } catch (cause: unknown) {
       setResponse(null)
       setError(detailOf(cause))
@@ -228,6 +234,21 @@ export default function App() {
             <>
               <ModesTable metrics={response.metrics} />
               <RunPlots response={response} family={task?.family ?? 'longitudinal'} />
+              {response.linear_analysis !== undefined && (
+                <>
+                  <ControllerDiagram diagram={response.linear_analysis.diagram} />
+                  {response.linear_analysis.open_loop.map((card, index) => (
+                    <OpenLoopCard
+                      key={`${card.input}:${card.output}:${index}`}
+                      card={card}
+                    />
+                  ))}
+                  <CoefficientCharts
+                    coefficients={response.linear_analysis.coefficients}
+                    values={postedGains}
+                  />
+                </>
+              )}
             </>
           ) : (
             <p className="text-sm text-neutral-500">

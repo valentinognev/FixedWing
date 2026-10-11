@@ -104,6 +104,74 @@ export interface RunMetrics {
   trims?: Trim[]
 }
 
+/** A complex sample from the analysis API: a pole, zero, or locus point. */
+export interface Complex {
+  real: number
+  imag: number
+}
+
+/** One open-loop channel. Matrices are the unreduced system; G(s) is cancelled. */
+export interface OpenLoop {
+  input: string
+  output: string
+  states: string[]
+  A: number[][]
+  B: number[][]
+  C: number[][]
+  D: number[][]
+  numerator: number[]
+  denominator: number[]
+  poles: Complex[]
+  zeros: Complex[]
+}
+
+export type DiagramKind = 'input' | 'sum' | 'block' | 'plant'
+
+export interface DiagramNode {
+  id: string
+  kind: DiagramKind
+  label: string
+  text: string
+}
+
+export interface DiagramWire {
+  from: string
+  to: string
+  sign: '' | '+' | '-'
+}
+
+export interface DiagramLoop {
+  input: string
+  output: string
+  feedback: string
+  nodes: DiagramNode[]
+  wires: DiagramWire[]
+}
+
+export interface Locus {
+  values: number[]
+  branches: Complex[][]
+}
+
+export interface Nyquist {
+  omega: number[]
+  real: number[]
+  imag: number[]
+}
+
+export interface CoefficientAnalysis {
+  name: string
+  locus: Locus
+  nyquist: Nyquist
+}
+
+/** Controller diagram, open-loop cards, and per-gain locus/Nyquist from a linear run. */
+export interface LinearAnalysis {
+  open_loop: OpenLoop[]
+  diagram: DiagramLoop[]
+  coefficients: CoefficientAnalysis[]
+}
+
 export interface RunResponse {
   plane: string
   law: Law
@@ -115,4 +183,6 @@ export interface RunResponse {
   metrics: RunMetrics
   stopped_at: number | null
   stop_reason: string | null
+  /** Present on a linear-law run. LQR and NDI omit it, and the page draws nothing. */
+  linear_analysis?: LinearAnalysis
 }

@@ -133,7 +133,7 @@ def to_json(result: RunResult) -> dict:
         if name != "nonlinear":
             runs[name] = _series(trace)
     stopped_at = nonlinear.stopped_at
-    return {
+    body = {
         "plane": result.plane,
         "law": result.law,
         "task": result.task,
@@ -145,6 +145,9 @@ def to_json(result: RunResult) -> dict:
         "stopped_at": None if stopped_at is None else float(stopped_at),
         "stop_reason": nonlinear.stop_reason,
     }
+    if result.linear_analysis is not None:
+        body["linear_analysis"] = result.linear_analysis
+    return body
 
 
 def _reject_nonfinite_gains(gains: dict[str, float] | None) -> None:
