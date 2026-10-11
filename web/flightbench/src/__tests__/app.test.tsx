@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import App from '../App'
 import { ApiError, fetchGains, fetchPlanes, fetchTasks, postRun } from '../api'
 import { LAT_SIGNALS, LONG_SIGNALS } from '../plotting'
@@ -138,6 +138,8 @@ function runButton() {
 afterEach(cleanup)
 
 beforeEach(() => {
+  localStorage.clear()
+  delete document.documentElement.dataset.theme
   plots.length = 0
   vi.clearAllMocks()
   vi.mocked(fetchPlanes).mockResolvedValue([F16, CESSNA])
@@ -300,5 +302,35 @@ describe('App run flow', () => {
     expect(runButton()).toBeDisabled()
     fireEvent.change(screen.getByLabelText('kq'), { target: { value: '0.75' } })
     expect(runButton()).toBeEnabled()
+  })
+})
+
+describe('theme switch', () => {
+  it('offers Light in the header while the page is dark', () => {
+    render(<App />)
+
+    expect(
+      within(screen.getByRole('banner')).getByRole('button', { name: 'Light' }),
+    ).toBeInTheDocument()
+    expect(document.documentElement.dataset.theme).toBe('dark')
+  })
+
+  it('switches to light and remembers that choice', () => {
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Light' }))
+
+    expect(screen.getByRole('button', { name: 'Dark' })).toBeInTheDocument()
+    expect(document.documentElement.dataset.theme).toBe('light')
+    expect(localStorage.getItem('flightbench-theme')).toBe('light')
+  })
+
+  it('opens in light when that choice was saved', () => {
+    localStorage.setItem('flightbench-theme', 'light')
+
+    render(<App />)
+
+    expect(screen.getByRole('button', { name: 'Dark' })).toBeInTheDocument()
+    expect(document.documentElement.dataset.theme).toBe('light')
   })
 })

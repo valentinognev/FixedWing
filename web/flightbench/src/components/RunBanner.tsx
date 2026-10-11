@@ -4,7 +4,7 @@ export interface RunBannerProps {
 }
 
 const BOX =
-  'rounded border border-amber-800 bg-amber-950/40 px-3 py-2 text-sm text-amber-200'
+  'rounded border border-amber-800 bg-amber-950 px-3 py-2 text-sm text-amber-100'
 
 /** What stopped the run, and what the API rejected. */
 export function RunBanner({ stopReason, error }: RunBannerProps) {

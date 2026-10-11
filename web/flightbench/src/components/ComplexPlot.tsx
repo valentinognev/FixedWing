@@ -1,5 +1,6 @@
 import { useEffect, useState, type ComponentType } from 'react'
 import type { Data, Layout } from 'plotly.js-dist-min'
+import { chartChrome, readTheme } from '../theme'
 import type { Complex } from '../types'
 
 /**
@@ -29,17 +30,6 @@ export interface ComplexPlotProps {
   marks: Complex[]
 }
 
-const TICK = '#a3a3a3'
-const GRID = '#262626'
-const LINE = '#404040'
-
-const AXIS: Layout['xaxis'] = {
-  gridcolor: GRID,
-  linecolor: LINE,
-  zerolinecolor: LINE,
-  tickfont: { color: TICK, size: 10 },
-}
-
 let chartPromise: Promise<ComponentType<ChartProps>> | undefined
 
 function loadChart(): Promise<ComponentType<ChartProps>> {
@@ -51,6 +41,7 @@ function loadChart(): Promise<ComponentType<ChartProps>> {
 }
 
 export function ComplexPlot({ title, series, marks }: ComplexPlotProps) {
+  const chrome = chartChrome(readTheme())
   const [Chart, setChart] = useState<ComponentType<ChartProps> | null>(null)
 
   useEffect(() => {
@@ -87,9 +78,15 @@ export function ComplexPlot({ title, series, marks }: ComplexPlotProps) {
     })
   }
 
-  const xaxis: Layout['xaxis'] = { ...AXIS, title: { text: 'real' } }
+  const axis: Layout['xaxis'] = {
+    gridcolor: chrome.grid,
+    linecolor: chrome.line,
+    zerolinecolor: chrome.line,
+    tickfont: { color: chrome.tick, size: 10 },
+  }
+  const xaxis: Layout['xaxis'] = { ...axis, title: { text: 'real' } }
   const yaxis: Layout['yaxis'] = {
-    ...AXIS,
+    ...axis,
     title: { text: 'imag' },
     scaleanchor: 'x',
     scaleratio: 1,
@@ -97,14 +94,14 @@ export function ComplexPlot({ title, series, marks }: ComplexPlotProps) {
   const layout: Partial<Layout> = {
     title: {
       text: title,
-      font: { color: '#e5e5e5', size: 12 },
+      font: { color: chrome.title, size: 12 },
       x: 0,
       xanchor: 'left',
     },
     margin: { l: 52, r: 16, t: 30, b: 40 },
-    paper_bgcolor: '#0a0a0a',
-    plot_bgcolor: '#0a0a0a',
-    font: { color: '#d4d4d4', size: 11 },
+    paper_bgcolor: chrome.paper,
+    plot_bgcolor: chrome.paper,
+    font: { color: chrome.font, size: 11 },
     showlegend: data.length > 1,
     legend: { orientation: 'h', y: -0.22, font: { size: 10 } },
     hovermode: 'closest',

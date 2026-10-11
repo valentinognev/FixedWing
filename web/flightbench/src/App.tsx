@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useState } from 'react'
+import { useEffect, useLayoutEffect, useReducer, useState } from 'react'
 import { ApiError, fetchGains, fetchPlanes, fetchTasks, postRun } from './api'
 import { AeroPicker } from './components/AeroPicker'
 import { CoefficientCharts } from './components/CoefficientCharts'
@@ -21,6 +21,7 @@ import {
   trimChanged,
   type Selection,
 } from './state'
+import { applyTheme, readTheme, type Theme } from './theme'
 import type { GainSpec, PlaneInfo, RunResponse, TaskInfo } from './types'
 
 const EMPTY: Selection = {
@@ -35,7 +36,7 @@ const PANEL = 'flex flex-col gap-4 rounded border border-neutral-800 bg-neutral-
 const TITLE = 'text-xs font-semibold tracking-wide text-neutral-400 uppercase'
 const RUN_BUTTON =
   'rounded border border-sky-700 bg-sky-800 px-4 py-2 text-sm font-semibold ' +
-  'text-neutral-50 hover:bg-sky-700 disabled:cursor-not-allowed ' +
+  'text-white hover:bg-sky-700 disabled:cursor-not-allowed ' +
   'disabled:border-neutral-800 disabled:bg-neutral-900 disabled:text-neutral-600'
 
 /** What the API said, whether it said it as a status or as a thrown error. */
@@ -73,6 +74,18 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
   const [selection, dispatch] = useReducer(selectionReducer, EMPTY)
+  const [theme, setTheme] = useState<Theme>(readTheme)
+
+  useLayoutEffect(() => {
+    applyTheme(theme)
+  }, [theme])
+
+  function switchTheme() {
+    const next: Theme = theme === 'dark' ? 'light' : 'dark'
+    // Charts read storage during render, so the write has to land first.
+    applyTheme(next)
+    setTheme(next)
+  }
 
   const plane = planes.find((one) => one.id === selection.plane)
   const task = tasks.find((one) => one.id === selection.task)
@@ -158,8 +171,15 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
-      <header className="border-b border-neutral-800 px-6 py-4">
+      <header className="flex items-center justify-between border-b border-neutral-800 px-6 py-4">
         <h1 className="text-base font-semibold tracking-wide">Flightbench</h1>
+        <button
+          type="button"
+          className="rounded border border-neutral-700 px-3 py-1 text-sm text-neutral-100 hover:bg-neutral-800"
+          onClick={switchTheme}
+        >
+          {theme === 'dark' ? 'Light' : 'Dark'}
+        </button>
       </header>
       <main className="grid gap-6 px-6 py-6 xl:grid-cols-[20rem_minmax(0,1fr)]">
         <div className="flex flex-col gap-4">

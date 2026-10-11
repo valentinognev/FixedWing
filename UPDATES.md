@@ -1,5 +1,9 @@
 # Updates
 
+## 0.104.0 - Flightbench light and dark theme
+- The Flightbench header has a Light/Dark button. The choice is stored in `localStorage` and the page opens in that theme. The first visit stays dark.
+- Light mode swaps the neutral color ramp. Time-series and complex charts use a light ground in that theme. The warning banner is a solid amber bar so its text stays readable on a light page.
+
 ## 0.103.0 - Flightbench linear analysis
 - A linear-law run returns the controller diagram, the open-loop matrices and minimal Laplace form, and a root locus and Nyquist plot per gain. LQR and NDI omit `linear_analysis`.
 
