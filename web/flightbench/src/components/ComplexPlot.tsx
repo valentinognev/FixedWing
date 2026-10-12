@@ -1,22 +1,14 @@
 import { useEffect, useState, type ComponentType } from 'react'
 import type { Data, Layout } from 'plotly.js-dist-min'
+import { chartConfig } from '../chartConfig'
+import { loadPlotlyChart, type ChartProps } from '../plotlyChart'
 import { chartChrome, readTheme } from '../theme'
 import type { Complex } from '../types'
 
 /**
- * The only analysis module that loads Plotly, and only once a chart is shown.
- * Axes are real and imag, never time. The import stays inside this file, same
- * rule as Plot, but it is deferred so the rest of the page does not initialize
- * Plotly.
+ * Axes are real and imag, never time. Plotly loads through the shared
+ * deferred loader so the rest of the page does not initialize it.
  */
-
-interface ChartProps {
-  className?: string
-  data: Data[]
-  layout: Partial<Layout>
-  config?: { displayModeBar?: boolean; responsive?: boolean }
-  useResizeHandler?: boolean
-}
 
 export interface ComplexSeries {
   name?: string
@@ -30,29 +22,17 @@ export interface ComplexPlotProps {
   marks: Complex[]
 }
 
-let chartPromise: Promise<ComponentType<ChartProps>> | undefined
-
-function loadChart(): Promise<ComponentType<ChartProps>> {
-  chartPromise ??= Promise.all([
-    import('react-plotly.js/factory'),
-    import('plotly.js-dist-min'),
-  ]).then(([factory, Plotly]) => factory.default(Plotly.default))
-  return chartPromise
-}
-
 export function ComplexPlot({ title, series, marks }: ComplexPlotProps) {
   const chrome = chartChrome(readTheme())
   const [Chart, setChart] = useState<ComponentType<ChartProps> | null>(null)
 
   useEffect(() => {
     let cancelled = false
-    void loadChart()
+    void loadPlotlyChart()
       .then((Loaded) => {
         if (!cancelled) setChart(() => Loaded)
       })
-      .catch(() => {
-        chartPromise = undefined
-      })
+      .catch(() => undefined)
     return () => {
       cancelled = true
     }
@@ -88,8 +68,6 @@ export function ComplexPlot({ title, series, marks }: ComplexPlotProps) {
   const yaxis: Layout['yaxis'] = {
     ...axis,
     title: { text: 'imag' },
-    scaleanchor: 'x',
-    scaleratio: 1,
   }
   const layout: Partial<Layout> = {
     title: {
@@ -116,7 +94,7 @@ export function ComplexPlot({ title, series, marks }: ComplexPlotProps) {
       className="h-72 w-full"
       data={data}
       layout={layout}
-      config={{ displayModeBar: false, responsive: true }}
+      config={chartConfig()}
       useResizeHandler
     />
   )

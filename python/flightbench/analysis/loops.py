@@ -89,6 +89,7 @@ def coefficient_charts(
             continue
         charts[name] = {
             "name": name,
+            "proportional": name not in _NYQUIST_SOURCE,
             "locus": _locus(task, plant, trim, gains, ctx, name),
             "nyquist": _return_ratio(task, plant, trim, gains, ctx, name),
         }
@@ -98,6 +99,7 @@ def coefficient_charts(
         source = _NYQUIST_SOURCE[name]
         charts[name] = {
             "name": name,
+            "proportional": name not in _NYQUIST_SOURCE,
             "locus": _locus(task, plant, trim, gains, ctx, name),
             "nyquist": _copy_nyquist(charts[source]["nyquist"]),
         }

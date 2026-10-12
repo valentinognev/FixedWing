@@ -123,6 +123,11 @@ export interface OpenLoop {
   denominator: number[]
   poles: Complex[]
   zeros: Complex[]
+  bode?: {
+    omega: number[]
+    magnitude_db: number[]
+    phase_deg: number[]
+  }
 }
 
 export type DiagramKind = 'input' | 'sum' | 'block' | 'plant'
@@ -161,6 +166,7 @@ export interface Nyquist {
 
 export interface CoefficientAnalysis {
   name: string
+  proportional: boolean
   locus: Locus
   nyquist: Nyquist
 }

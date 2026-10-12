@@ -20,3 +20,164 @@ html[data-theme='light'] {
   --color-neutral-900: oklch(97% 0 none);
   --color-neutral-950: oklch(98.5% 0 none);
 }
+
+/* Open-loop card roles. Dark hex, size, and weight live here; light hex overrides below. */
+[data-role='card-title'] {
+  color: #38bdf8;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+html[data-theme='light'] [data-role='card-title'] {
+  color: #0369a1;
+}
+
+[data-role='matrix-a'] {
+  color: #fbbf24;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+html[data-theme='light'] [data-role='matrix-a'] {
+  color: #b45309;
+}
+
+[data-role='matrix-b'] {
+  color: #38bdf8;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+html[data-theme='light'] [data-role='matrix-b'] {
+  color: #0369a1;
+}
+
+[data-role='matrix-c'] {
+  color: #34d399;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+html[data-theme='light'] [data-role='matrix-c'] {
+  color: #047857;
+}
+
+[data-role='matrix-d'] {
+  color: #a78bfa;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+html[data-theme='light'] [data-role='matrix-d'] {
+  color: #6d28d9;
+}
+
+[data-role='axis-name'] {
+  color: #fcd34d;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+html[data-theme='light'] [data-role='axis-name'] {
+  color: #92400e;
+}
+
+[data-role='value-positive'] {
+  color: #34d399;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+html[data-theme='light'] [data-role='value-positive'] {
+  color: #047857;
+}
+
+[data-role='value-negative'] {
+  color: #fb7185;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+html[data-theme='light'] [data-role='value-negative'] {
+  color: #be123c;
+}
+
+[data-role='value-zero'] {
+  color: #737373;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+html[data-theme='light'] [data-role='value-zero'] {
+  color: #737373;
+}
+
+[data-role='tf-label'] {
+  color: #38bdf8;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+html[data-theme='light'] [data-role='tf-label'] {
+  color: #0369a1;
+}
+
+[data-role='tf-num'] {
+  color: #34d399;
+  font-size: 16px;
+  font-weight: 400;
+}
+
+html[data-theme='light'] [data-role='tf-num'] {
+  color: #047857;
+}
+
+[data-role='tf-den'] {
+  color: #fbbf24;
+  font-size: 16px;
+  font-weight: 400;
+}
+
+html[data-theme='light'] [data-role='tf-den'] {
+  color: #b45309;
+}
+
+[data-role='pole-stable'] {
+  color: #34d399;
+  font-size: 16px;
+  font-weight: 400;
+}
+
+html[data-theme='light'] [data-role='pole-stable'] {
+  color: #047857;
+}
+
+[data-role='pole-unstable'] {
+  color: #fb7185;
+  font-size: 16px;
+  font-weight: 400;
+}
+
+html[data-theme='light'] [data-role='pole-unstable'] {
+  color: #be123c;
+}
+
+[data-role='pole-axis'] {
+  color: #fbbf24;
+  font-size: 16px;
+  font-weight: 400;
+}
+
+html[data-theme='light'] [data-role='pole-axis'] {
+  color: #b45309;
+}
+
+[data-role='zero'] {
+  color: #38bdf8;
+  font-size: 16px;
+  font-weight: 400;
+}
+
+html[data-theme='light'] [data-role='zero'] {
+  color: #0369a1;
+}

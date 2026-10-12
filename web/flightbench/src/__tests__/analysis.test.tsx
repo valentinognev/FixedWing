@@ -23,12 +23,20 @@ interface ComplexPlotProps {
   marks: Complex[]
 }
 
-const { complexPlots } = vi.hoisted(() => ({
+interface BodePlotProps {
+  title: string
+  omega: number[]
+  magnitudeDb: number[]
+  phaseDeg: number[]
+}
+
+const { complexPlots, bodePlots } = vi.hoisted(() => ({
   complexPlots: [] as ComplexPlotProps[],
+  bodePlots: [] as BodePlotProps[],
 }))
 
-// ComplexPlot is the only analysis importer of plotly.js, so tests stub it
-// and read the figure props the charts were handed.
+// ComplexPlot and BodePlot load plotly.js, so tests stub them and read the
+// figure props the charts were handed.
 vi.mock('../components/ComplexPlot', () => ({
   ComplexPlot: ({ title, series, marks }: ComplexPlotProps) => {
     complexPlots.push({ title, series, marks })
@@ -38,6 +46,13 @@ vi.mock('../components/ComplexPlot', () => ({
 
 vi.mock('../components/Plot', () => ({
   Plot: ({ title }: { title: string }) => <div data-testid={`plot-${title}`} />,
+}))
+
+vi.mock('../components/BodePlot', () => ({
+  BodePlot: ({ title, omega, magnitudeDb, phaseDeg }: BodePlotProps) => {
+    bodePlots.push({ title, omega, magnitudeDb, phaseDeg })
+    return <div data-testid={`bode-${title}`} />
+  },
 }))
 
 vi.mock('../api', async (importOriginal) => {
@@ -91,6 +106,7 @@ const KQ_SAMPLE: Complex = { real: -1.5, imag: 2 }
 const COEFFICIENTS: CoefficientAnalysis[] = [
   {
     name: 'kp_theta',
+    proportional: true,
     locus: {
       values: [0.01, KP_GAIN, 50],
       branches: [
@@ -109,6 +125,7 @@ const COEFFICIENTS: CoefficientAnalysis[] = [
   },
   {
     name: 'kq',
+    proportional: true,
     locus: {
       values: [0.001, KQ_GAIN, 10],
       branches: [
@@ -165,6 +182,11 @@ const ANALYSIS_RUN: RunResponse = {
         denominator: [1, 2],
         poles: [{ real: -2, imag: 0 }],
         zeros: [],
+        bode: {
+          omega: [0.01, 1, 100],
+          magnitude_db: [20, 0, -20],
+          phase_deg: [0, -45, -90],
+        },
       },
     ],
     diagram: [
@@ -254,6 +276,34 @@ function withoutCoefficientSeries(
   }
 }
 
+function aliasRun(): RunResponse {
+  const analysis = ANALYSIS_RUN.linear_analysis
+  if (analysis === undefined) return ANALYSIS_RUN
+  return {
+    ...ANALYSIS_RUN,
+    linear_analysis: {
+      ...analysis,
+      coefficients: [
+        {
+          name: 'tau_w',
+          proportional: false,
+          locus: {
+            values: [0.05, 1, 20],
+            branches: [
+              [
+                { real: 0, imag: 0 },
+                { real: 0, imag: 0 },
+                { real: 0, imag: 0 },
+              ],
+            ],
+          },
+          nyquist: COEFFICIENTS[1].nyquist,
+        },
+      ],
+    },
+  }
+}
+
 function sampleAt(coefficient: CoefficientAnalysis, gain: number): Complex {
   const index = coefficient.locus.values.indexOf(gain)
   return coefficient.locus.branches[0][index]
@@ -274,6 +324,7 @@ afterEach(cleanup)
 
 beforeEach(() => {
   complexPlots.length = 0
+  bodePlots.length = 0
   vi.clearAllMocks()
   vi.mocked(fetchPlanes).mockResolvedValue([F16])
   vi.mocked(fetchTasks).mockResolvedValue(TASKS)
@@ -333,6 +384,23 @@ describe('linear analysis', () => {
     expect(locus?.marks).not.toContainEqual(sampleAt(COEFFICIENTS[0], 50))
   })
 
+  it('moves the locus mark along the sweep and ignores a gain-form edit', async () => {
+    await runShown()
+    const slider = await screen.findByRole('slider', { name: 'kp_theta locus gain' })
+    expect(slider).toHaveValue('1')
+    expect(screen.getAllByText('2.00000')).toHaveLength(2)
+
+    fireEvent.change(slider, { target: { value: '2' } })
+
+    const locus = complexPlots.filter((plot) => plot.title === 'kp_theta locus').at(-1)
+    expect(locus?.marks).toContainEqual({ real: -8, imag: 0 })
+    expect(locus?.marks).not.toContainEqual(KP_SAMPLE)
+
+    fireEvent.change(screen.getByLabelText('kp_theta'), { target: { value: '50' } })
+    const afterForm = complexPlots.filter((plot) => plot.title === 'kp_theta locus').at(-1)
+    expect(afterForm?.marks).toContainEqual({ real: -8, imag: 0 })
+  })
+
   it('omits the Nyquist chart when omega is empty and keeps the coefficient name', async () => {
     vi.mocked(postRun).mockResolvedValue(withoutCoefficientSeries('kq', 'nyquist'))
     await runShown()
@@ -364,5 +432,69 @@ describe('linear analysis', () => {
     expect(document.querySelector('svg')).toBeNull()
     expect(complexPlots).toHaveLength(0)
     expect(screen.getByTestId('plot-theta')).toBeInTheDocument()
+  })
+
+  it('draws one Bode chart per open-loop card', async () => {
+    const analysis = ANALYSIS_RUN.linear_analysis
+    if (analysis === undefined) throw new Error('fixture has linear_analysis')
+    const first = analysis.open_loop[0]
+    vi.mocked(postRun).mockResolvedValue({
+      ...ANALYSIS_RUN,
+      linear_analysis: {
+        ...analysis,
+        open_loop: [first, { ...first, input: 'throttle', output: 'vt' }],
+      },
+    })
+    await runShown()
+
+    expect(await screen.findByTestId('bode-pitch → theta')).toBeInTheDocument()
+    expect(screen.getByTestId('bode-throttle → vt')).toBeInTheDocument()
+    expect(bodePlots.map((plot) => plot.title)).toEqual(['pitch → theta', 'throttle → vt'])
+    expect(bodePlots[0]?.magnitudeDb).toEqual([20, 0, -20])
+  })
+
+  it('omits the Bode chart when omega is empty and still shows G(s)', async () => {
+    const analysis = ANALYSIS_RUN.linear_analysis
+    if (analysis === undefined) throw new Error('fixture has linear_analysis')
+    const first = analysis.open_loop[0]
+    vi.mocked(postRun).mockResolvedValue({
+      ...ANALYSIS_RUN,
+      linear_analysis: {
+        ...analysis,
+        open_loop: [
+          {
+            ...first,
+            bode: { omega: [], magnitude_db: [], phase_deg: [] },
+          },
+        ],
+      },
+    })
+    await runShown()
+
+    expect(await screen.findByText(/G\(s\)/)).toBeInTheDocument()
+    expect(bodePlots).toHaveLength(0)
+    expect(screen.queryByTestId('bode-pitch → theta')).not.toBeInTheDocument()
+  })
+
+  it('scales the nyquist curve from its own slider and leaves the critical point', async () => {
+    await runShown()
+    const slider = await screen.findByRole('slider', { name: 'kq nyquist gain' })
+    fireEvent.change(slider, { target: { value: '2' } })
+    const nyquist = complexPlots.filter((plot) => plot.title === 'kq nyquist').at(-1)
+    // run kq is 0.5 at index 1; index 2 is 10, so the scale is 20.
+    expect(nyquist?.series[0].real[1]).toBeCloseTo(-1.5 * 20)
+    expect(nyquist?.marks).toContainEqual({ real: -1, imag: 0 })
+  })
+
+  it('keeps an aliased nyquist fixed while its locus slider moves', async () => {
+    vi.mocked(postRun).mockResolvedValue(aliasRun())
+    await runShown()
+    const nyquistSlider = await screen.findByRole('slider', { name: 'tau_w nyquist gain' })
+    expect(nyquistSlider).toBeDisabled()
+    fireEvent.change(screen.getByRole('slider', { name: 'tau_w locus gain' }), {
+      target: { value: '2' },
+    })
+    const nyquist = complexPlots.filter((plot) => plot.title === 'tau_w nyquist').at(-1)
+    expect(nyquist?.series[0].real).toEqual([-0.4, -1.5, -0.3])
   })
 })

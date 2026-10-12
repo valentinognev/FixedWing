@@ -117,6 +117,19 @@ class TestLoops(unittest.TestCase):
             "pitch_disturbance", _pitch_model(), _trim(), _PITCH, _ctx())}
         self.assertNotEqual(charts["kp_theta"]["nyquist"], charts["ki_theta"]["nyquist"])
 
+    def test_proportional_flag_matches_the_nyquist_alias_table(self):
+        pitch = {c["name"]: c["proportional"] for c in coefficient_charts(
+            "pitch_disturbance", _pitch_model(), _trim(), _PITCH, _ctx())}
+        self.assertTrue(pitch["kq"])
+        lead = {c["name"]: c["proportional"] for c in coefficient_charts(
+            "lead_pitch", _pitch_model(), _trim(), _LEAD, _ctx())}
+        self.assertFalse(lead["lead_zero"])
+        self.assertFalse(lead["lead_pole"])
+        dutch = {c["name"]: c["proportional"] for c in coefficient_charts(
+            "dutch_roll", _lat_model(), _trim(), {"kr": 0.5, "tau_w": 1.0}, _ctx())}
+        self.assertTrue(dutch["kr"])
+        self.assertFalse(dutch["tau_w"])
+
 
 if __name__ == "__main__":
     unittest.main()

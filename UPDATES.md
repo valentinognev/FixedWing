@@ -1,5 +1,12 @@
 # Updates
 
+## 0.105.0 - Flightbench analysis readability
+- Controller diagrams draw each return wire on its own lane under the loop, with the airframe drop in the gap beside the plant.
+- Open-loop cards color titles, matrices, transfer-function terms, poles, and zeros by `data-role`, in both themes.
+- Each open-loop card includes a Bode series of `G(jω)`, magnitude in dB and phase in degrees.
+- Each root locus and each Nyquist chart has its own gain slider. A proportional Nyquist curve scales by the slider gain over the run gain. `lead_zero`, `lead_pole`, and `tau_w` stay on the returned samples with the Nyquist slider disabled, and a run gain of 0 stays unscaled.
+- Time-series, locus, Nyquist, and Bode charts share one navigation bar: Zoom, Pan, Zoom in, Zoom out, Autoscale, and Reset axes. Box zoom does not lock the aspect ratio.
+
 ## 0.104.0 - Flightbench light and dark theme
 - The Flightbench header has a Light/Dark button. The choice is stored in `localStorage` and the page opens in that theme. The first visit stays dark.
 - Light mode swaps the neutral color ramp. Time-series and complex charts use a light ground in that theme. The warning banner is a solid amber bar so its text stays readable on a light page.

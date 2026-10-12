@@ -4,6 +4,8 @@ from __future__ import annotations
 import numpy as np
 from scipy.signal import ss2tf, tf2zpk
 
+from flightbench.analysis.bode import bode_response
+
 # Cancel p with z when |p − z| is at most this fraction of max(1, |p|).
 _CANCEL_REL = 1e-6
 
@@ -18,10 +20,11 @@ def siso_card(
     output: str,
     states: tuple[str, ...],
 ) -> dict:
-    """One open-loop channel as matrices and a cancelled, monic G(s).
+    """One open-loop channel as matrices, a cancelled monic G(s), and Bode samples.
 
     ``A`` is the caller's state matrix, copied as nested lists. Cancelled
-    pole/zero pairs are removed from ``G(s)`` only.
+    pole/zero pairs are removed from ``G(s)`` only. ``bode`` is
+    ``bode_response`` of those unreduced matrices.
     """
     system = np.asarray(A, dtype=float)
     n = system.shape[0]
@@ -52,6 +55,7 @@ def siso_card(
         "denominator": _real_coeffs(den_poly),
         "poles": _pairs(kept_poles),
         "zeros": _pairs(kept_zeros),
+        "bode": bode_response(system, column, row, feedthrough),
     }
 
 

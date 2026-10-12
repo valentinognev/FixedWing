@@ -40,6 +40,8 @@ def _trim():
 def _long_model():
     states = ("vt", "alpha", "theta", "q", "altitude")
     A = -0.1 * np.eye(5)
+    # Pitch enters q. Theta only moves when q does, so theta_dot includes q.
+    A[states.index("theta"), states.index("q")] = 1.0
     B = np.zeros((5, 2))
     B[states.index("q"), 0] = 1.0       # pitch
     B[states.index("vt"), 1] = 1.0      # throttle
@@ -49,6 +51,8 @@ def _long_model():
 def _lat_model():
     states = ("beta", "phi", "psi", "p", "r")
     A = -0.1 * np.eye(5)
+    # Yaw enters r. Heading only moves when r does, so psi_dot includes r.
+    A[states.index("psi"), states.index("r")] = 1.0
     B = np.zeros((5, 2))
     B[states.index("p"), 0] = 1.0       # roll
     B[states.index("r"), 1] = 1.0       # yaw
@@ -99,6 +103,20 @@ class TestCards(unittest.TestCase):
             card = open_loop_cards(task, model, _trim(), _GAINS[task])[0]
             self.assertEqual((card["input"], card["output"]), (src, dst), task)
             self.assertEqual(card["D"], [[0.0]], task)
+
+    def test_every_built_card_carries_a_bode_series(self):
+        cards = []
+        cards.append(open_loop_cards("pitch_disturbance", _long_model(), _trim(), _PITCH)[0])
+        cards.extend(open_loop_cards("trim_cruise", _long_model(), _trim(), _CRUISE))
+        cards.append(open_loop_cards("steady_descent", _long_model(), _trim(), _DESCENT)[0])
+        cards.append(open_loop_cards("dutch_roll", _lat_model(), _trim(), _GAINS["dutch_roll"])[0])
+        cards.append(open_loop_cards("yaw_orientation", _lat_model(), _trim(), _YAW)[0])
+        self.assertEqual(len(cards), 6)
+        for card in cards:
+            bode = card["bode"]
+            self.assertGreater(len(bode["omega"]), 0)
+            self.assertEqual(len(bode["omega"]), len(bode["magnitude_db"]))
+            self.assertEqual(len(bode["omega"]), len(bode["phase_deg"]))
 
 
 if __name__ == "__main__":

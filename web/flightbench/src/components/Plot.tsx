@@ -1,6 +1,7 @@
 import createPlotlyComponent from 'react-plotly.js/factory'
 import Plotly from 'plotly.js-dist-min'
 import type { Layout } from 'plotly.js-dist-min'
+import { chartConfig } from '../chartConfig'
 import type { PlotShape, PlotTrace } from '../plotting'
 import { chartChrome, readTheme } from '../theme'
 
@@ -63,7 +64,7 @@ export function Plot({ title, traces, unit, xRange, shapes }: PlotProps) {
         yaxis,
         shapes,
       }}
-      config={{ displayModeBar: false, responsive: true }}
+      config={chartConfig()}
       useResizeHandler
     />
   )

@@ -1,4 +1,6 @@
+import { Fragment } from 'react'
 import type { Complex, OpenLoop } from '../types'
+import { BodePlot } from './BodePlot'
 
 export interface OpenLoopCardProps {
   card: OpenLoop
@@ -9,9 +11,29 @@ const TITLE = 'text-xs font-semibold tracking-wide text-neutral-400 uppercase'
 const HEAD = 'px-2 py-1 text-left text-xs font-semibold tracking-wide text-neutral-400 uppercase'
 const CELL = 'px-2 py-1 text-sm text-neutral-200'
 
+/** |entry| and a pole real part at or under this are value-zero and pole-axis. */
+const AXIS_BAND = 1e-8
+
+const MATRIX_ROLE: Record<string, string> = {
+  A: 'matrix-a',
+  B: 'matrix-b',
+  C: 'matrix-c',
+  D: 'matrix-d',
+}
+
 /** Six significant figures, the page equivalent of Python format(value, ".6g"). */
 function formatCoeff(value: number): string {
   return value.toPrecision(6)
+}
+
+function valueRole(value: number): string {
+  if (Math.abs(value) <= AXIS_BAND) return 'value-zero'
+  return value > 0 ? 'value-positive' : 'value-negative'
+}
+
+function poleRole(real: number): string {
+  if (Math.abs(real) <= AXIS_BAND) return 'pole-axis'
+  return real > 0 ? 'pole-unstable' : 'pole-stable'
 }
 
 function factor(magnitude: number, power: number): string {
@@ -46,14 +68,19 @@ function nearly(left: number, right: number): boolean {
   return Math.abs(left - right) <= 1e-9 * Math.max(1, Math.abs(left), Math.abs(right))
 }
 
-function formatSamples(samples: Complex[]): string {
+interface SampleToken {
+  text: string
+  role: string
+}
+
+function sampleTokens(samples: Complex[], roleFor: (sample: Complex) => string): SampleToken[] {
   const used = samples.map(() => false)
-  const parts: string[] = []
+  const parts: SampleToken[] = []
   samples.forEach((sample, index) => {
     if (used[index]) return
     used[index] = true
     if (isReal(sample)) {
-      parts.push(formatCoeff(sample.real))
+      parts.push({ text: formatCoeff(sample.real), role: roleFor(sample) })
       return
     }
     const pair = samples.findIndex(
@@ -64,13 +91,35 @@ function formatSamples(samples: Complex[]): string {
     )
     if (pair >= 0) {
       used[pair] = true
-      parts.push(`${formatCoeff(sample.real)} ± ${formatCoeff(Math.abs(sample.imag))}j`)
+      parts.push({
+        text: `${formatCoeff(sample.real)} ± ${formatCoeff(Math.abs(sample.imag))}j`,
+        role: roleFor(sample),
+      })
       return
     }
     const sign = sample.imag < 0 ? '-' : '+'
-    parts.push(`${formatCoeff(sample.real)} ${sign} ${formatCoeff(Math.abs(sample.imag))}j`)
+    parts.push({
+      text: `${formatCoeff(sample.real)} ${sign} ${formatCoeff(Math.abs(sample.imag))}j`,
+      role: roleFor(sample),
+    })
   })
-  return parts.length === 0 ? 'none' : parts.join(', ')
+  return parts
+}
+
+function SampleLine({ label, tokens }: { label: string; tokens: SampleToken[] }) {
+  return (
+    <p className="text-sm text-neutral-300">
+      {label}:{' '}
+      {tokens.length === 0
+        ? 'none'
+        : tokens.map((token, index) => (
+            <Fragment key={`${token.text}-${index}`}>
+              {index > 0 ? ', ' : null}
+              <span data-role={token.role}>{token.text}</span>
+            </Fragment>
+          ))}
+    </p>
+  )
 }
 
 function MatrixTable({
@@ -86,12 +135,19 @@ function MatrixTable({
 }) {
   return (
     <table className="w-full border-collapse">
-      <caption className={`${HEAD} caption-top`}>{title}</caption>
+      <caption className={`${HEAD} caption-top`} data-role={MATRIX_ROLE[title]}>
+        {title}
+      </caption>
       <thead>
         <tr className="border-b border-neutral-800">
           <th className={HEAD} scope="col" />
           {columns.map((column, index) => (
-            <th key={`${column}-${index}`} className={HEAD} scope="col">
+            <th
+              key={`${column}-${index}`}
+              className={HEAD}
+              scope="col"
+              {...(column ? { 'data-role': 'axis-name' } : {})}
+            >
               {column}
             </th>
           ))}
@@ -100,11 +156,19 @@ function MatrixTable({
       <tbody>
         {data.map((row, rowIndex) => (
           <tr key={`${rows[rowIndex] ?? 'row'}-${rowIndex}`} className="border-b border-neutral-900">
-            <th className={HEAD} scope="row">
+            <th
+              className={HEAD}
+              scope="row"
+              {...(rows[rowIndex] ? { 'data-role': 'axis-name' } : {})}
+            >
               {rows[rowIndex] ?? ''}
             </th>
             {row.map((value, columnIndex) => (
-              <td key={`${columns[columnIndex] ?? 'col'}-${columnIndex}`} className={`${CELL} tabular-nums`}>
+              <td
+                key={`${columns[columnIndex] ?? 'col'}-${columnIndex}`}
+                className={`${CELL} tabular-nums`}
+                data-role={valueRole(value)}
+              >
                 {formatCoeff(value)}
               </td>
             ))}
@@ -117,10 +181,9 @@ function MatrixTable({
 
 /** State-space headings and the cancelled Laplace ratio. Coefficients print at 6 significant figures. */
 export function OpenLoopCard({ card }: OpenLoopCardProps) {
-  const ratio = `${polynomial(card.numerator)} / (${polynomial(card.denominator)})`
   return (
     <section className={PANEL}>
-      <h2 className={TITLE}>
+      <h2 className={TITLE} data-role="card-title">
         {card.input} → {card.output}
       </h2>
       <p className="text-xs text-neutral-500">Units are the model&apos;s (radians, seconds).</p>
@@ -128,9 +191,23 @@ export function OpenLoopCard({ card }: OpenLoopCardProps) {
       <MatrixTable title="B" columns={[card.input]} rows={card.states} data={card.B} />
       <MatrixTable title="C" columns={card.states} rows={[card.output]} data={card.C} />
       <MatrixTable title="D" columns={[card.input]} rows={[card.output]} data={card.D} />
-      <p className="text-sm text-neutral-100">{`G(s) = ${ratio}`}</p>
-      <p className="text-sm text-neutral-300">Poles: {formatSamples(card.poles)}</p>
-      <p className="text-sm text-neutral-300">Zeros: {formatSamples(card.zeros)}</p>
+      <p className="text-sm text-neutral-100" data-role="tf-label">
+        {'G(s) = '}
+        <span data-role="tf-num">{polynomial(card.numerator)}</span>
+        {' / ('}
+        <span data-role="tf-den">{polynomial(card.denominator)}</span>
+        {')'}
+      </p>
+      <SampleLine label="Poles" tokens={sampleTokens(card.poles, (sample) => poleRole(sample.real))} />
+      <SampleLine label="Zeros" tokens={sampleTokens(card.zeros, () => 'zero')} />
+      {card.bode !== undefined && card.bode.omega.length > 0 ? (
+        <BodePlot
+          title={`${card.input} → ${card.output}`}
+          omega={card.bode.omega}
+          magnitudeDb={card.bode.magnitude_db}
+          phaseDeg={card.bode.phase_deg}
+        />
+      ) : null}
     </section>
   )
 }
