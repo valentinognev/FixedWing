@@ -1,5 +1,8 @@
 # Updates
 
+## 0.105.1 - Open-loop matrix A color
+- The open-loop **A** caption is pink (`#f472b6`, light `#be185d`) so it no longer matches the gold state-name headings.
+
 ## 0.105.0 - Flightbench analysis readability
 - Controller diagrams draw each return wire on its own lane under the loop, with the airframe drop in the gap beside the plant.
 - Open-loop cards color titles, matrices, transfer-function terms, poles, and zeros by `data-role`, in both themes.

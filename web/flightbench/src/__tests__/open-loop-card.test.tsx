@@ -64,9 +64,14 @@ describe('open-loop card roles', () => {
     expect(css).toMatch(
       /html\[data-theme='light'\] \[data-role='value-negative'\]\s*\{[^}]*color:\s*#be123c/,
     )
+    expect(css).toMatch(/\[data-role='matrix-a'\]\s*\{[^}]*color:\s*#f472b6/)
     expect(css).toMatch(/\[data-role='matrix-a'\]\s*\{[^}]*font-size:\s*18px/)
     expect(css).toMatch(
-      /html\[data-theme='light'\] \[data-role='matrix-a'\]\s*\{[^}]*color:\s*#b45309/,
+      /html\[data-theme='light'\] \[data-role='matrix-a'\]\s*\{[^}]*color:\s*#be185d/,
+    )
+    expect(css).toMatch(/\[data-role='axis-name'\]\s*\{[^}]*color:\s*#fcd34d/)
+    expect(css).toMatch(
+      /html\[data-theme='light'\] \[data-role='axis-name'\]\s*\{[^}]*color:\s*#92400e/,
     )
     expect(css).toMatch(/\[data-role='pole-unstable'\]\s*\{[^}]*color:\s*#fb7185/)
     expect(css).toMatch(

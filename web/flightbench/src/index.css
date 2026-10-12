@@ -33,13 +33,13 @@ html[data-theme='light'] [data-role='card-title'] {
 }
 
 [data-role='matrix-a'] {
-  color: #fbbf24;
+  color: #f472b6;
   font-size: 18px;
   font-weight: 700;
 }
 
 html[data-theme='light'] [data-role='matrix-a'] {
-  color: #b45309;
+  color: #be185d;
 }
 
 [data-role='matrix-b'] {
