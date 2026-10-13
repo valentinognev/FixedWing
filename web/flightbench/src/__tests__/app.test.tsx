@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import App from '../App'
 import { ApiError, fetchGains, fetchPlanes, fetchTasks, postRun } from '../api'
 import { LAT_SIGNALS, LONG_SIGNALS } from '../plotting'
-import type { GainSpec, PlaneInfo, RunResponse, Series, TaskInfo } from '../types'
+import type { GainSpec, PlaneInfo, RunRequest, RunResponse, Series, TaskInfo } from '../types'
 
 vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api')>()
@@ -79,6 +79,27 @@ const GAINS: GainSpec[] = [
   { name: 'k_theta', label: 'Pitch P gain', value: 2.0, unit: 'rad/rad' },
 ]
 
+const DUTCH_GAINS: GainSpec[] = [{ name: 'kr', label: 'kr', value: 0.3, unit: 's' }]
+
+/** A run whose open-loop wn identifies which task produced it. */
+function responseFor(task: string, wn: number): RunResponse {
+  return {
+    ...RUN,
+    task,
+    metrics: {
+      open_loop_modes: [
+        {
+          name: task === 'dutch_roll' ? 'dutch_roll' : 'short_period',
+          wn,
+          zeta: 0.5,
+          real: -1,
+          imag: 1,
+        },
+      ],
+    },
+  }
+}
+
 function series(): Series {
   const time = [0, 1, 2]
   const column = () => time.map((_, index) => index)
@@ -135,6 +156,20 @@ function runButton() {
   return screen.getByRole('button', { name: 'Run' })
 }
 
+function updateButton() {
+  return screen.getByRole('button', { name: 'Update' })
+}
+
+/** Nearest ancestor that scrolls on its own, or null when the window scrolls. */
+function scrollBox(element: HTMLElement): HTMLElement | null {
+  let node: HTMLElement | null = element.parentElement
+  while (node !== null) {
+    if (/\boverflow-y-auto\b/.test(node.className)) return node
+    node = node.parentElement
+  }
+  return null
+}
+
 afterEach(cleanup)
 
 beforeEach(() => {
@@ -180,6 +215,39 @@ describe('App selection', () => {
     render(<App />)
 
     expect(runButton()).toBeDisabled()
+  })
+})
+
+describe('App panels', () => {
+  it('places Run above the loop gains panel', async () => {
+    await loaded()
+
+    const setup = scrollBox(runButton())
+    const order = [...(setup?.querySelectorAll('h2, button') ?? [])].map(
+      (node) => node.textContent,
+    )
+
+    expect(order.indexOf('Airframe')).toBeLessThan(order.indexOf('Run'))
+    expect(order.indexOf('Run')).toBeLessThan(order.indexOf('Loop gains'))
+    expect(order.indexOf('Loop gains')).toBeLessThan(order.indexOf('Task'))
+  })
+
+  it('scrolls the setup column apart from the figure column', async () => {
+    await loaded()
+
+    const setup = scrollBox(screen.getByRole('combobox', { name: 'Plane' }))
+    const figures = scrollBox(screen.getByText(/Pick a task and press Run/))
+
+    expect(setup).not.toBeNull()
+    expect(figures).not.toBeNull()
+    expect(setup).not.toBe(figures)
+    expect(setup?.className).toMatch(/\bmin-h-0\b/)
+    expect(figures?.className).toMatch(/\bmin-h-0\b/)
+    const shell = setup?.closest('.h-dvh')
+    expect(shell).not.toBeNull()
+    expect(shell?.className).toMatch(/\boverflow-hidden\b/)
+    expect(shell?.contains(screen.getByRole('banner'))).toBe(true)
+    expect(setup?.contains(screen.getByRole('banner'))).toBe(false)
   })
 })
 
@@ -274,11 +342,11 @@ describe('App run flow', () => {
   })
 
   it('keeps Run disabled while the run is in flight', async () => {
-    let release: (response: RunResponse) => void = () => undefined
+    const releases: Array<(response: RunResponse) => void> = []
     vi.mocked(postRun).mockImplementation(
       () =>
         new Promise((resolve) => {
-          release = resolve
+          releases.push(resolve)
         }),
     )
     await loaded()
@@ -288,9 +356,215 @@ describe('App run flow', () => {
 
     expect(runButton()).toBeDisabled()
     await act(async () => {
+      releases[0](RUN)
+    })
+    await waitFor(() => expect(releases).toHaveLength(TASKS.length))
+    expect(runButton()).toBeDisabled()
+    await act(async () => {
+      for (const release of releases.slice(1)) release(RUN)
+    })
+    await waitFor(() => expect(runButton()).toBeEnabled())
+  })
+
+  it('Update in the loop gains panel posts the edited gains and draws the traces', async () => {
+    await loaded()
+    const panel = screen.getByRole('heading', { name: 'Loop gains' }).closest('section')
+    expect(panel).not.toBeNull()
+    expect(within(panel as HTMLElement).getByRole('button', { name: 'Update' })).toBe(
+      updateButton(),
+    )
+    await screen.findByLabelText('kq')
+    await waitFor(() => expect(updateButton()).toBeEnabled())
+
+    fireEvent.change(screen.getByLabelText('kq'), { target: { value: '1.25' } })
+    fireEvent.click(updateButton())
+
+    expect(postRun).toHaveBeenCalledWith({
+      plane: 'f16',
+      law: 'linear',
+      task: 'lead_pitch',
+      aero: 'morelli',
+      trim: { vt_mps: 153.0096, altitude_m: 457.2 },
+      gains: { kq: 1.25, k_theta: 2 },
+    })
+    expect(postRun).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(plots).toHaveLength(LONG_SIGNALS.length))
+  })
+
+  it('posts every task, the open form for the open task and each other task its own gains', async () => {
+    vi.mocked(fetchGains).mockImplementation(async (_plane, _law, task) =>
+      task === 'dutch_roll' ? DUTCH_GAINS : GAINS,
+    )
+    vi.mocked(postRun).mockImplementation(async (request: RunRequest) =>
+      responseFor(request.task, request.task === 'dutch_roll' ? 1.5 : 4.123456),
+    )
+    await loaded()
+    await screen.findByLabelText('kq')
+    fireEvent.change(screen.getByLabelText('kq'), { target: { value: '9' } })
+    await waitFor(() => expect(runButton()).toBeEnabled())
+
+    fireEvent.click(runButton())
+
+    await waitFor(() => expect(postRun).toHaveBeenCalledTimes(2))
+    expect(postRun).toHaveBeenNthCalledWith(1, {
+      plane: 'f16',
+      law: 'linear',
+      task: 'lead_pitch',
+      aero: 'morelli',
+      trim: { vt_mps: 153.0096, altitude_m: 457.2 },
+      gains: { kq: 9, k_theta: 2 },
+    })
+    expect(postRun).toHaveBeenNthCalledWith(2, {
+      plane: 'f16',
+      law: 'linear',
+      task: 'dutch_roll',
+      aero: 'morelli',
+      trim: { vt_mps: 153.0096, altitude_m: 457.2 },
+      gains: { kr: 0.3 },
+    })
+    expect(screen.getByText('4.123')).toBeInTheDocument()
+  })
+
+  it('shows the stored traces of the task you switch to', async () => {
+    vi.mocked(postRun).mockImplementation(async (request: RunRequest) =>
+      responseFor(request.task, request.task === 'dutch_roll' ? 1.5 : 4.123456),
+    )
+    await loaded()
+    await waitFor(() => expect(runButton()).toBeEnabled())
+    fireEvent.click(runButton())
+    expect(await screen.findByText('4.123')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /Dutch roll/ }))
+
+    expect(await screen.findByText('1.500')).toBeInTheDocument()
+    expect(screen.queryByText('4.123')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /Lead-compensated pitch/ }))
+
+    expect(screen.getByText('4.123')).toBeInTheDocument()
+    expect(screen.queryByText('1.500')).not.toBeInTheDocument()
+    expect(postRun).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps a task gain edits when you leave it and come back', async () => {
+    vi.mocked(fetchGains).mockImplementation(async (_plane, _law, task) =>
+      task === 'dutch_roll' ? DUTCH_GAINS : GAINS,
+    )
+    await loaded()
+    await screen.findByLabelText('kq')
+    fireEvent.change(screen.getByLabelText('kq'), { target: { value: '1.25' } })
+
+    fireEvent.click(screen.getByRole('button', { name: /Dutch roll/ }))
+    expect(await screen.findByLabelText('kr')).toHaveValue(0.3)
+
+    fireEvent.click(screen.getByRole('button', { name: /Lead-compensated pitch/ }))
+
+    expect(screen.getByLabelText('kq')).toHaveValue(1.25)
+  })
+
+  it("keeps a failed task's error on that task and the other task's traces", async () => {
+    vi.mocked(postRun).mockImplementation(async (request: RunRequest) => {
+      if (request.task === 'dutch_roll') throw new ApiError(422, 'dutch failed')
+      return responseFor(request.task, 4.123456)
+    })
+    await loaded()
+    await waitFor(() => expect(runButton()).toBeEnabled())
+    fireEvent.click(runButton())
+    expect(await screen.findByText('4.123')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /Dutch roll/ }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('dutch failed')
+    expect(screen.queryByText('4.123')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /Lead-compensated pitch/ }))
+
+    expect(screen.getByText('4.123')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('Update replaces the open task and leaves the other task stored', async () => {
+    vi.mocked(postRun).mockImplementation(async (request: RunRequest) =>
+      responseFor(
+        request.task,
+        request.task === 'dutch_roll' ? 1.5 : request.gains?.kq === 9 ? 7.25 : 4.123456,
+      ),
+    )
+    await loaded()
+    await waitFor(() => expect(runButton()).toBeEnabled())
+    fireEvent.click(runButton())
+    expect(await screen.findByText('4.123')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('kq'), { target: { value: '9' } })
+    fireEvent.click(updateButton())
+    expect(await screen.findByText('7.250')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /Dutch roll/ }))
+    expect(await screen.findByText('1.500')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /Lead-compensated pitch/ }))
+    expect(screen.getByText('7.250')).toBeInTheDocument()
+    expect(postRun).toHaveBeenCalledTimes(3)
+  })
+
+  it('keeps Run disabled until every task has returned', async () => {
+    const releases: Array<(response: RunResponse) => void> = []
+    vi.mocked(postRun).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releases.push(resolve)
+        }),
+    )
+    await loaded()
+    await waitFor(() => expect(runButton()).toBeEnabled())
+
+    fireEvent.click(runButton())
+
+    await waitFor(() => expect(releases).toHaveLength(1))
+    expect(runButton()).toBeDisabled()
+    expect(updateButton()).toBeDisabled()
+    await act(async () => {
+      releases[0](responseFor('lead_pitch', 4.123456))
+    })
+    await waitFor(() => expect(releases).toHaveLength(2))
+    expect(runButton()).toBeDisabled()
+    await act(async () => {
+      releases[1](responseFor('dutch_roll', 1.5))
+    })
+    await waitFor(() => expect(runButton()).toBeEnabled())
+  })
+
+  it('blocks Update while a gain is not a number', async () => {
+    await loaded()
+    await screen.findByLabelText('kq')
+    await waitFor(() => expect(updateButton()).toBeEnabled())
+
+    fireEvent.change(screen.getByLabelText('kq'), { target: { value: 'abc' } })
+
+    expect(updateButton()).toBeDisabled()
+    fireEvent.change(screen.getByLabelText('kq'), { target: { value: '0.75' } })
+    expect(updateButton()).toBeEnabled()
+  })
+
+  it('keeps Update disabled while the run is in flight', async () => {
+    let release: (response: RunResponse) => void = () => undefined
+    vi.mocked(postRun).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve
+        }),
+    )
+    await loaded()
+    await waitFor(() => expect(updateButton()).toBeEnabled())
+
+    fireEvent.click(updateButton())
+
+    expect(updateButton()).toBeDisabled()
+    await act(async () => {
       release(RUN)
     })
-    expect(runButton()).toBeEnabled()
+    expect(updateButton()).toBeEnabled()
   })
 
   it('blocks Run while a gain is not a number', async () => {

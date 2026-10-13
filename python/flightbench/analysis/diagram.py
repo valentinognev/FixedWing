@@ -50,8 +50,23 @@ def _node(node_id: str, kind: str, label: str, text: str = "") -> dict:
     return {"id": node_id, "kind": kind, "label": label, "text": text}
 
 
-def _wire(src: str, dst: str, sign: str = "") -> dict:
-    return {"from": src, "to": dst, "sign": sign}
+def _wire(src: str, dst: str, sign: str = "", signal: str = "") -> dict:
+    """``signal`` is the variable on the wire: a measurement, a command, an error, or a channel."""
+    return {"from": src, "to": dst, "sign": sign, "signal": signal}
+
+
+_MEASURED = {
+    "kq": "q",
+    "kp_p": "p",
+    "k_beta": "beta",
+    "ki_beta": "beta",
+    "k_betadot": "betadot",
+}
+
+
+def _measurement(block_id: str, fallback: str) -> str:
+    """The variable a plant wire into ``block_id`` carries."""
+    return _MEASURED.get(block_id, fallback)
 
 
 def _plant() -> dict:
@@ -97,33 +112,33 @@ def _servo(
     if lead is not None:
         zero, pole = lead
         nodes.append(_node("lead", "block", "lead", _lead(zero, pole)))
-        wires.append(_wire(src, "lead"))
+        wires.append(_wire(src, "lead", signal=loop_input))
         src = "lead"
     nodes.append(_node("sum_e", "sum", "sum"))
-    wires.append(_wire(src, "sum_e", "+"))
-    wires.append(_wire("plant", "sum_e", "-"))
+    wires.append(_wire(src, "sum_e", "+", loop_input))
+    wires.append(_wire("plant", "sum_e", "-", feedback))
     nodes.append(_node("pi", "block", "PI", _pi(kp, ki)))
-    wires.append(_wire("sum_e", "pi"))
+    wires.append(_wire("sum_e", "pi", signal=f"e_{feedback}"))
     prev = "pi"
     if rate is not None:
         name, gain = rate
         nodes.append(_node(name, "block", name, format_gain(gain)))
         nodes.append(_node("sum_rate", "sum", "sum"))
-        wires.append(_wire(prev, "sum_rate", "+"))
-        wires.append(_wire("plant", name))
+        wires.append(_wire(prev, "sum_rate", "+", output))
+        wires.append(_wire("plant", name, signal=_measurement(name, feedback)))
         wires.append(_wire(name, "sum_rate", "-"))
         prev = "sum_rate"
     for node, _sign in extras or []:
         nodes.append(node)
     if extras:
         nodes.append(_node("sum_out", "sum", "sum"))
-        wires.append(_wire(prev, "sum_out", "+"))
+        wires.append(_wire(prev, "sum_out", "+", output))
         for node, sign in extras:
             wires.append(_wire(node["id"], "sum_out", sign))
         prev = "sum_out"
     nodes.append(_plant())
     if drive_plant:
-        wires.append(_wire(prev, "plant"))
+        wires.append(_wire(prev, "plant", signal=output))
     return _loop(loop_input, output, feedback, nodes, wires)
 
 
@@ -203,7 +218,8 @@ def _damper(feedback: str, output: str, series: list[dict],
     prev = "plant"
     for block in series:
         nodes.append(block)
-        wires.append(_wire(prev, block["id"]))
+        signal = _measurement(block["id"], feedback) if prev == "plant" else ""
+        wires.append(_wire(prev, block["id"], signal=signal))
         prev = block["id"]
     nodes.append(_node("sum_out", "sum", "sum"))
     wires.append(_wire(prev, "sum_out", "-"))
@@ -216,11 +232,12 @@ def _damper(feedback: str, output: str, series: list[dict],
         cursor = source
         for block in blocks:
             nodes.append(block)
-            wires.append(_wire(cursor, block["id"]))
+            signal = _measurement(block["id"], feedback) if cursor == "plant" else ""
+            wires.append(_wire(cursor, block["id"], signal=signal))
             cursor = block["id"]
         wires.append(_wire(cursor, "sum_out", sign))
     nodes.append(_plant())
-    wires.append(_wire("sum_out", "plant"))
+    wires.append(_wire("sum_out", "plant", signal=output))
     return _loop(feedback, output, feedback, nodes, wires)
 
 
@@ -305,9 +322,9 @@ def _heading(gains: dict[str, float]) -> dict:
         _plant(),
     ]
     wires = [
-        _wire("psi_ref", "sum_e", "+"),
-        _wire("plant", "sum_e", "-"),
-        _wire("sum_e", "kp_psi"),
+        _wire("psi_ref", "sum_e", "+", "psi"),
+        _wire("plant", "sum_e", "-", "psi"),
+        _wire("sum_e", "kp_psi", signal="e_psi"),
     ]
     return _loop("r_cmd", "psi", "psi", nodes, wires)
 
@@ -326,15 +343,15 @@ def _bank_from_rcmd(gains: dict[str, float], vt0: float | None) -> dict:
         _plant(),
     ]
     wires = [
-        _wire("r_cmd", "coord"),
-        _wire("coord", "clip"),
-        _wire("clip", "sum_e", "+"),
-        _wire("plant", "sum_e", "-"),
-        _wire("sum_e", "pi"),
-        _wire("pi", "sum_rate", "+"),
-        _wire("plant", "kp_p"),
+        _wire("r_cmd", "coord", signal="r"),
+        _wire("coord", "clip", signal="phi"),
+        _wire("clip", "sum_e", "+", "phi"),
+        _wire("plant", "sum_e", "-", "phi"),
+        _wire("sum_e", "pi", signal="e_phi"),
+        _wire("pi", "sum_rate", "+", "roll"),
+        _wire("plant", "kp_p", signal="p"),
         _wire("kp_p", "sum_rate", "-"),
-        _wire("sum_rate", "plant"),
+        _wire("sum_rate", "plant", signal="roll"),
     ]
     return _loop("phi", "roll", "phi", nodes, wires)
 
@@ -351,15 +368,15 @@ def _yaw_track(gains: dict[str, float]) -> dict:
         _plant(),
     ]
     wires = [
-        _wire("r_cmd", "sum_r", "+"),
-        _wire("plant", "sum_r", "-"),
-        _wire("sum_r", "kr_track"),
-        _wire("kr_track", "sum_yaw", "+"),
-        _wire("plant", "k_beta"),
+        _wire("r_cmd", "sum_r", "+", "r"),
+        _wire("plant", "sum_r", "-", "r"),
+        _wire("sum_r", "kr_track", signal="e_r"),
+        _wire("kr_track", "sum_yaw", "+", "yaw"),
+        _wire("plant", "k_beta", signal="beta"),
         _wire("k_beta", "sum_yaw", "+"),
-        _wire("plant", "k_betadot"),
+        _wire("plant", "k_betadot", signal="betadot"),
         _wire("k_betadot", "sum_yaw", "+"),
-        _wire("sum_yaw", "plant"),
+        _wire("sum_yaw", "plant", signal="yaw"),
     ]
     return _loop("r", "yaw", "r", nodes, wires)
 

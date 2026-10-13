@@ -1,5 +1,37 @@
 # Updates
 
+## 0.109.1 - Run above loop gains
+- The Run button sits between the airframe panel and the loop gains panel. Update stays inside loop gains.
+
+## 0.109.0 - Run every task
+- Run posts every task for the current plane, law, aero, and trim. The open task uses the form; each other task uses the gains stored for it, or the server defaults the first time.
+- Update posts only the open task and replaces that task's stored result.
+- Switching tasks shows that task's last traces, modes, and diagram, and restores its gain edits. A failed task keeps its error on that task.
+
+## 0.108.1 - Separate diagram wires
+- Each wire keeps its own path. Returns no longer share one vertical beside the airframe.
+- A disturbance or a cross-feed is a forward input, so it sits clear of the blocks on the row and its wire stays on the diagram.
+
+## 0.108.0 - Forward-path variables
+- The straight control line names the variable on each segment: the command, the error, and the channel into the airframe. A disturbance and a gained return stay unlabeled.
+
+## 0.107.0 - Feedback wire measurements
+- Each feedback wire is labeled with the measurement it carries (theta, q, phi, p, beta, and the others). The name sits above the return.
+
+## 0.106.2 - Outer feedback below the inner loop
+- A loop's return runs below the return of a loop that closes further downstream, so the outer wire does not cross the inner one.
+
+## 0.106.1 - Plot view and controller diagram
+- A locus or Nyquist gain slider keeps that chart's zoom and pan. The next run refits the axes.
+- The controller forward path is one straight line. A disturbance sits above the summer it enters. Rate feedback sits on the return, and the return lanes are spaced apart. Sum signs sit off the wire on a chip.
+
+## 0.106.0 - Separate panel scroll and gain Update
+- The setup column and the figure column each scroll inside the viewport. The header stays put.
+- Loop gains has an Update button. It re-runs with the gains in the form and refreshes the traces, modes, and linear plots. It stays disabled on the same rule as Run.
+
+## 0.105.2 - Controller diagram summer inputs
+- A forward wire that would cross another block routes over the row and enters the top of its summer, so each of the pitch summers shows both inputs.
+
 ## 0.105.1 - Open-loop matrix A color
 - The open-loop **A** caption is pink (`#f472b6`, light `#be185d`) so it no longer matches the gold state-name headings.
 

@@ -20,9 +20,11 @@ export interface ComplexPlotProps {
   title: string
   series: ComplexSeries[]
   marks: Complex[]
+  /** Stable across slider edits. A new value refits the axes. */
+  viewKey?: string
 }
 
-export function ComplexPlot({ title, series, marks }: ComplexPlotProps) {
+export function ComplexPlot({ title, series, marks, viewKey }: ComplexPlotProps) {
   const chrome = chartChrome(readTheme())
   const [Chart, setChart] = useState<ComponentType<ChartProps> | null>(null)
 
@@ -85,6 +87,7 @@ export function ComplexPlot({ title, series, marks }: ComplexPlotProps) {
     hovermode: 'closest',
     xaxis,
     yaxis,
+    uirevision: viewKey,
   }
 
   if (Chart === null) return <div className="h-72 w-full" />

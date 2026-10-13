@@ -1,4 +1,4 @@
-import { layoutDiagram, type DiagramBox } from '../diagramLayout'
+import { layoutDiagram, signalChip, type DiagramBox } from '../diagramLayout'
 import type { DiagramLoop } from '../types'
 
 export interface ControllerDiagramProps {
@@ -92,29 +92,16 @@ export function ControllerDiagram({ diagram }: ControllerDiagramProps) {
             <Arrow id="analysis-arrow-feedback" fill={FEEDBACK} />
           </defs>
           {layout.wires.map((wire, index) => (
-            <g key={`${wire.from}-${wire.to}-${wire.sign}-${index}`}>
-              <polyline
-                points={wire.points.map((point) => `${point.x},${point.y}`).join(' ')}
-                fill="none"
-                stroke={wire.feedback ? FEEDBACK : FORWARD}
-                strokeWidth={wire.feedback ? 1.75 : 1.25}
-                markerEnd={
-                  wire.feedback ? 'url(#analysis-arrow-feedback)' : 'url(#analysis-arrow)'
-                }
-              />
-              {wire.signAt !== null && (
-                <text
-                  x={wire.signAt.x}
-                  y={wire.signAt.y}
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  fill="#fbbf24"
-                  fontSize="13"
-                >
-                  {wire.sign}
-                </text>
-              )}
-            </g>
+            <polyline
+              key={`${wire.from}-${wire.to}-${wire.sign}-${index}`}
+              points={wire.points.map((point) => `${point.x},${point.y}`).join(' ')}
+              fill="none"
+              stroke={wire.feedback ? FEEDBACK : FORWARD}
+              strokeWidth={wire.feedback ? 1.75 : 1.25}
+              markerEnd={
+                wire.feedback ? 'url(#analysis-arrow-feedback)' : 'url(#analysis-arrow)'
+              }
+            />
           ))}
           {layout.boxes.map((box) => (
             <g key={box.key}>
@@ -122,6 +109,57 @@ export function ControllerDiagram({ diagram }: ControllerDiagramProps) {
               <NodeLabel box={box} />
             </g>
           ))}
+          {layout.wires.map((wire, index) =>
+            wire.signalAt === null ? null : (
+              <g key={`signal-${wire.from}-${wire.to}-${index}`} data-signal="">
+                <rect
+                  x={wire.signalAt.x - signalChip(wire.signal).w / 2}
+                  y={wire.signalAt.y - 9}
+                  width={signalChip(wire.signal).w}
+                  height={18}
+                  rx={3}
+                  fill="#171717"
+                  stroke={wire.feedback ? '#0e7490' : '#525252'}
+                />
+                <text
+                  x={wire.signalAt.x}
+                  y={wire.signalAt.y}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fill={wire.feedback ? '#7dd3fc' : '#e5e5e5'}
+                  fontSize="13"
+                >
+                  {wire.signal}
+                </text>
+              </g>
+            ),
+          )}
+          {layout.wires.map((wire, index) =>
+            wire.signAt === null ? null : (
+              <g key={`sign-${wire.from}-${wire.to}-${index}`} data-sign="">
+                <rect
+                  x={wire.signAt.x - 9}
+                  y={wire.signAt.y - 11}
+                  width={18}
+                  height={22}
+                  rx={3}
+                  fill="#171717"
+                  stroke="#525252"
+                />
+                <text
+                  x={wire.signAt.x}
+                  y={wire.signAt.y}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fill="#fbbf24"
+                  fontSize="16"
+                  fontWeight={600}
+                >
+                  {wire.sign}
+                </text>
+              </g>
+            ),
+          )}
         </svg>
       </div>
     </section>

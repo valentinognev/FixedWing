@@ -51,6 +51,82 @@ class TestDiagram(unittest.TestCase):
         short = controller_diagram("short_period_phugoid", cases["short_period_phugoid"])
         self.assertNotIn("0.5/s", " ".join(n["text"] for loop in short for n in loop["nodes"]))
 
+    def test_feedback_wires_name_the_measurement(self):
+        def named(loop):
+            return {(wire["from"], wire["to"]): wire["signal"] for wire in loop["wires"]}
+
+        pitch = controller_diagram("pitch_disturbance", _PITCH)[0]
+        self.assertEqual(named(pitch)[("plant", "sum_e")], "theta")
+        self.assertEqual(named(pitch)[("plant", "kq")], "q")
+
+        loops = {
+            loop["feedback"]: loop for loop in controller_diagram("turn_coordination", {
+                "kp_phi": 2.0, "ki_phi": 0.1, "kp_p": 0.5,
+                "kr": 0.5, "tau_w": 1.0, "k_beta": 1.0, "k_ari": 0.25,
+            })
+        }
+        self.assertEqual(named(loops["phi"])[("plant", "sum_e")], "phi")
+        self.assertEqual(named(loops["phi"])[("plant", "kp_p")], "p")
+        self.assertEqual(named(loops["r"])[("plant", "washout")], "r")
+        self.assertEqual(named(loops["r"])[("plant", "k_beta")], "beta")
+
+        yaw = {
+            loop["feedback"]: loop for loop in controller_diagram("yaw_orientation", {
+                "kp_phi": 2.0, "ki_phi": 0.1, "kp_p": 0.5,
+                "k_beta": 1.0, "k_betadot": 0.5, "kp_psi": 0.5, "kr_track": 1.0,
+            }, vt0=50.0)
+        }
+        self.assertEqual(named(yaw["psi"])[("plant", "sum_e")], "psi")
+        self.assertEqual(named(yaw["r"])[("plant", "sum_r")], "r")
+        self.assertEqual(named(yaw["r"])[("plant", "k_betadot")], "betadot")
+
+    def test_forward_wires_name_the_variable(self):
+        def named(loop):
+            return {(wire["from"], wire["to"]): wire["signal"] for wire in loop["wires"]}
+
+        pitch = named(controller_diagram("pitch_disturbance", _PITCH)[0])
+        self.assertEqual(pitch[("theta_ref", "sum_e")], "theta")
+        self.assertEqual(pitch[("sum_e", "pi")], "e_theta")
+        self.assertEqual(pitch[("pi", "sum_rate")], "pitch")
+        self.assertEqual(pitch[("sum_rate", "sum_out")], "pitch")
+        self.assertEqual(pitch[("sum_out", "plant")], "pitch")
+        self.assertEqual(pitch[("disturbance", "sum_out")], "")
+        self.assertEqual(pitch[("kq", "sum_rate")], "")
+
+        lead = named(controller_diagram("lead_pitch", _LEAD)[0])
+        self.assertEqual(lead[("theta_ref", "lead")], "theta")
+        self.assertEqual(lead[("lead", "sum_e")], "theta")
+
+        speed = {
+            loop["feedback"]: named(loop)
+            for loop in controller_diagram("airspeed", {**_PITCH, "kp_v": 0.05, "ki_v": 0.005})
+        }
+        self.assertEqual(speed["vt"][("vt_ref", "sum_e")], "vt")
+        self.assertEqual(speed["vt"][("sum_e", "pi")], "e_vt")
+        self.assertEqual(speed["vt"][("pi", "plant")], "throttle")
+
+        short = named(controller_diagram("short_period_phugoid", {"kq": 0.5})[0])
+        self.assertEqual(short[("sum_out", "plant")], "pitch")
+        self.assertEqual(short[("kq", "sum_out")], "")
+
+        yaw = {
+            loop["feedback"]: named(loop)
+            for loop in controller_diagram("yaw_orientation", {
+                "kp_phi": 2.0, "ki_phi": 0.1, "kp_p": 0.5,
+                "k_beta": 1.0, "k_betadot": 0.5, "kp_psi": 0.5, "kr_track": 1.0,
+            }, vt0=50.0)
+        }
+        self.assertEqual(yaw["psi"][("psi_ref", "sum_e")], "psi")
+        self.assertEqual(yaw["psi"][("sum_e", "kp_psi")], "e_psi")
+        self.assertEqual(yaw["phi"][("r_cmd", "coord")], "r")
+        self.assertEqual(yaw["phi"][("clip", "sum_e")], "phi")
+        self.assertEqual(yaw["phi"][("sum_e", "pi")], "e_phi")
+        self.assertEqual(yaw["phi"][("sum_rate", "plant")], "roll")
+        self.assertEqual(yaw["r"][("r_cmd", "sum_r")], "r")
+        self.assertEqual(yaw["r"][("sum_r", "kr_track")], "e_r")
+        self.assertEqual(yaw["r"][("sum_yaw", "plant")], "yaw")
+        self.assertEqual(yaw["r"][("k_beta", "sum_yaw")], "")
+
     def test_unknown_task_raises(self):
         with self.assertRaises(FlightbenchError):
             controller_diagram("not_a_task", {})

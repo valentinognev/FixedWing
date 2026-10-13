@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useReducer, useState } from 'react'
+import { useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react'
 import { ApiError, fetchGains, fetchPlanes, fetchTasks, postRun } from './api'
 import { AeroPicker } from './components/AeroPicker'
 import { CoefficientCharts } from './components/CoefficientCharts'
@@ -51,14 +51,24 @@ function seed(specs: GainSpec[]): Record<string, number> {
   return Object.fromEntries(specs.map((spec) => [spec.name, spec.value]))
 }
 
-/** The gains of one plane/law/task, tagged with the selection they belong to. */
-interface GainState {
-  key: string
+/** Gains loaded for one plane, law, and task. Edits stay here across task switches. */
+interface GainEntry {
   specs: GainSpec[]
   values: Record<string, number>
 }
 
-const NO_GAINS: GainState = { key: '', specs: [], values: {} }
+/** The last run of one plane, law, aero, and task, or the error that run returned. */
+type ResultSlot =
+  | { ok: true; response: RunResponse; gains: Record<string, number> }
+  | { ok: false; detail: string }
+
+function gainKey(plane: string, law: string, task: string): string {
+  return `${plane} ${law} ${task}`
+}
+
+function resultKey(plane: string, law: string, aero: string, task: string): string {
+  return `${plane} ${law} ${aero} ${task}`
+}
 
 /**
  * Flightbench: pick a plane, law and task, tune the loop gains, run the
@@ -68,13 +78,18 @@ const NO_GAINS: GainState = { key: '', specs: [], values: {} }
 export default function App() {
   const [planes, setPlanes] = useState<PlaneInfo[]>([])
   const [tasks, setTasks] = useState<TaskInfo[]>([])
-  const [gains, setGains] = useState<GainState>(NO_GAINS)
-  const [response, setResponse] = useState<RunResponse | null>(null)
-  const [postedGains, setPostedGains] = useState<Record<string, number>>({})
+  const gainsRef = useRef<Record<string, GainEntry>>({})
+  const [gainsByKey, setGainsByKey] = useState<Record<string, GainEntry>>({})
+  const [results, setResults] = useState<Record<string, ResultSlot>>({})
   const [error, setError] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
   const [selection, dispatch] = useReducer(selectionReducer, EMPTY)
   const [theme, setTheme] = useState<Theme>(readTheme)
+
+  function commitGains(next: Record<string, GainEntry>) {
+    gainsRef.current = next
+    setGainsByKey(next)
+  }
 
   useLayoutEffect(() => {
     applyTheme(theme)
@@ -92,15 +107,18 @@ export default function App() {
   const key =
     selection.plane === ''
       ? ''
-      : `${selection.plane} ${selection.law} ${selection.task}`
+      : gainKey(selection.plane, selection.law, selection.task)
+  const entry = key === '' ? undefined : gainsByKey[key]
 
   // The gain form drives the run: every spec of the current selection must
   // hold a finite value, so an unseeded form keeps Run disabled.
-  const loaded = key !== '' && gains.key === key
-  const values = loaded ? gains.values : {}
-  const seeded = gains.specs.every((spec) => Number.isFinite(values[spec.name]))
-  const canRun = !running && loaded && seeded && isValid(values)
+  const values = entry?.values ?? {}
+  const seeded = (entry?.specs ?? []).every((spec) => Number.isFinite(values[spec.name]))
+  const canRun = !running && entry !== undefined && seeded && isValid(values)
 
+  const slot =
+    results[resultKey(selection.plane, selection.law, selection.aero, selection.task)]
+  const response = slot?.ok === true ? slot.response : null
   // A response only belongs to the selection it was run for.
   const shown =
     response !== null &&
@@ -108,6 +126,7 @@ export default function App() {
     response.law === selection.law &&
     response.task === selection.task &&
     response.aero === selection.aero
+  const taskError = slot?.ok === false ? slot.detail : null
 
   useEffect(() => {
     let cancelled = false
@@ -129,13 +148,20 @@ export default function App() {
 
   useEffect(() => {
     if (selection.plane === '' || selection.task === '') return
-    const wanted = `${selection.plane} ${selection.law} ${selection.task}`
+    const wanted = gainKey(selection.plane, selection.law, selection.task)
+    if (gainsRef.current[wanted] !== undefined) {
+      setError(null)
+      return
+    }
     let cancelled = false
     fetchGains(selection.plane, selection.law, selection.task)
       .then((returned) => {
-        if (cancelled) return
-        setGains({ key: wanted, specs: returned, values: seed(returned) })
-        setError(null)
+        if (gainsRef.current[wanted] !== undefined) return
+        commitGains({
+          ...gainsRef.current,
+          [wanted]: { specs: returned, values: seed(returned) },
+        })
+        if (!cancelled) setError(null)
       })
       .catch((cause: unknown) => {
         if (!cancelled) setError(detailOf(cause))
@@ -145,33 +171,76 @@ export default function App() {
     }
   }, [selection.plane, selection.law, selection.task])
 
+  function remember(wanted: string, slot: ResultSlot) {
+    setResults((current) => ({ ...current, [wanted]: slot }))
+  }
+
+  /**
+   * Run one task. A task whose gains are already stored posts before the first
+   * await, so the open task's request is visible as soon as Run is clicked.
+   */
+  async function execute(task: string, picked: Selection): Promise<void> {
+    const wanted = resultKey(picked.plane, picked.law, picked.aero, task)
+    const storedKey = gainKey(picked.plane, picked.law, task)
+    let gains = gainsRef.current[storedKey]
+    if (gains === undefined) {
+      try {
+        const specs = await fetchGains(picked.plane, picked.law, task)
+        const again = gainsRef.current[storedKey]
+        if (again !== undefined) {
+          gains = again
+        } else {
+          gains = { specs, values: seed(specs) }
+          commitGains({ ...gainsRef.current, [storedKey]: gains })
+        }
+      } catch (cause: unknown) {
+        remember(wanted, { ok: false, detail: detailOf(cause) })
+        return
+      }
+    }
+    const sent = { ...gains.values }
+    try {
+      const response = await postRun({
+        plane: picked.plane,
+        law: picked.law,
+        task,
+        aero: picked.aero,
+        trim: { ...picked.trim },
+        gains: sent,
+      })
+      remember(wanted, { ok: true, response, gains: sent })
+    } catch (cause: unknown) {
+      remember(wanted, { ok: false, detail: detailOf(cause) })
+    }
+  }
+
   async function run() {
     setRunning(true)
     setError(null)
-    const sent = { ...values }
+    const picked = selection
+    const list = tasks
     try {
-      setResponse(
-        await postRun({
-          plane: selection.plane,
-          law: selection.law,
-          task: selection.task,
-          aero: selection.aero,
-          trim: { ...selection.trim },
-          gains: sent,
-        }),
-      )
-      setPostedGains(sent)
-    } catch (cause: unknown) {
-      setResponse(null)
-      setError(detailOf(cause))
+      for (const task of list) {
+        await execute(task.id, picked)
+      }
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  async function update() {
+    setRunning(true)
+    setError(null)
+    try {
+      await execute(selection.task, selection)
     } finally {
       setRunning(false)
     }
   }
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100">
-      <header className="flex items-center justify-between border-b border-neutral-800 px-6 py-4">
+    <div className="flex h-dvh flex-col overflow-hidden bg-neutral-950 text-neutral-100">
+      <header className="flex shrink-0 items-center justify-between border-b border-neutral-800 px-6 py-4">
         <h1 className="text-base font-semibold tracking-wide">Flightbench</h1>
         <button
           type="button"
@@ -181,52 +250,74 @@ export default function App() {
           {theme === 'dark' ? 'Light' : 'Dark'}
         </button>
       </header>
-      <main className="grid gap-6 px-6 py-6 xl:grid-cols-[20rem_minmax(0,1fr)]">
-        <div className="flex flex-col gap-4">
+      <main className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] gap-6 px-6 py-6 xl:grid-cols-[20rem_minmax(0,1fr)] xl:grid-rows-1">
+        <div className="flex min-h-0 flex-col gap-4 overflow-y-auto">
           {plane !== undefined && (
-            <>
-              <section className={PANEL}>
-                <h2 className={TITLE}>Airframe</h2>
-                <PlanePicker
-                  planes={planes}
-                  value={selection.plane}
-                  onChange={(one) => dispatch(planeChanged(one))}
-                />
-                <LawPicker
-                  plane={plane}
-                  value={selection.law}
-                  onChange={(law) => dispatch(lawChanged(law))}
-                />
-                <AeroPicker
-                  plane={plane}
-                  value={selection.aero}
-                  onChange={(aero) => dispatch(aeroChanged(aero))}
-                />
-                <TrimPanel
-                  value={selection.trim}
-                  onChange={(trim) => dispatch(trimChanged(trim))}
-                />
-              </section>
-              <section className={PANEL}>
-                <h2 className={TITLE}>Loop gains</h2>
-                <GainForm
-                  specs={gains.specs}
-                  values={values}
-                  onChange={(name, value) =>
-                    setGains((current) => ({
-                      ...current,
-                      values: { ...current.values, [name]: value },
-                    }))
-                  }
-                  onReset={() =>
-                    setGains((current) => ({
-                      ...current,
-                      values: seed(current.specs),
-                    }))
-                  }
-                />
-              </section>
-            </>
+            <section className={PANEL}>
+              <h2 className={TITLE}>Airframe</h2>
+              <PlanePicker
+                planes={planes}
+                value={selection.plane}
+                onChange={(one) => dispatch(planeChanged(one))}
+              />
+              <LawPicker
+                plane={plane}
+                value={selection.law}
+                onChange={(law) => dispatch(lawChanged(law))}
+              />
+              <AeroPicker
+                plane={plane}
+                value={selection.aero}
+                onChange={(aero) => dispatch(aeroChanged(aero))}
+              />
+              <TrimPanel
+                value={selection.trim}
+                onChange={(trim) => dispatch(trimChanged(trim))}
+              />
+            </section>
+          )}
+          <button
+            type="button"
+            className={RUN_BUTTON}
+            disabled={!canRun}
+            onClick={run}
+          >
+            Run
+          </button>
+          {plane !== undefined && (
+            <section className={PANEL}>
+              <h2 className={TITLE}>Loop gains</h2>
+              <GainForm
+                specs={entry?.specs ?? []}
+                values={values}
+                onChange={(name, value) => {
+                  const current = gainsRef.current
+                  const open = current[key]
+                  if (open === undefined) return
+                  commitGains({
+                    ...current,
+                    [key]: { ...open, values: { ...open.values, [name]: value } },
+                  })
+                }}
+                onReset={() => {
+                  const current = gainsRef.current
+                  const open = current[key]
+                  if (open === undefined) return
+                  commitGains({
+                    ...current,
+                    [key]: { ...open, values: seed(open.specs) },
+                  })
+                }}
+              />
+              <button
+                type="button"
+                className={RUN_BUTTON}
+                disabled={!canRun}
+                onClick={update}
+              >
+                Update
+              </button>
+            </section>
           )}
           <section className={PANEL}>
             <h2 className={TITLE}>Task</h2>
@@ -236,19 +327,11 @@ export default function App() {
               onChange={(next) => dispatch(taskChanged(next))}
             />
           </section>
-          <button
-            type="button"
-            className={RUN_BUTTON}
-            disabled={!canRun}
-            onClick={run}
-          >
-            Run
-          </button>
         </div>
-        <div className="flex min-w-0 flex-col gap-6">
+        <div className="flex min-h-0 min-w-0 flex-col gap-6 overflow-y-auto">
           <RunBanner
             stopReason={shown && response !== null ? response.stop_reason : null}
-            error={error}
+            error={taskError ?? error}
           />
           {response !== null && shown ? (
             <>
@@ -265,7 +348,7 @@ export default function App() {
                   ))}
                   <CoefficientCharts
                     coefficients={response.linear_analysis.coefficients}
-                    values={postedGains}
+                    values={slot?.ok === true ? slot.gains : {}}
                   />
                 </>
               )}

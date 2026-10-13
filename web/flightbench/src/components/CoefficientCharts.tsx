@@ -64,7 +64,8 @@ function locusSeries(locus: Locus): ComplexSeries[] {
  * One locus and one Nyquist per coefficient. An empty sweep leaves that chart
  * and its slider out. Each chart keeps its own slider index; a new `values`
  * object (the next Run) puts each index back on the posted gain. A gain-form
- * edit keeps `values`.
+ * edit keeps `values`. A slider move keeps the chart's view; a new coefficient
+ * list refits it.
  */
 export function CoefficientCharts({ coefficients, values }: CoefficientChartsProps) {
   const [indexes, setIndexes] = useState<Record<string, number>>(() =>
@@ -74,6 +75,12 @@ export function CoefficientCharts({ coefficients, values }: CoefficientChartsPro
     indexesFor(coefficients, values),
   )
   const [trackedValues, setTrackedValues] = useState(values)
+  const [trackedCoefficients, setTrackedCoefficients] = useState(coefficients)
+  const [viewEpoch, setViewEpoch] = useState(0)
+  if (trackedCoefficients !== coefficients) {
+    setTrackedCoefficients(coefficients)
+    setViewEpoch((epoch) => epoch + 1)
+  }
   if (trackedValues !== values) {
     setTrackedValues(values)
     const reset = indexesFor(coefficients, values)
@@ -106,6 +113,7 @@ export function CoefficientCharts({ coefficients, values }: CoefficientChartsPro
                   title={`${coefficient.name} locus`}
                   series={locusSeries(locus)}
                   marks={locusMarks(locus, sweepGain)}
+                  viewKey={`${coefficient.name}:locus:${viewEpoch}`}
                 />
                 <div className="flex items-center gap-3">
                   <input
@@ -131,6 +139,7 @@ export function CoefficientCharts({ coefficients, values }: CoefficientChartsPro
               <>
                 <ComplexPlot
                   title={`${coefficient.name} nyquist`}
+                  viewKey={`${coefficient.name}:nyquist:${viewEpoch}`}
                   series={[
                     {
                       name: 'L(jω)',

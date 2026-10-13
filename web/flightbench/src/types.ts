@@ -143,6 +143,8 @@ export interface DiagramWire {
   from: string
   to: string
   sign: '' | '+' | '-'
+  /** Measurement carried on a feedback wire. Empty on every other wire. */
+  signal?: string
 }
 
 export interface DiagramLoop {
